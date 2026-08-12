@@ -31,6 +31,7 @@ pub mod settings;
 pub mod shell;
 pub mod sound;
 pub mod state;
+pub mod studio;
 pub mod terminal;
 pub mod theme;
 pub mod transcript;

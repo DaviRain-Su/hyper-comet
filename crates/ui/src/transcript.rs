@@ -1705,7 +1705,10 @@ impl Transcript {
             .await;
             let fetched = match reply {
                 Ok(value) => {
-                    let text = value.get("text").and_then(|t| t.as_str()).unwrap_or_default();
+                    let text = value
+                        .get("text")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or_default();
                     blob_detail(text, is_diff)
                         .map(|d| BlobFetch::Ready(Arc::new(d)))
                         .unwrap_or(BlobFetch::Failed)
@@ -2278,28 +2281,27 @@ impl Transcript {
             .map(|(_, ix)| *ix);
         let row_key = row_id.clone();
         let entity = cx.weak_entity();
-        let handler: Rc<dyn Fn(usize, SharedString, &mut Window, &mut gpui::App)> =
-            Rc::new(move |ix, code, _window, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
-                let row_key = row_key.clone();
-                entity
-                    .update(cx, |this, cx| {
-                        this.copied_code = Some((row_key, ix));
-                        this.copied_clear = Some(cx.spawn(async move |this, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(1200))
-                                .await;
-                            this.update(cx, |this, cx| {
-                                this.copied_code = None;
-                                this.copied_clear = None;
-                                cx.notify();
-                            })
-                            .ok();
-                        }));
-                        cx.notify();
-                    })
-                    .ok();
-            });
+        let handler: render::CopyHandler = Rc::new(move |ix, code, _window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
+            let row_key = row_key.clone();
+            entity
+                .update(cx, |this, cx| {
+                    this.copied_code = Some((row_key, ix));
+                    this.copied_clear = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(1200))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.copied_code = None;
+                            this.copied_clear = None;
+                            cx.notify();
+                        })
+                        .ok();
+                    }));
+                    cx.notify();
+                })
+                .ok();
+        });
         render::CopyUi { handler, copied_ix }
     }
 
@@ -2376,8 +2378,7 @@ impl Transcript {
                     let mut best: Option<(u64, &SharedString)> = None;
                     for blob_ref in [&tool.diff_ref, &tool.output_ref].into_iter().flatten() {
                         if matches!(self.blob_details.get(blob_ref), Some(BlobFetch::Ready(_))) {
-                            let order =
-                                self.blob_fetch_order.get(blob_ref).copied().unwrap_or(0);
+                            let order = self.blob_fetch_order.get(blob_ref).copied().unwrap_or(0);
                             if best.is_none_or(|(o, _)| order > o) {
                                 best = Some((order, blob_ref));
                             }
@@ -3685,7 +3686,8 @@ mod tests {
             old_text: Some(old.join("\n") + "\n"),
             new_text: new.join("\n") + "\n",
         };
-        let Some(ToolDetail::Diff { file, highlight }) = tool_detail(None, Some(&diff), None) else {
+        let Some(ToolDetail::Diff { file, highlight }) = tool_detail(None, Some(&diff), None)
+        else {
             panic!("expected diff detail");
         };
         // One hunk: the change plus 3 context lines each side, real numbers.
@@ -3718,7 +3720,8 @@ mod tests {
             old_text: None,
             new_text: "only\n".into(),
         };
-        let Some(ToolDetail::Diff { file, highlight }) = tool_detail(None, Some(&created), None) else {
+        let Some(ToolDetail::Diff { file, highlight }) = tool_detail(None, Some(&created), None)
+        else {
             panic!("expected diff detail");
         };
         assert_eq!(file.status, crate::changes::FileStatus::Added);

@@ -49,6 +49,8 @@ pub struct ComposerDefaults {
     pub project: Option<String>,
     /// Remembered "Don't work in a project" opt-out.
     pub no_project: bool,
+    /// Last harness picked in the ProofShip Launch Studio lane picker.
+    pub studio_harness: Option<HarnessId>,
 }
 
 impl ComposerDefaults {

@@ -55,7 +55,10 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use comet_doc::{MessagePart, SessionCommandPayload};
-use comet_proto::{ChatConfig, HarnessId, ToolCall};
+use comet_proto::{
+    ChatConfig, HarnessId, StudioDraftRequest, StudioGateRequest, StudioLaunchRunRequest,
+    StudioLaunchesResponse, StudioPutLaunchesRequest, ToolCall,
+};
 use comet_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
 use crate::agent_accounts::AgentAccounts;
@@ -65,6 +68,7 @@ use crate::doc_host::DocHost;
 use crate::registry::HarnessRegistry;
 use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
+use crate::studio::{DraftRunner, StudioGate, StudioLaunchRunner, StudioStore};
 use crate::terminals::Terminals;
 use crate::uploads::Uploads;
 use crate::workspace_host::WorkspaceHost;
@@ -377,6 +381,10 @@ pub struct EngineRpc {
     diff_sync: CheckoutDiffSync,
     uploads: Uploads,
     agent_accounts: AgentAccounts,
+    studio_gate: StudioGate,
+    studio_draft: DraftRunner,
+    studio_launch: StudioLaunchRunner,
+    studio_store: StudioStore,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -394,6 +402,10 @@ impl EngineRpc {
         diff_sync: CheckoutDiffSync,
         uploads: Uploads,
         agent_accounts: AgentAccounts,
+        studio_gate: StudioGate,
+        studio_draft: DraftRunner,
+        studio_launch: StudioLaunchRunner,
+        studio_store: StudioStore,
     ) -> Self {
         Self {
             sessions,
@@ -405,6 +417,10 @@ impl EngineRpc {
             diff_sync,
             uploads,
             agent_accounts,
+            studio_gate,
+            studio_draft,
+            studio_launch,
+            studio_store,
             auth: None,
             links: None,
             updater: None,
@@ -627,7 +643,13 @@ impl EngineRpc {
                 cwd,
             } => {
                 self.workspace
-                    .create_chat(&chat_id, space_id.as_deref(), device_id.as_deref(), config, cwd)
+                    .create_chat(
+                        &chat_id,
+                        space_id.as_deref(),
+                        device_id.as_deref(),
+                        config,
+                        cwd,
+                    )
                     .map_err(failed)?;
                 if let Some(branch) = branch.as_deref().filter(|b| !b.is_empty()) {
                     self.workspace
@@ -781,6 +803,14 @@ fn forwardable(method: &str) -> bool {
             // Updates report/apply on the device whose binary they concern.
             | methods::UPDATE_STATUS
             | methods::APPLY_UPDATE
+            // Studio is device-local: the gate runs against the target device's
+            // local vendored toolchain and launch store.
+            | methods::STUDIO_STATUS
+            | methods::STUDIO_DRAFT
+            | methods::STUDIO_GATE
+            | methods::STUDIO_LAUNCH_RUN
+            | methods::STUDIO_LAUNCHES
+            | methods::STUDIO_PUT_LAUNCHES
     )
 }
 
@@ -792,6 +822,9 @@ fn is_stream_method(method: &str) -> bool {
             | methods::SUBSCRIBE_TERMINAL
             | methods::WATCH_CHECKOUT_DIFFS
             | methods::UPDATE_STATUS
+            | methods::STUDIO_DRAFT
+            | methods::STUDIO_GATE
+            | methods::STUDIO_LAUNCH_RUN
     )
 }
 
@@ -1075,6 +1108,46 @@ impl RpcService for EngineRpc {
             methods::LOCAL_DEVICE => {
                 RpcReply::value(&serde_json::json!({ "deviceId": self.doc_host.device_id() }))
             }
+            methods::STUDIO_STATUS => RpcReply::value(&self.studio_gate.status()),
+            methods::STUDIO_DRAFT => {
+                let p: StudioDraftRequest = parse_params(params)?;
+                let stream = self
+                    .studio_draft
+                    .draft(p.nl, p.harness)
+                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
+                Ok(RpcReply::Stream(stream.boxed()))
+            }
+            methods::STUDIO_LAUNCH_RUN => {
+                let p: StudioLaunchRunRequest = parse_params(params)?;
+                let stream = self
+                    .studio_launch
+                    .launch_run(p.nl, p.harness)
+                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
+                Ok(RpcReply::Stream(stream.boxed()))
+            }
+            methods::STUDIO_LAUNCHES => {
+                let launches = self
+                    .studio_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&StudioLaunchesResponse { launches })
+            }
+            methods::STUDIO_PUT_LAUNCHES => {
+                let p: StudioPutLaunchesRequest = parse_params(params)?;
+                let launches = self
+                    .studio_store
+                    .save(&p.launches)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&StudioLaunchesResponse { launches })
+            }
+            methods::STUDIO_GATE => {
+                let p: StudioGateRequest = parse_params(params)?;
+                let stream = self
+                    .studio_gate
+                    .run_gate(p.module, p.source)
+                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
+                Ok(RpcReply::Stream(stream.boxed()))
+            }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {
                 let version = self
@@ -1122,8 +1195,7 @@ impl RpcService for EngineRpc {
                         let base = crate::diff_sync::merge_base(root, base_ref)
                             .await
                             .map_err(|e| RpcError::Failed(e.to_string()))?;
-                        crate::diff_sync::capture_diff_against(&self.repos, root, Some(&base))
-                            .await
+                        crate::diff_sync::capture_diff_against(&self.repos, root, Some(&base)).await
                     }
                     "turn" => {
                         let chat_id = p
@@ -1135,8 +1207,7 @@ impl RpcService for EngineRpc {
                             .turn_snapshot(chat_id)
                             .filter(|s| s.root == identity.root)
                             .ok_or_else(|| RpcError::Failed("no turn recorded".into()))?;
-                        crate::diff_sync::capture_turn_diff(&self.repos, root, &snapshot.tree)
-                            .await
+                        crate::diff_sync::capture_turn_diff(&self.repos, root, &snapshot.tree).await
                     }
                     _ => crate::diff_sync::capture_diff(&self.repos, root).await,
                 }

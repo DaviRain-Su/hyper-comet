@@ -211,7 +211,7 @@ async fn pump(
         tokio::select! {
             frame = out_rx.recv() => match frame {
                 Some(bytes) => {
-                    if sink.send(WsMessage::Binary(bytes.into())).await.is_err() {
+                    if sink.send(WsMessage::Binary(bytes)).await.is_err() {
                         break;
                     }
                 }
@@ -618,8 +618,8 @@ impl Actor {
                     let _ = self.events.send(ChatEvent::Disconnected);
                     if ready.is_some() {
                         if let Some(ready) = ready.take() {
-                            let _ =
-                                ready.send(Err(SyncError::Protocol("chat2 handshake failed".into())));
+                            let _ = ready
+                                .send(Err(SyncError::Protocol("chat2 handshake failed".into())));
                         }
                         return;
                     }
@@ -771,9 +771,7 @@ impl Actor {
         let backfill = tokio::time::timeout(BACKFILL_DEADLINE, async {
             loop {
                 let bytes = pipe.rx.recv().await?;
-                let Some(frame) = wire::decode(&bytes) else {
-                    return None;
-                };
+                let frame = wire::decode(&bytes)?;
                 match frame.kind {
                     frame_type::ROWS_DONE => {
                         let done: wire::RowsDoneHeader =

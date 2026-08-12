@@ -33,9 +33,9 @@ use crate::popover::{self, Loadable};
 use crate::rail;
 use crate::settings::accounts::AccountsPage;
 use crate::settings::appearance::AppearancePage;
-use crate::settings::harnesses::HarnessesPage;
 use crate::settings::archived::ArchivedPage;
 use crate::settings::devices::DevicesPage;
+use crate::settings::harnesses::HarnessesPage;
 use crate::settings::notifications::{NotificationsEvent, NotificationsPage};
 use crate::settings::shortcuts::{ShortcutsEvent, ShortcutsPage};
 use crate::settings::{
@@ -46,6 +46,7 @@ use crate::state::{
     AppState, ConnectionStatus, EngineBootConfig, GatePhase, Indicator, OrgRow, format_time_ago,
     org_name_valid, parse_orgs, sort_memberships,
 };
+use crate::studio::StudioView;
 use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_height};
 use crate::theme::Theme;
 use crate::transcript::{self, Transcript};
@@ -184,6 +185,7 @@ impl SettingsSection {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
     Chat,
+    Studio,
     Settings(SettingsSection),
 }
 
@@ -229,6 +231,7 @@ impl SessionPanels {
 pub enum NavEntry {
     /// A chat route; the id of the selected chat ("" = the new-chat canvas).
     Chat(String),
+    Studio,
     Settings(SettingsSection),
 }
 
@@ -301,6 +304,10 @@ impl NavHistory {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
@@ -463,6 +470,7 @@ pub struct Shell {
     shortcuts_page: Option<Entity<ShortcutsPage>>,
     accounts_page: Option<Entity<AccountsPage>>,
     harnesses_page: Option<Entity<HarnessesPage>>,
+    studio_page: Option<Entity<StudioView>>,
     shortcuts_sub: Option<Subscription>,
     notifications_sub: Option<Subscription>,
     /// Session-row context menu: (chat id, window position).
@@ -638,6 +646,7 @@ impl Shell {
             Some("settings/notifications") => Route::Settings(SettingsSection::Notifications),
             Some("settings/shortcuts") => Route::Settings(SettingsSection::Shortcuts),
             Some("settings/archived") => Route::Settings(SettingsSection::Archived),
+            Some("studio") => Route::Studio,
             // `new` pins the new-chat canvas (suppresses boot auto-select).
             Some("new") => {
                 state.update(cx, |s, _| s.auto_selected = true);
@@ -661,6 +670,7 @@ impl Shell {
         };
         let nav = NavHistory::new(match route {
             Route::Chat => NavEntry::Chat(String::new()),
+            Route::Studio => NavEntry::Studio,
             Route::Settings(section) => NavEntry::Settings(section),
         });
         Self {
@@ -685,6 +695,7 @@ impl Shell {
             shortcuts_page: None,
             accounts_page: None,
             harnesses_page: None,
+            studio_page: None,
             shortcuts_sub: None,
             notifications_sub: None,
             chat_menu: popover::Popup::default(),
@@ -1212,6 +1223,19 @@ impl Shell {
         cx.notify();
     }
 
+    fn toggle_studio(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.route, Route::Studio) {
+            self.route = Route::Chat;
+            self.nav.push(NavEntry::Chat(self.active_chat.clone()));
+        } else {
+            self.route = Route::Studio;
+            self.nav.push(NavEntry::Studio);
+            self.close_user_menu(cx);
+            self.close_chat_menu(cx);
+        }
+        cx.notify();
+    }
+
     // ---- back/forward (route history) ----
 
     fn navigate_back(&mut self, cx: &mut Context<Self>) {
@@ -1237,6 +1261,9 @@ impl Shell {
                 if self.state.read(cx).selected_chat != target {
                     self.state.update(cx, |s, cx| s.select_chat(target, cx));
                 }
+            }
+            NavEntry::Studio => {
+                self.route = Route::Studio;
             }
             NavEntry::Settings(section) => {
                 self.route = Route::Settings(section);
@@ -1689,6 +1716,26 @@ impl Shell {
     fn render_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.route {
             Route::Chat => self.render_session_title_bar(cx),
+            Route::Studio => {
+                let inner = div()
+                    .size_full()
+                    .flex()
+                    .items_center()
+                    .pt(px(Theme::TITLEBAR_TOP_PAD))
+                    .pl(px(self.title_bar_content_start()))
+                    .pr(px(titlebar_right_padding(
+                        cfg!(target_os = "windows"),
+                        Theme::SPACE_LG,
+                    )))
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(Theme::of(cx).text)
+                            .child("Studio"),
+                    );
+                inner.into_any_element()
+            }
             Route::Settings(_) => {
                 let inner = div()
                     .size_full()
@@ -1887,7 +1934,7 @@ impl Shell {
         let theme = Theme::of(cx).clone();
         let inner: AnyElement = match self.route {
             Route::Settings(section) => self.render_settings_nav(section, &theme, cx),
-            Route::Chat => self.render_chat_sidebar(&theme, cx),
+            Route::Chat | Route::Studio => self.render_chat_sidebar(&theme, cx),
         };
         let target = self.sidebar_target();
         // Transparent — the sidebar sits directly on the frost shell; the main
@@ -2095,21 +2142,20 @@ impl Shell {
                     // Glyph slot: Done wears the check; every other status a
                     // dot in its color (the Working spinner lives at the
                     // row's bottom-right, not up here).
-                    let glyph: AnyElement =
-                        if status == comet_proto::ChatIndicator::Completed {
-                            icon(icons::CHECK)
-                                .size(px(11.0))
-                                .flex_none()
-                                .text_color(status_color)
-                                .into_any_element()
-                        } else {
-                            div()
-                                .size(px(6.0))
-                                .flex_none()
-                                .rounded_full()
-                                .bg(status_color)
-                                .into_any_element()
-                        };
+                    let glyph: AnyElement = if status == comet_proto::ChatIndicator::Completed {
+                        icon(icons::CHECK)
+                            .size(px(11.0))
+                            .flex_none()
+                            .text_color(status_color)
+                            .into_any_element()
+                    } else {
+                        div()
+                            .size(px(6.0))
+                            .flex_none()
+                            .rounded_full()
+                            .bg(status_color)
+                            .into_any_element()
+                    };
                     div()
                         .flex()
                         .flex_row()
@@ -2293,12 +2339,13 @@ impl Shell {
                     // Working rows animate the spinner at the row's
                     // bottom-right (the status word keeps its dot up top).
                     .when(status == comet_proto::ChatIndicator::Working, |el| {
-                        el.child(div().flex_1()).child(loaders::mini_gradient_spinner(
-                            format!("chat-working-{id}"),
-                            2.0,
-                            cx.entity_id(),
-                            cx,
-                        ))
+                        el.child(div().flex_1())
+                            .child(loaders::mini_gradient_spinner(
+                                format!("chat-working-{id}"),
+                                2.0,
+                                cx.entity_id(),
+                                cx,
+                            ))
                     }),
             )
             .into_any_element()
@@ -2378,6 +2425,37 @@ impl Shell {
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
         let filter_row = self.render_spaces_filter(theme, cx);
+        let studio_selected = matches!(self.route, Route::Studio);
+        let studio_row = div()
+            .id("sidebar-studio-toggle")
+            .mx(px(Theme::SPACE_SM))
+            .mt(px(4.0))
+            .mb(px(4.0))
+            .rounded(px(8.0))
+            .px(px(Theme::SPACE_SM))
+            .py(px(6.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .text_size(px(13.0))
+            .text_color(if studio_selected {
+                theme.text
+            } else {
+                theme.text_muted
+            })
+            .when(studio_selected, |el| {
+                el.bg(crate::theme::glass_selected_bg())
+                    .font_weight(gpui::FontWeight::MEDIUM)
+            })
+            .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_studio(cx)))
+            .child(
+                icon(icons::CHECKLIST)
+                    .size(px(16.0))
+                    .text_color(theme.text_muted),
+            )
+            .child("Studio");
 
         div()
             .w(px(self.settings.sidebar_width))
@@ -2387,6 +2465,7 @@ impl Shell {
             // (No titlebar strip: the unified window titlebar spans the whole
             // window above this column.)
             .child(filter_row)
+            .child(studio_row)
             // The (filtered) Sessions list scrolls inside an EdgeFade scope —
             // a true per-glyph gradient at active overflow edges. Glass-safe
             // (no painted overlay can fade content over see-through blur) and
@@ -2396,15 +2475,12 @@ impl Shell {
             // rode the previous frame's offset, so the last frame of a content
             // shrink (row archived while scrolled) left a phantom fade stuck
             // over an unscrollable list (user report).
-            .child(crate::edge_fade::edge_faded(
-                SIDEBAR_GLASS_FADE_BAND,
-                true,
-                true,
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
+            .child(
+                crate::edge_fade::edge_faded(
+                    SIDEBAR_GLASS_FADE_BAND,
+                    true,
+                    true,
+                    div().relative().flex_1().min_h_0().child(
                         div()
                             .id("sidebar-lists")
                             .size_full()
@@ -2435,8 +2511,9 @@ impl Shell {
                             })
                             .children(archived_section),
                     ),
+                )
+                .fade_overflow_y(&self.sidebar_scroll),
             )
-            .fade_overflow_y(&self.sidebar_scroll))
             // Update strip (above the user menu; below the lists).
             .when_some(self.render_update_strip(theme, cx), |el, strip| {
                 el.child(strip)
@@ -2762,8 +2839,11 @@ impl Shell {
                         .child(SharedString::from("Sign out")),
                 )
                 .into_any_element();
-            trigger =
-                trigger.child(popover::anchored_menu_above("user-menu-popover", menu, closing));
+            trigger = trigger.child(popover::anchored_menu_above(
+                "user-menu-popover",
+                menu,
+                closing,
+            ));
         }
         trigger.into_any_element()
     }
@@ -2992,6 +3072,24 @@ impl Shell {
         }
 
         let _ = (text, border);
+        if matches!(self.route, Route::Studio) {
+            if self.studio_page.is_none() {
+                let state = self.state.clone();
+                self.studio_page = Some(cx.new(|cx| StudioView::new(state, cx)));
+            }
+            return div()
+                .flex_1()
+                .min_w_0()
+                .h_full()
+                .pt(px(Theme::TITLEBAR_HEIGHT))
+                .child(
+                    self.studio_page
+                        .as_ref()
+                        .map(|page| page.clone().into_any_element())
+                        .unwrap_or_else(|| gpui::Empty.into_any_element()),
+                )
+                .into_any_element();
+        }
         let has_selection = self.state.read(cx).selected_chat.is_some();
         let has_spaces = !self.state.read(cx).spaces.is_empty();
         let no_project = self.state.read(cx).no_project;
@@ -3063,8 +3161,7 @@ impl Shell {
                                 .cursor_pointer()
                                 .hover(|s| s.text_color(theme.text_muted))
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    this.state
-                                        .update(cx, |s, cx| s.select_space(None, cx));
+                                    this.state.update(cx, |s, cx| s.select_space(None, cx));
                                 }))
                                 .child(SharedString::from("Or start without a project")),
                         ),
@@ -3175,18 +3272,20 @@ impl Shell {
                         .absolute()
                         .inset_0()
                         .bottom(px(term_h))
-                        .child(crate::edge_fade::edge_faded(
-                            Theme::TRANSCRIPT_FADE_BAND,
-                            true,
-                            true,
-                            div().size_full().child(outlet),
+                        .child(
+                            crate::edge_fade::edge_faded(
+                                Theme::TRANSCRIPT_FADE_BAND,
+                                true,
+                                true,
+                                div().size_full().child(outlet),
+                            )
+                            // Fully faded BY the titlebar's bottom edge (the
+                            // title text is opaque — overlap read as collision),
+                            // ramping in the band just below it.
+                            .inset_top(Theme::TITLEBAR_HEIGHT)
+                            .band_top(Theme::TRANSCRIPT_FADE_BAND)
+                            .band_bottom(bottom_band),
                         )
-                        // Fully faded BY the titlebar's bottom edge (the
-                        // title text is opaque — overlap read as collision),
-                        // ramping in the band just below it.
-                        .inset_top(Theme::TITLEBAR_HEIGHT)
-                        .band_top(Theme::TRANSCRIPT_FADE_BAND)
-                        .band_bottom(bottom_band))
                         .children(self.render_jump_to_bottom(stack_h, cx))
                 },
             )
@@ -3243,7 +3342,11 @@ impl Shell {
     /// `stack_h` is the measured bottom chrome stack the full-height
     /// transcript scrolls under — the pill anchors just above it (the -14
     /// carries the old status-strip overlap).
-    fn render_jump_to_bottom(&mut self, stack_h: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_jump_to_bottom(
+        &mut self,
+        stack_h: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.transcript.read(cx).jump_button_shown() {
             return None;
         }
@@ -3483,7 +3586,11 @@ impl Shell {
             // clipped into unreachability — user-reported dead resize),
             // overlapping the panel's left border.
             .left(px(0.0));
-        let panel_bg = if theme.is_glass() { bg.opacity(0.4) } else { bg };
+        let panel_bg = if theme.is_glass() {
+            bg.opacity(0.4)
+        } else {
+            bg
+        };
         let panel = div()
             .size_full()
             .flex()
@@ -4163,6 +4270,13 @@ impl Render for Shell {
             self.focus_sub = Some(cx.on_focus_lost(window, |this: &mut Shell, window, cx| {
                 match this.route {
                     Route::Chat => window.focus(&this.composer.focus_handle(cx), cx),
+                    Route::Studio => {
+                        if let Some(studio) = &this.studio_page {
+                            window.focus(&studio.read(cx).focus_handle(cx), cx);
+                        } else {
+                            window.blur();
+                        }
+                    }
                     // No composer here — clear the stale handle so `focused()`
                     // reads None (the render hook below re-lands focus when the
                     // route returns to Chat; a lingering unmounted handle would
@@ -4171,11 +4285,16 @@ impl Render for Shell {
                 }
             }));
         }
-        if matches!(gate, GatePhase::Ready)
-            && matches!(self.route, Route::Chat)
-            && window.focused(cx).is_none()
-        {
-            window.focus(&self.composer.focus_handle(cx), cx);
+        if matches!(gate, GatePhase::Ready) && window.focused(cx).is_none() {
+            match self.route {
+                Route::Chat => window.focus(&self.composer.focus_handle(cx), cx),
+                Route::Studio => {
+                    if let Some(studio) = &self.studio_page {
+                        window.focus(&studio.read(cx).focus_handle(cx), cx);
+                    }
+                }
+                Route::Settings(_) => {}
+            }
         }
 
         let root = div()
@@ -4352,14 +4471,7 @@ impl Render for Shell {
                             .child(card)
                             .child(right),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left_0()
-                            .right_0()
-                            .child(title_bar),
-                    )
+                    .child(div().absolute().top_0().left_0().right_0().child(title_bar))
                     .child(self.render_titlebar_cluster(cx))
                     .children(overlays);
                 root.child(sidebar_tone)

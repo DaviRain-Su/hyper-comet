@@ -115,6 +115,13 @@ pub mod methods {
     /// Download + apply the newest release on the target device (symlink-managed
     /// installs; the service restart is scheduled after the reply flushes).
     pub const APPLY_UPDATE: &str = "ApplyUpdate";
+    // ProofShip Launch Studio (local engine gate + launch store).
+    pub const STUDIO_STATUS: &str = "StudioStatus";
+    pub const STUDIO_DRAFT: &str = "StudioDraft";
+    pub const STUDIO_GATE: &str = "StudioGate";
+    pub const STUDIO_LAUNCH_RUN: &str = "StudioLaunchRun";
+    pub const STUDIO_LAUNCHES: &str = "StudioLaunches";
+    pub const STUDIO_PUT_LAUNCHES: &str = "StudioPutLaunches";
 }
 
 #[derive(Debug, thiserror::Error)]

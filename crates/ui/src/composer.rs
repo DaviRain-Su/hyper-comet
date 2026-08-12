@@ -122,7 +122,7 @@ pub const CARET_BLINK_MS: u64 = 500;
 /// through the first half-period (typing bursts never blink — each keystroke
 /// resets the phase), then alternating.
 pub fn caret_visible(ms_since_activity: u64) -> bool {
-    (ms_since_activity / CARET_BLINK_MS) % 2 == 0
+    (ms_since_activity / CARET_BLINK_MS).is_multiple_of(2)
 }
 
 /// Auto-grow: content height for a wrapped-line count.
@@ -3169,9 +3169,7 @@ fn mention_token(text: &str, cursor: usize) -> Option<MentionToken> {
         .rev()
         .find_map(|(at, ch)| ch.is_whitespace().then_some(at + ch.len_utf8()))
         .unwrap_or(0);
-    let Some(relative_at) = text[token_start..cursor].rfind('@') else {
-        return None;
-    };
+    let relative_at = text[token_start..cursor].rfind('@')?;
     let at = token_start + relative_at;
     let valid_boundary = at == 0
         || text[..at]

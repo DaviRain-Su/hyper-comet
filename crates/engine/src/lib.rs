@@ -14,8 +14,8 @@ use comet_sync::DocsStore;
 
 pub mod agent_accounts;
 pub mod auth;
-pub mod diff_sync;
 pub mod chat2_host;
+pub mod diff_sync;
 pub mod doc_host;
 pub mod instance_lock;
 pub mod registry;
@@ -24,6 +24,7 @@ pub mod rpc;
 pub mod run_journal;
 pub mod sessions;
 pub mod spaces;
+pub mod studio;
 pub mod terminals;
 pub mod titles;
 pub mod uploads;
@@ -43,6 +44,7 @@ pub use rpc::EngineRpc;
 pub use run_journal::{JournalError, RunJournal};
 pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
+pub use studio::{DraftRunner, StudioGate, StudioLaunchRunner, StudioStore};
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
 pub use uploads::{AttachmentChunk, Uploads};
@@ -105,6 +107,10 @@ pub struct EngineCore {
     pub terminals: Terminals,
     pub diff_sync: CheckoutDiffSync,
     pub spaces_sync: SpacesSync,
+    pub studio_gate: StudioGate,
+    pub studio_draft: DraftRunner,
+    pub studio_launch: StudioLaunchRunner,
+    pub studio_store: StudioStore,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -206,6 +212,17 @@ impl EngineCore {
             turn_diff.note_turn_start(chat_id, cwd);
         }));
         let spaces_sync = SpacesSync::start(repos.clone(), workspace.clone(), &device_id);
+        let studio_config = crate::studio::GateConfig {
+            paths: crate::studio::StudioPaths {
+                inbox_root: Some(data_dir.join("studio").join("inbox")),
+                ..crate::studio::StudioPaths::default()
+            },
+            ..crate::studio::GateConfig::default()
+        };
+        let studio_gate = StudioGate::new(studio_config.clone());
+        let studio_draft = DraftRunner::new(registry.clone(), studio_config);
+        let studio_launch = StudioLaunchRunner::new(studio_draft.clone(), studio_gate.clone());
+        let studio_store = StudioStore::new(data_dir);
         Ok(Self {
             sessions,
             doc_host,
@@ -215,6 +232,10 @@ impl EngineCore {
             terminals,
             diff_sync,
             spaces_sync,
+            studio_gate,
+            studio_draft,
+            studio_launch,
+            studio_store,
             uploads,
             agent_accounts,
             device_id,
@@ -329,6 +350,10 @@ impl EngineCore {
             self.diff_sync.clone(),
             self.uploads.clone(),
             self.agent_accounts.clone(),
+            self.studio_gate.clone(),
+            self.studio_draft.clone(),
+            self.studio_launch.clone(),
+            self.studio_store.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {
