@@ -1,7 +1,8 @@
-//! Studio right-pane Preview: local HTML dapp + in-app ABI mirror.
+//! Studio right-pane Preview: local HTML dapp + dedicated WebView window.
 //!
-//! Native WebView is not available in this gpui fork yet; the pane mirrors
-//! views/events in gpui and opens the full HTML dapp in the browser.
+//! In-pane child WebView is unreliable with gpui (Linux/Wayland). Preview Start
+//! opens a managed OS WebView via `proofship-webview` (wry) or Chromium `--app=`.
+//! The pane keeps an ABI mirror for no-arg views.
 
 use gpui::{
     App, Context, Entity, FocusHandle, Render, SharedString, Task, Window, div, prelude::*, px,
@@ -16,6 +17,7 @@ use comet_proto::{
 use comet_rpc::methods;
 
 use crate::state::AppState;
+use crate::studio_webview::StudioWebView;
 use crate::theme::Theme;
 
 pub struct StudioPreviewPane {
@@ -28,6 +30,8 @@ pub struct StudioPreviewPane {
     schema: Option<AbiFormSchema>,
     call_output: Option<String>,
     error: Option<String>,
+    webview_note: Option<String>,
+    webview: StudioWebView,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
     call_task: Option<Task<()>>,
@@ -45,6 +49,8 @@ impl StudioPreviewPane {
             schema: None,
             call_output: None,
             error: None,
+            webview_note: None,
+            webview: StudioWebView::new(),
             load_task: None,
             action_task: None,
             call_task: None,
@@ -180,6 +186,19 @@ impl StudioPreviewPane {
                 match result {
                     Ok(value) => match serde_json::from_value::<StudioPreviewStatus>(value) {
                         Ok(status) => {
+                            if let Some(url) = status.url.as_deref() {
+                                match pane.webview.open(url) {
+                                    Ok(backend) => {
+                                        pane.webview_note = Some(format!(
+                                            "WebView open via {}",
+                                            backend.label()
+                                        ));
+                                    }
+                                    Err(err) => {
+                                        pane.webview_note = Some(err);
+                                    }
+                                }
+                            }
                             pane.preview = Some(status);
                         }
                         Err(err) => pane.error = Some(err.to_string()),
@@ -196,6 +215,8 @@ impl StudioPreviewPane {
         let Some(engine) = self.state.read(cx).engine().cloned() else {
             return;
         };
+        self.webview.stop();
+        self.webview_note = None;
         self.action_task = Some(cx.spawn(async move |this, cx| {
             let _ = engine
                 .client()
@@ -213,6 +234,27 @@ impl StudioPreviewPane {
         if let Some(url) = self.preview.as_ref().and_then(|p| p.url.clone()) {
             cx.open_url(&url);
         }
+    }
+
+    fn open_webview(&mut self, cx: &mut Context<Self>) {
+        let Some(url) = self.preview.as_ref().and_then(|p| p.url.clone()) else {
+            self.webview_note = Some("Start preview first".into());
+            cx.notify();
+            return;
+        };
+        match self.webview.open(&url) {
+            Ok(backend) => {
+                self.webview_note = Some(format!("WebView open via {}", backend.label()));
+                self.error = None;
+            }
+            Err(err) => {
+                self.webview_note = Some(err.clone());
+                // Last resort: system browser.
+                cx.open_url(&url);
+                self.error = Some(format!("{err} — opened system browser instead"));
+            }
+        }
+        cx.notify();
     }
 
     fn call_view(&mut self, signature: String, cx: &mut Context<Self>) {
@@ -322,7 +364,12 @@ impl Render for StudioPreviewPane {
                                     )
                                     .when(self.preview.is_some(), |el| {
                                         el.child(
-                                            action_chip("Open", &theme).on_click(cx.listener(
+                                            action_chip("WebView", &theme).on_click(cx.listener(
+                                                |this, _, _, cx| this.open_webview(cx),
+                                            )),
+                                        )
+                                        .child(
+                                            action_chip("Browser", &theme).on_click(cx.listener(
                                                 |this, _, _, cx| this.open_browser(cx),
                                             )),
                                         )
@@ -339,9 +386,17 @@ impl Render for StudioPreviewPane {
                             .text_size(px(11.0))
                             .text_color(theme.text_muted)
                             .child(SharedString::from(
-                                "In-app ABI mirror + localhost HTML for X Layer. Open browser for the full dapp page (native WebView when gpui gains it).",
+                                "Start serves localhost HTML and opens a dedicated WebView window (wry or Chromium --app). ABI mirror stays in-pane.",
                             )),
-                    ),
+                    )
+                    .when_some(self.webview_note.clone(), |el, note| {
+                        el.child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(theme.text_dim)
+                                .child(SharedString::from(note)),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -538,7 +593,7 @@ impl Render for StudioPreviewPane {
                                                         .text_size(px(12.0))
                                                         .text_color(theme.text_muted)
                                                         .child(
-                                                            "In-app mirror below · Open for full HTML dapp (DESIGN.md). Native WebView pending gpui support.",
+                                                            "Dedicated WebView window shows the live HTML dapp. In-app mirror below for quick views.",
                                                         ),
                                                 )
                                                 .child(
@@ -546,12 +601,18 @@ impl Render for StudioPreviewPane {
                                                         .flex()
                                                         .gap(px(8.0))
                                                         .child(
-                                                            action_chip("Open in browser", &theme)
-                                                                .on_click(cx.listener(
-                                                                    |this, _, _, cx| {
-                                                                        this.open_browser(cx)
-                                                                    },
-                                                                )),
+                                                            action_chip("WebView", &theme).on_click(
+                                                                cx.listener(|this, _, _, cx| {
+                                                                    this.open_webview(cx)
+                                                                }),
+                                                            ),
+                                                        )
+                                                        .child(
+                                                            action_chip("Browser", &theme).on_click(
+                                                                cx.listener(|this, _, _, cx| {
+                                                                    this.open_browser(cx)
+                                                                }),
+                                                            ),
                                                         )
                                                         .child(
                                                             action_chip("Restart", &theme).on_click(
