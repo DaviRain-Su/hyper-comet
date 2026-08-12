@@ -74,7 +74,7 @@ use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
 use crate::studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioStore, WalletConnectBridge, WalletStore,
+    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, WalletConnectBridge, WalletStore,
     resolve_project_id,
 };
 use crate::terminals::Terminals;
@@ -400,6 +400,7 @@ pub struct EngineRpc {
     studio_interact: StudioInteract,
     studio_preview: StudioPreview,
     wallet_connect: WalletConnectBridge,
+    studio_relay: StudioRelay,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -428,6 +429,7 @@ impl EngineRpc {
         studio_interact: StudioInteract,
         studio_preview: StudioPreview,
         wallet_connect: WalletConnectBridge,
+        studio_relay: StudioRelay,
     ) -> Self {
         Self {
             sessions,
@@ -450,6 +452,7 @@ impl EngineRpc {
             studio_interact,
             studio_preview,
             wallet_connect,
+            studio_relay,
             auth: None,
             links: None,
             updater: None,
@@ -1166,9 +1169,74 @@ impl RpcService for EngineRpc {
             }
             methods::STUDIO_LAUNCH_RUN => {
                 let p: StudioLaunchRunRequest = parse_params(params)?;
+                let relay = self.studio_relay.clone();
+                relay.publish(
+                    "session.open",
+                    serde_json::json!({
+                        "nl": p.nl,
+                        "harness": p.harness,
+                    }),
+                );
                 let stream = self
                     .studio_launch
                     .launch_run(p.nl, p.harness)
+                    .inspect(move |event| match event {
+                        comet_proto::StudioLaunchRunEvent::Draft { event, .. } => {
+                            if let comet_proto::StudioDraftEvent::Done {
+                                ok: true,
+                                module,
+                                source,
+                                lane,
+                                ..
+                            } = event
+                            {
+                                relay.publish(
+                                    "draft.ready",
+                                    serde_json::json!({
+                                        "lane": lane,
+                                        "module": module,
+                                        "source": source,
+                                    }),
+                                );
+                            }
+                        }
+                        comet_proto::StudioLaunchRunEvent::Gate { event, .. } => {
+                            match event {
+                                comet_proto::StudioGateEvent::Started { .. } => {
+                                    relay.publish("gate.start", serde_json::json!({}));
+                                }
+                                comet_proto::StudioGateEvent::Done { ok, digest, .. } => {
+                                    relay.publish(
+                                        "gate.done",
+                                        serde_json::json!({
+                                            "ok": ok,
+                                            "digests": digest,
+                                        }),
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                        comet_proto::StudioLaunchRunEvent::Done {
+                            ok,
+                            artifacts,
+                            digest,
+                            exhausted,
+                            ..
+                        } => {
+                            if *ok {
+                                relay.publish(
+                                    "artifact.sealed",
+                                    serde_json::json!({
+                                        "outputSetDigest": digest.output_set_digest,
+                                        "files": artifacts,
+                                    }),
+                                );
+                            } else if *exhausted {
+                                relay.note("repair exhausted");
+                            }
+                        }
+                    })
                     .filter_map(|event| async move { serde_json::to_value(&event).ok() });
                 Ok(RpcReply::Stream(stream.boxed()))
             }

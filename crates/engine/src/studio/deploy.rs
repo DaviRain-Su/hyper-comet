@@ -94,14 +94,21 @@ pub struct StudioDeployer {
     gate: StudioGate,
     inbox_root: PathBuf,
     store: DeployStore,
+    wallet_connect: crate::studio::WalletConnectBridge,
 }
 
 impl StudioDeployer {
-    pub fn new(gate: StudioGate, inbox_root: PathBuf, store: DeployStore) -> Self {
+    pub fn new(
+        gate: StudioGate,
+        inbox_root: PathBuf,
+        store: DeployStore,
+        wallet_connect: crate::studio::WalletConnectBridge,
+    ) -> Self {
         Self {
             gate,
             inbox_root,
             store,
+            wallet_connect,
         }
     }
 
@@ -114,9 +121,20 @@ impl StudioDeployer {
         let gate = self.gate.clone();
         let inbox_root = self.inbox_root.clone();
         let store = self.store.clone();
+        let wallet_connect = self.wallet_connect.clone();
         let (tx, rx) = mpsc::channel(16);
         tokio::spawn(async move {
-            deploy_inner(req, network, wallet, gate, inbox_root, store, tx).await;
+            deploy_inner(
+                req,
+                network,
+                wallet,
+                gate,
+                inbox_root,
+                store,
+                wallet_connect,
+                tx,
+            )
+            .await;
         });
         futures::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|item| (item, rx))
@@ -132,22 +150,29 @@ pub fn preflight(network: &EvmNetwork, wallet: &WalletAccount) -> Result<(), Str
             return Err("watch-only wallets cannot sign deploy transactions".into());
         }
         WalletSource::WalletConnect => {
-            return Err("WalletConnect signing is not implemented yet".into());
+            if wallet.address.trim().is_empty() {
+                return Err(
+                    "WalletConnect wallet has no address — Connect in Settings → Wallets first"
+                        .into(),
+                );
+            }
         }
-        WalletSource::DevEnvKey => {}
+        WalletSource::DevEnvKey => {
+            if MAINNET_CHAIN_IDS.contains(&network.chain_id) {
+                return Err(format!(
+                    "DevEnvKey wallets cannot deploy to mainnet (chain id {}); use a testnet only",
+                    network.chain_id
+                ));
+            }
+        }
     }
-    if MAINNET_CHAIN_IDS.contains(&network.chain_id) {
-        return Err(format!(
-            "DevEnvKey wallets cannot deploy to mainnet (chain id {}); use a testnet only",
-            network.chain_id
-        ));
-    }
-    if wallet
-        .env_key_name
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .is_empty()
+    if wallet.source == WalletSource::DevEnvKey
+        && wallet
+            .env_key_name
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
     {
         return Err("DevEnvKey wallet missing env_key_name".into());
     }
@@ -169,6 +194,7 @@ async fn deploy_inner(
     gate: StudioGate,
     inbox_root: PathBuf,
     store: DeployStore,
+    wallet_connect: crate::studio::WalletConnectBridge,
     tx: mpsc::Sender<StudioDeployEvent>,
 ) {
     let network_id = req.network_id.clone();
@@ -277,32 +303,41 @@ async fn deploy_inner(
         })
         .await;
 
-    let env_name = wallet.env_key_name.as_deref().unwrap_or("");
-    let private_key = match std::env::var(env_name) {
-        Ok(key) if !key.trim().is_empty() => key,
-        Ok(_) => {
-            let _ = tx
-                .send(StudioDeployEvent::Done {
-                    ok: false,
-                    record: None,
-                    error: Some(format!("env var '{env_name}' is empty")),
-                })
-                .await;
-            return;
+    let send_result = match wallet.source {
+        WalletSource::DevEnvKey => {
+            let env_name = wallet.env_key_name.as_deref().unwrap_or("");
+            match std::env::var(env_name) {
+                Ok(key) if !key.trim().is_empty() => {
+                    run_cast_create(&cast, &network.rpc_url, &key, &create_data).await
+                }
+                Ok(_) => Err(format!("env var '{env_name}' is empty")),
+                Err(_) => Err(format!("env var '{env_name}' is not set")),
+            }
         }
-        Err(_) => {
-            let _ = tx
-                .send(StudioDeployEvent::Done {
-                    ok: false,
-                    record: None,
-                    error: Some(format!("env var '{env_name}' is not set")),
-                })
-                .await;
-            return;
+        WalletSource::WalletConnect => {
+            let from = wallet.address.clone();
+            let tx_obj = serde_json::json!({
+                "from": from,
+                "data": create_data,
+                "chainId": format!("0x{:x}", network.chain_id),
+            });
+            match wallet_connect
+                .request_send_transaction(&from, tx_obj)
+                .await
+            {
+                Ok(tx_hash) => {
+                    match crate::studio::wait_contract_address(&network.rpc_url, &tx_hash).await {
+                        Ok(address) => Ok((address, tx_hash)),
+                        Err(err) => Err(err),
+                    }
+                }
+                Err(err) => Err(err),
+            }
         }
+        WalletSource::Watch => Err("watch-only wallets cannot sign".into()),
     };
 
-    match run_cast_create(&cast, &network.rpc_url, &private_key, &create_data).await {
+    match send_result {
         Ok((address, tx_hash)) => {
             let record = DeploymentRecord {
                 id: Uuid::new_v4().to_string(),
@@ -622,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_wallet_connect() {
+    fn preflight_rejects_wallet_connect_without_address() {
         let wallet = WalletAccount {
             id: "wc".into(),
             label: "wc".into(),
@@ -632,7 +667,21 @@ mod tests {
         };
         let err = preflight(&xlayer_testnet(), &wallet).unwrap_err();
         assert!(err.contains("WalletConnect"));
-        assert!(err.contains("not implemented"));
+        assert!(err.contains("address"));
+    }
+
+    #[test]
+    fn preflight_accepts_wallet_connect_with_address() {
+        let wallet = WalletAccount {
+            id: "wc".into(),
+            label: "wc".into(),
+            address: "0x0000000000000000000000000000000000000001".into(),
+            source: WalletSource::WalletConnect,
+            env_key_name: None,
+        };
+        preflight(&xlayer_testnet(), &wallet).unwrap();
+        // WC may also target mainnet — that is intentional (user wallet).
+        preflight(&xlayer_mainnet(), &wallet).unwrap();
     }
 
     #[test]

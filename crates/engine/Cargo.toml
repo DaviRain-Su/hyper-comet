@@ -32,9 +32,9 @@ libc.workspace = true
 sha2.workspace = true
 reqwest.workspace = true
 ignore.workspace = true
+tokio-tungstenite.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tokio-tungstenite.workspace = true
 # In-process registry server for the two-engine workspace integration tests.
 comet-sync = { workspace = true, features = ["mock-server"] }

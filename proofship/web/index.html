@@ -41,6 +41,31 @@
       <h2>Event tail</h2>
       <ul id="events" class="events"></ul>
     </section>
+
+    <section class="panel span">
+      <h2>Contract interact (browser)</h2>
+      <p class="lede">
+        Paste ABI JSON + address to call views via your RPC. Writes use
+        <code>window.ethereum</code> when present (Phase 3.3 stub).
+      </p>
+      <label class="field">
+        RPC URL
+        <input id="rpc" type="url" placeholder="https://…" spellcheck="false"/>
+      </label>
+      <label class="field">
+        Contract address
+        <input id="address" type="text" placeholder="0x…" spellcheck="false"/>
+      </label>
+      <label class="field">
+        ABI JSON
+        <textarea id="abi" rows="6" placeholder='[{"type":"function",…}]' spellcheck="false"></textarea>
+      </label>
+      <div class="row">
+        <button id="load-abi" type="button">Load views</button>
+      </div>
+      <div id="views" class="views"></div>
+      <p id="call-status" class="status"></p>
+    </section>
   </main>
 
   <footer class="foot">

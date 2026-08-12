@@ -5,20 +5,25 @@ use std::process::Stdio;
 
 use comet_proto::{
     EvmNetwork, StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse,
-    WalletAccount,
+    WalletAccount, WalletSource,
 };
 use tokio::process::Command;
 
 use super::deploy::{preflight, resolve_cast};
+use super::WalletConnectBridge;
 
 #[derive(Debug, Clone)]
 pub struct StudioInteract {
     inbox_root: PathBuf,
+    wallet_connect: WalletConnectBridge,
 }
 
 impl StudioInteract {
-    pub fn new(inbox_root: PathBuf) -> Self {
-        Self { inbox_root }
+    pub fn new(inbox_root: PathBuf, wallet_connect: WalletConnectBridge) -> Self {
+        Self {
+            inbox_root,
+            wallet_connect,
+        }
     }
 
     pub async fn load_abi(&self, module: &str) -> Result<StudioAbiResponse, String> {
@@ -40,7 +45,7 @@ impl StudioInteract {
         network: EvmNetwork,
         wallet: Option<WalletAccount>,
     ) -> StudioCallResponse {
-        match call_inner(req, network, wallet).await {
+        match call_inner(req, network, wallet, &self.wallet_connect).await {
             Ok(resp) => resp,
             Err(err) => StudioCallResponse {
                 ok: false,
@@ -89,6 +94,7 @@ async fn call_inner(
     req: StudioCallRequest,
     network: EvmNetwork,
     wallet: Option<WalletAccount>,
+    wallet_connect: &WalletConnectBridge,
 ) -> Result<StudioCallResponse, String> {
     if !req.address.starts_with("0x") || req.address.len() != 42 {
         return Err("address must be 0x + 40 hex chars".into());
@@ -119,34 +125,63 @@ async fn call_inner(
         StudioCallKind::Send => {
             let wallet = wallet.ok_or_else(|| "walletId required for send".to_string())?;
             preflight(&network, &wallet)?;
-            let env_name = wallet
-                .env_key_name
-                .as_deref()
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| "DevEnvKey wallet missing env_key_name".to_string())?;
-            let key =
-                std::env::var(env_name).map_err(|_| format!("env var '{env_name}' is not set"))?;
-            if key.trim().is_empty() {
-                return Err(format!("env var '{env_name}' is empty"));
+            match wallet.source {
+                WalletSource::DevEnvKey => {
+                    let env_name = wallet
+                        .env_key_name
+                        .as_deref()
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| "DevEnvKey wallet missing env_key_name".to_string())?;
+                    let key = std::env::var(env_name)
+                        .map_err(|_| format!("env var '{env_name}' is not set"))?;
+                    if key.trim().is_empty() {
+                        return Err(format!("env var '{env_name}' is empty"));
+                    }
+                    let mut prefix = vec![
+                        "send".into(),
+                        "--json".into(),
+                        "--rpc-url".into(),
+                        network.rpc_url,
+                        "--private-key".into(),
+                        key,
+                        req.address,
+                        req.signature,
+                    ];
+                    prefix.extend(req.args);
+                    let output = run_cast(&cast, &prefix, &[], Some("--private-key")).await?;
+                    let tx_hash = parse_tx_hash(&output);
+                    Ok(StudioCallResponse {
+                        ok: true,
+                        output,
+                        tx_hash,
+                    })
+                }
+                WalletSource::WalletConnect => {
+                    let mut calldata_args = vec!["calldata".into(), req.signature.clone()];
+                    calldata_args.extend(req.args.clone());
+                    let data = run_cast(&cast, &calldata_args, &[], None).await?;
+                    let data = data.trim().to_string();
+                    if !data.starts_with("0x") {
+                        return Err(format!("cast calldata returned unexpected output: {data}"));
+                    }
+                    let from = wallet.address.clone();
+                    let tx_obj = serde_json::json!({
+                        "from": from,
+                        "to": req.address,
+                        "data": data,
+                        "chainId": format!("0x{:x}", network.chain_id),
+                    });
+                    let tx_hash = wallet_connect
+                        .request_send_transaction(&from, tx_obj)
+                        .await?;
+                    Ok(StudioCallResponse {
+                        ok: true,
+                        output: tx_hash.clone(),
+                        tx_hash: Some(tx_hash),
+                    })
+                }
+                WalletSource::Watch => Err("watch-only wallets cannot sign".into()),
             }
-            let mut prefix = vec![
-                "send".into(),
-                "--json".into(),
-                "--rpc-url".into(),
-                network.rpc_url,
-                "--private-key".into(),
-                key,
-                req.address,
-                req.signature,
-            ];
-            prefix.extend(req.args);
-            let output = run_cast(&cast, &prefix, &[], Some("--private-key")).await?;
-            let tx_hash = parse_tx_hash(&output);
-            Ok(StudioCallResponse {
-                ok: true,
-                output,
-                tx_hash,
-            })
         }
     }
 }
@@ -235,7 +270,7 @@ mod tests {
         tokio::fs::write(out.join("RwaShareRegistry.abi.json"), abi)
             .await
             .unwrap();
-        let interact = StudioInteract::new(dir.path().to_path_buf());
+        let interact = StudioInteract::new(dir.path().to_path_buf(), WalletConnectBridge::new());
         let resp = interact.load_abi("RwaShareRegistry").await.unwrap();
         let schema = comet_abi::schema_from_abi_json(&resp.abi_json).unwrap();
         assert!(schema.constructor.is_some());

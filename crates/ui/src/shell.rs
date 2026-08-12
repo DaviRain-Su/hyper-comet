@@ -1276,6 +1276,15 @@ impl Shell {
             self.nav.push(NavEntry::Studio);
             self.close_user_menu(cx);
             self.close_chat_menu(cx);
+            // Codex-style: open the right Preview pane when entering Studio.
+            let key = self.panel_key(cx);
+            if !self.panels.get(&key).changes_open {
+                let from = self.right_target(cx);
+                self.panels.toggle_changes(&key);
+                let preview = self.studio_preview_pane(cx);
+                preview.update(cx, |pane, cx| pane.refresh(cx));
+                self.right_tween = Some(WidthTween::new(from, self.right_target(cx)));
+            }
         }
         cx.notify();
     }

@@ -111,3 +111,97 @@ els.connect.addEventListener("click", () => {
   });
   socket.addEventListener("error", () => setStatus("WebSocket error.", "err"));
 });
+
+// ---- Phase 3.3 interact stub ----
+const interact = {
+  rpc: document.getElementById("rpc"),
+  address: document.getElementById("address"),
+  abi: document.getElementById("abi"),
+  load: document.getElementById("load-abi"),
+  views: document.getElementById("views"),
+  status: document.getElementById("call-status"),
+};
+
+function setCallStatus(text, err = false) {
+  interact.status.textContent = text;
+  interact.status.className = `status${err ? " err" : ""}`;
+}
+
+async function ensureEthers() {
+  if (window.ethers) return window.ethers;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js";
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("failed to load ethers"));
+    document.head.appendChild(s);
+  });
+  return window.ethers;
+}
+
+interact.load.addEventListener("click", async () => {
+  interact.views.innerHTML = "";
+  let abi;
+  try {
+    abi = JSON.parse(interact.abi.value);
+  } catch (err) {
+    setCallStatus(String(err), true);
+    return;
+  }
+  const views = abi.filter(
+    (item) =>
+      item.type === "function" &&
+      (item.stateMutability === "view" || item.stateMutability === "pure"),
+  );
+  if (!views.length) {
+    setCallStatus("No view/pure functions in ABI.", true);
+    return;
+  }
+  setCallStatus(`${views.length} view(s) loaded`);
+  for (const fn of views) {
+    const card = document.createElement("div");
+    card.className = "view-card";
+    const sig = `${fn.name}(${(fn.inputs || []).map((i) => i.type).join(",")})`;
+    card.innerHTML = `<strong>${sig}</strong>`;
+    const inputs = [];
+    for (const [i, input] of (fn.inputs || []).entries()) {
+      const field = document.createElement("input");
+      field.placeholder = `${input.name || `arg${i}`} (${input.type})`;
+      card.appendChild(field);
+      inputs.push(field);
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "eth_call";
+    const out = document.createElement("div");
+    out.className = "status";
+    btn.addEventListener("click", async () => {
+      try {
+        const ethers = await ensureEthers();
+        const iface = new ethers.Interface(abi);
+        const args = inputs.map((el) => el.value.trim());
+        const data = iface.encodeFunctionData(fn.name, args);
+        const res = await fetch(interact.rpc.value.trim(), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_call",
+            params: [{ to: interact.address.value.trim(), data }, "latest"],
+          }),
+        });
+        const body = await res.json();
+        if (body.error) throw new Error(body.error.message || JSON.stringify(body.error));
+        const decoded = iface.decodeFunctionResult(fn.name, body.result);
+        out.textContent = decoded.map(String).join(", ");
+      } catch (err) {
+        out.textContent = String(err && err.message ? err.message : err);
+        out.className = "status err";
+      }
+    });
+    card.appendChild(btn);
+    card.appendChild(out);
+    interact.views.appendChild(card);
+  }
+});

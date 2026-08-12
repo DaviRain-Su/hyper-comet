@@ -63,7 +63,9 @@
 | 3.3 web 交互台 | viem + 2.4 的 ABI schema;钱包=浏览器注入/WalletConnect |
 | 3.4 部署(web) | 引擎仍是唯一部署执行者(key 不过 relay;安全纪律不变) |
 
-**进度(2026-08-12):** 3.1 静态壳已落在 `proofship/web/`(relay 旁观表单 + snapshot/tail)。3.2 engine→relay 的 Rust WS 客户端、3.3/3.4 待做。
+**进度(2026-08-12):** 3.1 静态壳已落在 `proofship/web/`(relay 旁观 + ABI eth_call stub)。3.2 engine→relay Rust WS 客户端已接(`PROOFSHIP_RELAY`);web prompt 先记 note,完整 StudioLaunchRun 入队下一刀。3.4 待做。
+
+| 2.2 钱包连接 | … | Connect + **会话签名** ✅(bridge 页 keep-alive + pending eth_sendTransaction);部署/交互可走 WC |
 
 ### Phase 4 — 平台账户与云(多用户)
 

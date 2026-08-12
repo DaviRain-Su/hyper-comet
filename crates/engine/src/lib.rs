@@ -46,7 +46,7 @@ pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
 pub use studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioStore, WalletConnectBridge, WalletStore,
+    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, WalletConnectBridge, WalletStore,
 };
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
@@ -121,6 +121,7 @@ pub struct EngineCore {
     pub studio_interact: StudioInteract,
     pub studio_preview: StudioPreview,
     pub wallet_connect: WalletConnectBridge,
+    pub studio_relay: StudioRelay,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -237,11 +238,16 @@ impl EngineCore {
         let wallet_store = WalletStore::new(data_dir);
         let deploy_store = DeployStore::new(data_dir);
         let inbox_root = data_dir.join("studio").join("inbox");
-        let studio_deploy =
-            StudioDeployer::new(studio_gate.clone(), inbox_root.clone(), deploy_store.clone());
-        let studio_interact = StudioInteract::new(inbox_root);
-        let studio_preview = StudioPreview::new();
         let wallet_connect = WalletConnectBridge::new();
+        let studio_deploy = StudioDeployer::new(
+            studio_gate.clone(),
+            inbox_root.clone(),
+            deploy_store.clone(),
+            wallet_connect.clone(),
+        );
+        let studio_interact = StudioInteract::new(inbox_root, wallet_connect.clone());
+        let studio_preview = StudioPreview::new();
+        let studio_relay = StudioRelay::new();
         Ok(Self {
             sessions,
             doc_host,
@@ -262,6 +268,7 @@ impl EngineCore {
             studio_interact,
             studio_preview,
             wallet_connect,
+            studio_relay,
             uploads,
             agent_accounts,
             device_id,
@@ -365,7 +372,34 @@ impl EngineCore {
         comet_rpc::HostRelay::spawn(config, self.rpc_service(), on_nudge)
     }
 
+    /// Start the Cloudflare Studio relay client when `PROOFSHIP_RELAY` is set.
+    /// Safe to call multiple times (only the first connect sticks).
+    pub fn boot_studio_relay(&self) {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            if let Some(mut cmds) = self.studio_relay.start_from_env() {
+                let relay = self.studio_relay.clone();
+                tokio::spawn(async move {
+                    while let Some(cmd) = cmds.recv().await {
+                        match cmd.kind {
+                            crate::studio::RelayCommandKind::Prompt => {
+                                relay.note(&format!(
+                                    "web prompt received (run from desktop Studio to execute): {}",
+                                    cmd.nl.unwrap_or_default()
+                                ));
+                            }
+                            crate::studio::RelayCommandKind::Cancel => {
+                                relay.note("web cancel received");
+                            }
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     pub fn rpc_service(&self) -> Arc<EngineRpc> {
+        self.boot_studio_relay();
         let mut rpc = EngineRpc::new(
             self.sessions.clone(),
             self.doc_host.clone(),
@@ -387,6 +421,7 @@ impl EngineCore {
             self.studio_interact.clone(),
             self.studio_preview.clone(),
             self.wallet_connect.clone(),
+            self.studio_relay.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {

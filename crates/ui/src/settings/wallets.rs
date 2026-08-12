@@ -388,7 +388,7 @@ impl WalletsPage {
                         vec![
                             div()
                                 .child(SharedString::from(
-                                    "Opens a local bridge page — QR / extension. Requires PROOFSHIP_WC_PROJECT_ID.",
+                                    "Opens a local bridge page — keep that tab open for signing. Requires PROOFSHIP_WC_PROJECT_ID.",
                                 ))
                                 .into_any_element(),
                         ],
