@@ -59,8 +59,9 @@ use comet_proto::{
     ChatConfig, HarnessId, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
     RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
     StudioDeployRequest, StudioDraftRequest, StudioGateRequest, StudioLaunchRunRequest,
-    StudioLaunchesResponse, StudioPutLaunchesRequest, ToolCall, UpsertNetworkRequest,
-    UpsertWalletRequest, WalletsResponse,
+    StudioLaunchesResponse, StudioPreviewStartRequest, StudioPreviewStatus,
+    StudioPutLaunchesRequest, ToolCall, UpsertNetworkRequest, UpsertWalletRequest,
+    WalletConnectStartRequest, WalletConnectStartResponse, WalletsResponse,
 };
 use comet_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
@@ -73,7 +74,8 @@ use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
 use crate::studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioStore, WalletStore,
+    StudioLaunchRunner, StudioPreview, StudioStore, WalletConnectBridge, WalletStore,
+    resolve_project_id,
 };
 use crate::terminals::Terminals;
 use crate::uploads::Uploads;
@@ -396,6 +398,8 @@ pub struct EngineRpc {
     deploy_store: DeployStore,
     studio_deploy: StudioDeployer,
     studio_interact: StudioInteract,
+    studio_preview: StudioPreview,
+    wallet_connect: WalletConnectBridge,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -422,6 +426,8 @@ impl EngineRpc {
         deploy_store: DeployStore,
         studio_deploy: StudioDeployer,
         studio_interact: StudioInteract,
+        studio_preview: StudioPreview,
+        wallet_connect: WalletConnectBridge,
     ) -> Self {
         Self {
             sessions,
@@ -442,6 +448,8 @@ impl EngineRpc {
             deploy_store,
             studio_deploy,
             studio_interact,
+            studio_preview,
+            wallet_connect,
             auth: None,
             links: None,
             updater: None,
@@ -844,6 +852,11 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_DEPLOY
             | methods::STUDIO_ABI
             | methods::STUDIO_CALL
+            | methods::STUDIO_PREVIEW_START
+            | methods::STUDIO_PREVIEW_STOP
+            | methods::STUDIO_PREVIEW_STATUS
+            | methods::STUDIO_WC_START
+            | methods::STUDIO_WC_STOP
     )
 }
 
@@ -1304,6 +1317,80 @@ impl RpcService for EngineRpc {
                 };
                 let resp = self.studio_interact.call(p, network, wallet).await;
                 RpcReply::value(&resp)
+            }
+            methods::STUDIO_PREVIEW_START => {
+                let p: StudioPreviewStartRequest = parse_params(params)?;
+                let network = self
+                    .network_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                    .into_iter()
+                    .find(|n| n.id == p.network_id)
+                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
+                let abi = self
+                    .studio_interact
+                    .load_abi(&p.module)
+                    .await
+                    .map_err(RpcError::Failed)?;
+                let html = comet_abi::render_dapp_html(&comet_abi::DappPreviewConfig {
+                    title: p.module.clone(),
+                    module: p.module.clone(),
+                    address: p.address.clone(),
+                    chain_id: network.chain_id,
+                    rpc_url: network.rpc_url.clone(),
+                    explorer_url: network.explorer_url.clone(),
+                    currency_symbol: network.currency_symbol.clone(),
+                    abi_json: abi.abi_json,
+                })
+                .map_err(RpcError::Failed)?;
+                let status = self
+                    .studio_preview
+                    .start(html, p.module, p.address)
+                    .await
+                    .map_err(RpcError::Failed)?;
+                RpcReply::value(&StudioPreviewStatus {
+                    url: Some(status.url),
+                    module: Some(status.module),
+                    address: Some(status.address),
+                })
+            }
+            methods::STUDIO_PREVIEW_STOP => {
+                self.studio_preview.stop().await;
+                RpcReply::value(&StudioPreviewStatus {
+                    url: None,
+                    module: None,
+                    address: None,
+                })
+            }
+            methods::STUDIO_PREVIEW_STATUS => {
+                let status = self.studio_preview.status().await;
+                RpcReply::value(&StudioPreviewStatus {
+                    url: status.as_ref().map(|s| s.url.clone()),
+                    module: status.as_ref().map(|s| s.module.clone()),
+                    address: status.as_ref().map(|s| s.address.clone()),
+                })
+            }
+            methods::STUDIO_WC_START => {
+                let p: WalletConnectStartRequest = parse_params(params)?;
+                let project_id = resolve_project_id(p.project_id.as_deref()).ok_or_else(|| {
+                    RpcError::Failed(
+                        "WalletConnect project id required — set PROOFSHIP_WC_PROJECT_ID or pass projectId"
+                            .into(),
+                    )
+                })?;
+                let started = self
+                    .wallet_connect
+                    .start(project_id, p.label, self.wallet_store.clone())
+                    .await
+                    .map_err(RpcError::Failed)?;
+                RpcReply::value(&WalletConnectStartResponse {
+                    url: started.url,
+                    label: started.label,
+                })
+            }
+            methods::STUDIO_WC_STOP => {
+                self.wallet_connect.stop().await;
+                RpcReply::value(&serde_json::json!({ "ok": true }))
             }
             methods::STUDIO_GATE => {
                 let p: StudioGateRequest = parse_params(params)?;

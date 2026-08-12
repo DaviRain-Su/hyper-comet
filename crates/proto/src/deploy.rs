@@ -9,6 +9,9 @@ pub struct DeploymentRecord {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<String>,
+    /// Program / artifact module name (e.g. `RwaShareRegistry`).
+    #[serde(default)]
+    pub module: String,
     pub network_id: String,
     pub address: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

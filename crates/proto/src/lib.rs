@@ -10,8 +10,10 @@ pub mod entities;
 pub mod interact;
 pub mod motion;
 pub mod networks;
+pub mod preview;
 pub mod studio;
 pub mod view;
+pub mod walletconnect;
 pub mod wallets;
 
 pub use agent::*;
@@ -19,5 +21,7 @@ pub use deploy::*;
 pub use entities::*;
 pub use interact::*;
 pub use networks::*;
+pub use preview::*;
 pub use studio::*;
+pub use walletconnect::*;
 pub use wallets::*;

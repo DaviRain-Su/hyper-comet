@@ -134,6 +134,11 @@ pub mod methods {
     pub const STUDIO_DEPLOY: &str = "StudioDeploy";
     pub const STUDIO_ABI: &str = "StudioAbi";
     pub const STUDIO_CALL: &str = "StudioCall";
+    pub const STUDIO_PREVIEW_START: &str = "StudioPreviewStart";
+    pub const STUDIO_PREVIEW_STOP: &str = "StudioPreviewStop";
+    pub const STUDIO_PREVIEW_STATUS: &str = "StudioPreviewStatus";
+    pub const STUDIO_WC_START: &str = "StudioWalletConnectStart";
+    pub const STUDIO_WC_STOP: &str = "StudioWalletConnectStop";
 }
 
 #[derive(Debug, thiserror::Error)]

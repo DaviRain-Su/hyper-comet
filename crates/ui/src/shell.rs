@@ -49,6 +49,7 @@ use crate::state::{
     org_name_valid, parse_orgs, sort_memberships,
 };
 use crate::studio::StudioView;
+use crate::studio_preview::StudioPreviewPane;
 use crate::terminal::panel::{TerminalPanel, ToggleTerminal, clamp_terminal_height};
 use crate::theme::Theme;
 use crate::transcript::{self, Transcript};
@@ -469,6 +470,7 @@ pub struct Shell {
     /// Lazy panes: no entity (and no RPC) until first opened.
     terminal: Option<Entity<TerminalPanel>>,
     changes: Option<Entity<Changes>>,
+    studio_preview: Option<Entity<StudioPreviewPane>>,
     /// Chat outlet vs settings pages.
     route: Route,
     /// Route history behind the titlebar back/forward buttons (§ nav history).
@@ -700,6 +702,7 @@ impl Shell {
             archived_hover: None,
             terminal: None,
             changes: None,
+            studio_preview: None,
             route,
             nav,
             devices_page: None,
@@ -1004,7 +1007,12 @@ impl Shell {
     }
 
     fn right_pane_open(&self, cx: &App) -> bool {
-        self.panels.get(&self.panel_key(cx)).changes_open && self.space_git_detected(cx)
+        let flag = self.panels.get(&self.panel_key(cx)).changes_open;
+        if matches!(self.route, Route::Studio) {
+            flag
+        } else {
+            flag && self.space_git_detected(cx)
+        }
     }
 
     /// The current chat's terminal flag (per-session, in-memory).
@@ -1035,8 +1043,8 @@ impl Shell {
     }
 
     fn toggle_right_pane(&mut self, cx: &mut Context<Self>) {
-        // No git in this space → no diff pane, Cmd-B goes dead.
-        if !self.space_git_detected(cx) {
+        // Chat: no git → no Changes. Studio: Preview is always available.
+        if !matches!(self.route, Route::Studio) && !self.space_git_detected(cx) {
             return;
         }
         let from = self.right_target(cx);
@@ -1049,10 +1057,15 @@ impl Shell {
         }
         self.right_tween = Some(WidthTween::new(from, self.right_target(cx)));
         if open {
-            // Lazy: the Changes entity (and its WatchCheckoutDiffs) exists only
-            // once the pane has been opened.
-            let changes = self.changes_pane(cx);
-            changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+            if matches!(self.route, Route::Studio) {
+                let preview = self.studio_preview_pane(cx);
+                preview.update(cx, |pane, cx| pane.refresh(cx));
+            } else {
+                // Lazy: the Changes entity (and its WatchCheckoutDiffs) exists only
+                // once the pane has been opened.
+                let changes = self.changes_pane(cx);
+                changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+            }
         }
         cx.notify();
     }
@@ -1064,6 +1077,15 @@ impl Shell {
         let changes = cx.new(|cx| Changes::new(self.state.clone(), cx));
         self.changes = Some(changes.clone());
         changes
+    }
+
+    fn studio_preview_pane(&mut self, cx: &mut Context<Self>) -> Entity<StudioPreviewPane> {
+        if let Some(pane) = &self.studio_preview {
+            return pane.clone();
+        }
+        let pane = cx.new(|cx| StudioPreviewPane::new(self.state.clone(), cx));
+        self.studio_preview = Some(pane.clone());
+        pane
     }
 
     fn terminal_panel(&mut self, cx: &mut Context<Self>) -> Entity<TerminalPanel> {
@@ -1759,10 +1781,12 @@ impl Shell {
         match self.route {
             Route::Chat => self.render_session_title_bar(cx),
             Route::Studio => {
+                let preview_open = self.right_pane_open(cx);
                 let inner = div()
                     .size_full()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .pt(px(Theme::TITLEBAR_TOP_PAD))
                     .pl(px(self.title_bar_content_start()))
                     .pr(px(titlebar_right_padding(
@@ -1775,6 +1799,28 @@ impl Shell {
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(Theme::of(cx).text)
                             .child("Studio"),
+                    )
+                    .child(
+                        div()
+                            .id("studio-toggle-preview")
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(Theme::of(cx).border)
+                            .text_size(px(12.0))
+                            .text_color(if preview_open {
+                                Theme::of(cx).accent
+                            } else {
+                                Theme::of(cx).text_muted
+                            })
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_right_pane(cx)))
+                            .child(if preview_open {
+                                "Hide Preview"
+                            } else {
+                                "Preview"
+                            }),
                     );
                 inner.into_any_element()
             }
@@ -3599,16 +3645,19 @@ impl Shell {
         }
     }
 
-    /// Right "Changes" pane — hidden by default, drag-resizable; content is the
-    /// lazy [`Changes`] diff viewer (created on first open).
+    /// Right pane — Chat: Changes / Studio: Preview. Hidden by default.
     fn render_right_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let bg = theme.bg;
         let content: AnyElement = if self.right_pane_open(cx) {
-            let changes = self.changes_pane(cx);
-            // Idempotent — also covers a persisted-open pane on boot.
-            changes.update(cx, |changes, cx| changes.ensure_watch(cx));
-            changes.into_any_element()
+            if matches!(self.route, Route::Studio) {
+                self.studio_preview_pane(cx).into_any_element()
+            } else {
+                let changes = self.changes_pane(cx);
+                // Idempotent — also covers a persisted-open pane on boot.
+                changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                changes.into_any_element()
+            }
         } else {
             gpui::Empty.into_any_element()
         };
@@ -4365,7 +4414,7 @@ impl Render for Shell {
             }))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_sidebar(cx)))
             .on_action(cx.listener(|this, _: &ToggleChanges, _, cx| {
-                if matches!(this.route, Route::Chat) {
+                if matches!(this.route, Route::Chat | Route::Studio) {
                     this.toggle_right_pane(cx)
                 }
             }))
@@ -4440,12 +4489,9 @@ impl Render for Shell {
                     cx,
                 );
                 let main = self.render_main(cx);
-                // The Changes pane is chat-scoped chrome: the Settings route
-                // never renders it (comet __root.tsx `!isSettings && activeChat`
-                // around the diff column) — the per-session open flags stay
-                // intact for the return trip.
-                let on_chat = matches!(self.route, Route::Chat);
-                let right: AnyElement = if on_chat {
+                // Changes (Chat) and Preview (Studio) share the right column.
+                let show_right = matches!(self.route, Route::Chat | Route::Studio);
+                let right: AnyElement = if show_right {
                     self.render_right_pane(cx)
                 } else {
                     Empty.into_any_element()

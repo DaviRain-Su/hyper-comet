@@ -46,7 +46,7 @@ pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
 pub use studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioStore, WalletStore,
+    StudioLaunchRunner, StudioPreview, StudioStore, WalletConnectBridge, WalletStore,
 };
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
@@ -119,6 +119,8 @@ pub struct EngineCore {
     pub deploy_store: DeployStore,
     pub studio_deploy: StudioDeployer,
     pub studio_interact: StudioInteract,
+    pub studio_preview: StudioPreview,
+    pub wallet_connect: WalletConnectBridge,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -238,6 +240,8 @@ impl EngineCore {
         let studio_deploy =
             StudioDeployer::new(studio_gate.clone(), inbox_root.clone(), deploy_store.clone());
         let studio_interact = StudioInteract::new(inbox_root);
+        let studio_preview = StudioPreview::new();
+        let wallet_connect = WalletConnectBridge::new();
         Ok(Self {
             sessions,
             doc_host,
@@ -256,6 +260,8 @@ impl EngineCore {
             deploy_store,
             studio_deploy,
             studio_interact,
+            studio_preview,
+            wallet_connect,
             uploads,
             agent_accounts,
             device_id,
@@ -379,6 +385,8 @@ impl EngineCore {
             self.deploy_store.clone(),
             self.studio_deploy.clone(),
             self.studio_interact.clone(),
+            self.studio_preview.clone(),
+            self.wallet_connect.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {
@@ -397,6 +405,8 @@ impl EngineCore {
         self.sessions.shutdown().await;
         self.terminals.shutdown();
         self.agent_accounts.shutdown();
+        self.studio_preview.stop().await;
+        self.wallet_connect.stop().await;
         self.doc_host.flush_all();
         self.workspace.shutdown();
     }

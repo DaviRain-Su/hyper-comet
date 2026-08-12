@@ -32,6 +32,7 @@ pub mod shell;
 pub mod sound;
 pub mod state;
 pub mod studio;
+pub mod studio_preview;
 pub mod studio_projects;
 pub mod terminal;
 pub mod theme;

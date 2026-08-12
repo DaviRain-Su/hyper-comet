@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>ProofShip</title>
+  <link rel="stylesheet" href="./styles.css"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">ProofShip</div>
+    <p class="tag">AI drafts the contract. The gate decides if it ships.</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel">
+      <h1>Web viewer</h1>
+      <p class="lede">
+        Observe a local Studio launch over the relay. The desktop engine remains
+        the only writer and gate authority — keys never cross this page.
+      </p>
+
+      <label class="field">
+        Relay base URL
+        <input id="relay" type="url" placeholder="https://proofship-relay.example.workers.dev" spellcheck="false"/>
+      </label>
+      <label class="field">
+        Launch id
+        <input id="launch" type="text" placeholder="launch uuid" spellcheck="false"/>
+      </label>
+      <div class="row">
+        <button id="connect" type="button">Connect viewer</button>
+        <button id="disconnect" type="button" class="ghost" disabled>Disconnect</button>
+      </div>
+      <p id="status" class="status">Disconnected — without a local engine this page is read-only.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Snapshot</h2>
+      <pre id="snapshot" class="code">{}</pre>
+      <h2>Event tail</h2>
+      <ul id="events" class="events"></ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    Phase 3 shell · deploy with Cloudflare Pages · engine ↔ relay seam in
+    <code>proofship/relay/</code>
+  </footer>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -1,10 +1,12 @@
 //! comet-abi — Solidity JSON ABI → UI-agnostic form schema.
 
 mod parse;
+mod preview;
 
 use serde::{Deserialize, Serialize};
 
 pub use parse::{schema_from_abi_json, schema_from_abi_value};
+pub use preview::{DappPreviewConfig, render_dapp_html};
 
 /// Top-level form schema derived from a contract ABI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

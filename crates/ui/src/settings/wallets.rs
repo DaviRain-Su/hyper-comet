@@ -6,7 +6,8 @@ use gpui::{
 };
 
 use comet_proto::{
-    RemoveWalletRequest, UpsertWalletRequest, WalletAccount, WalletSource, WalletsResponse,
+    RemoveWalletRequest, UpsertWalletRequest, WalletAccount, WalletConnectStartRequest,
+    WalletConnectStartResponse, WalletSource, WalletsResponse,
 };
 use comet_rpc::methods;
 
@@ -372,9 +373,8 @@ impl WalletsPage {
             .collect()
     }
 
-    fn walletconnect_row(&self, theme: &Theme) -> AnyElement {
+    fn walletconnect_row(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         widgets::card_row(theme, false)
-            .opacity(0.55)
             .child(widgets::row_tile(theme, crate::icons::GLOBAL))
             .child(
                 div()
@@ -382,20 +382,61 @@ impl WalletsPage {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(widgets::row_title(theme, "WalletConnect (desktop QR)"))
+                    .child(widgets::row_title(theme, "WalletConnect (desktop)"))
                     .child(widgets::meta_line(
                         theme,
                         vec![
                             div()
                                 .child(SharedString::from(
-                                    "Not in this slice; add a watch address or a testnet env-key.",
+                                    "Opens a local bridge page — QR / extension. Requires PROOFSHIP_WC_PROJECT_ID.",
                                 ))
                                 .into_any_element(),
                         ],
                     )),
             )
-            .child(widgets::badge(theme, "Coming soon"))
+            .child(
+                widgets::ghost_action(theme)
+                    .id("wallet-wc-connect")
+                    .hover(|s| widgets::ghost_hover(theme, s))
+                    .on_click(cx.listener(|this, _, _, cx| this.start_walletconnect(cx)))
+                    .child(SharedString::from("Connect")),
+            )
             .into_any_element()
+    }
+
+    fn start_walletconnect(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let req = WalletConnectStartRequest {
+            label: "WalletConnect".into(),
+            project_id: None,
+        };
+        self.error = None;
+        self.action_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(
+                    methods::STUDIO_WC_START,
+                    serde_json::to_value(req).unwrap_or_default(),
+                )
+                .await;
+            this.update(cx, |page, cx| match result {
+                Ok(value) => match serde_json::from_value::<WalletConnectStartResponse>(value) {
+                    Ok(resp) => {
+                        cx.open_url(&resp.url);
+                        page.error = Some(
+                            "Approve in the browser tab, then Refresh — the address appears below."
+                                .into(),
+                        );
+                        page.load(cx);
+                    }
+                    Err(err) => page.error = Some(err.to_string()),
+                },
+                Err(err) => page.error = Some(err.to_string()),
+            })
+            .ok();
+        }));
     }
 }
 
@@ -485,7 +526,7 @@ impl Render for WalletsPage {
                         )
                     })
                     .children(rows)
-                    .child(self.walletconnect_row(&theme))
+                    .child(self.walletconnect_row(&theme, cx))
                     .into_any_element()
             }
         };

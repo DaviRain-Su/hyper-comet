@@ -10,7 +10,9 @@ pub mod gate;
 pub mod interact;
 mod launch_run;
 pub mod networks;
+pub mod preview;
 pub mod store;
+pub mod walletconnect;
 pub mod wallets;
 
 pub use deploy::{
@@ -21,5 +23,7 @@ pub use gate::{GateConfig, GateError, StudioGate, StudioPaths};
 pub use interact::StudioInteract;
 pub use launch_run::StudioLaunchRunner;
 pub use networks::{NetworkError, NetworkStore};
+pub use preview::StudioPreview;
 pub use store::{StoreError, StudioStore};
+pub use walletconnect::{WalletConnectBridge, resolve_project_id};
 pub use wallets::{WalletError, WalletStore};
