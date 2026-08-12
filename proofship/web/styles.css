@@ -1,10 +1,13 @@
 :root {
+  /* Shared with proofship/templates/_design/DESIGN.md + Studio Preview */
   --bg: #0f1115;
   --panel: #171a21;
   --line: #2a3040;
   --text: #e8ecf4;
   --muted: #8b93a7;
   --accent: #6ee7b7;
+  --warn: #fbbf24;
+  --danger: #f87171;
   --font: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
   --sans: "Avenir Next", "Segoe UI", sans-serif;

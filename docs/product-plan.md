@@ -30,7 +30,7 @@
 6. **项目模型** —— 一个 web3 产品 = 一个项目(合约源、门禁历史、部署、制品);Studio 目前是单线程,需要项目级归集。
 7. **ABI 驱动的交互台** —— 从制品 `*.abi.json` 自动生成表单(view 只读 eth_call;entry 写操作走钱包签名),schema 一次定义、gpui/web 两端复用。
 8. **模板/vertical 体系** —— "通用"不等于空白页;数据驱动模板(首个:RWA 份额登记,回归样本已在库)。
-9. **分享** —— 只读 launch 链接(relay 已具备 seam);门禁报告即质量证明(**待实现**:封存 `gate-report.json` 产物——当前门禁只有事件流+制品清单,尚无报告文件;有了它才可分享/嵌徽章)。
+9. **分享** —— 只读 launch 链接(relay 已具备 seam);门禁报告即质量证明(`gate-report.json` 已由 Studio gate / `gate.sh` 封存到制品目录;可分享/嵌徽章)。
 10. **多链 deploy lanes** —— 工具已 vendor;ProofForge 目标(evm 已通;solana/aleo/near/ton/cosmwasm 在 proof_forge 侧)按需接。
 
 ## 2. 分阶段计划
@@ -79,10 +79,10 @@
 
 | 项 | 内容 |
 |---|---|
-| 5.1 模板体系 | 数据驱动 vertical 模板(首个:RWA 份额登记);模板市场后置 | `proofship/templates/` + `StudioTemplates` RPC ✅;设计令牌借 Open Design 的 DESIGN.md 思路(非 Vue 运行时) |
-| 5.2 proof badge | 把门禁**已包含**的同文件 theorem certification 暴露为可见"certified"徽章(certification 已是现有门禁的一部分,此项只做产品化展示;诚实边界不变) |
+| 5.1 模板体系 | 数据驱动 vertical 模板(首个:RWA 份额登记) ✅ `proofship/templates/` + `StudioTemplates` RPC;设计令牌借 Open Design 的 DESIGN.md 思路(非 Vue 运行时);模板市场后置 |
+| 5.2 proof badge | 把门禁**已包含**的同文件 theorem certification 暴露为可见"certified"徽章 ✅(gate card + `digest.certified` + `gate-report.json`;诚实边界不变) |
 | 5.3 多链 lanes | solana(sbpf 已 vendor)/aleo(leo 已 vendor)/noir(nargo 已 vendor)/near/ton(wat2wasm 已 vendor)/cosmwasm,按 ProofForge 目标逐个接 |
-| 5.4 CI | `gate.sh` 徽章/gate-report 嵌入 README(依赖差距 8 的 `gate-report.json` 落地);CI 集成示例 |
+| 5.4 CI | `gate.sh` 徽章/gate-report 嵌入 README(`gate-report.json` 已落地);CI 集成示例待补 |
 
 ## 3. 不变量(任何阶段不破坏)
 

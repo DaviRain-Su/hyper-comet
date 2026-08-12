@@ -87,6 +87,53 @@ pub struct StudioGateDigest {
     pub output_set_digest: Option<String>,
     #[serde(default)]
     pub raw: String,
+    /// Same-file theorem certification ran as part of a passing gate
+    /// (engineering-grade; not full formal verification).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub certified: bool,
+}
+
+/// Sealed machine-readable gate report written next to build artifacts as
+/// `gate-report.json` (share/CI/badge input).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioGateReport {
+    pub schema_version: u32,
+    pub ok: bool,
+    pub module: String,
+    pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_set_digest: Option<String>,
+    #[serde(default)]
+    pub artifacts: Vec<StudioGateArtifact>,
+    /// Engineering-grade same-file theorem certification observed on pass.
+    pub certified: bool,
+    pub honesty: String,
+    pub generated_at: String,
+}
+
+impl StudioGateReport {
+    pub const SCHEMA_VERSION: u32 = 1;
+    pub const FILE_NAME: &'static str = "gate-report.json";
+    pub const HONESTY: &'static str = "Engineering-grade machine gate (check/build/inspect + same-file theorem certification). Not full formal verification or bytecode-proven.";
+
+    pub fn pass(
+        module: impl Into<String>,
+        digest: &StudioGateDigest,
+        artifacts: Vec<StudioGateArtifact>,
+    ) -> Self {
+        Self {
+            schema_version: Self::SCHEMA_VERSION,
+            ok: true,
+            module: module.into(),
+            target: "evm".into(),
+            output_set_digest: digest.output_set_digest.clone(),
+            artifacts,
+            certified: true,
+            honesty: Self::HONESTY.into(),
+            generated_at: Utc::now().to_rfc3339(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

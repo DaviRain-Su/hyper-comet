@@ -1783,7 +1783,12 @@ impl StudioView {
                             .child("ProofForge gate")
                             .when_some(card_state.round, |el, round| {
                                 el.child(round_badge(round, &theme))
-                            }),
+                            })
+                            .when(
+                                card_state.state == StudioGateState::Pass
+                                    && card_state.digest.certified,
+                                |el| el.child(certified_badge(&theme)),
+                            ),
                     )
                     .child(status_label(card_state.state, &theme)),
             )
@@ -1900,6 +1905,17 @@ impl StudioView {
                     )
                 },
             )
+            .when(card_state.digest.certified, |el| {
+                el.child(
+                    div()
+                        .mt(px(4.0))
+                        .text_size(px(11.0))
+                        .text_color(theme.text_dim)
+                        .child(
+                            "Engineering-grade certification · see gate-report.json (not full formal verification)",
+                        ),
+                )
+            })
             .into_any_element()
     }
 
@@ -2859,6 +2875,19 @@ fn round_badge(round: u32, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
+fn certified_badge(theme: &Theme) -> AnyElement {
+    div()
+        .rounded(px(6.0))
+        .px(px(6.0))
+        .py(px(2.0))
+        .text_size(px(10.0))
+        .font_weight(gpui::FontWeight::MEDIUM)
+        .text_color(theme.success)
+        .bg(theme.element_hover)
+        .child("certified")
+        .into_any_element()
+}
+
 fn status_label(state: StudioGateState, theme: &Theme) -> AnyElement {
     div()
         .rounded(px(999.0))
@@ -2969,12 +2998,14 @@ mod tests {
                 digest: StudioGateDigest {
                     output_set_digest: Some("abc".into()),
                     raw: "abc".into(),
+                    certified: true,
                 },
             },
         );
         assert_eq!(card.state, StudioGateState::Pass);
         assert_eq!(card.artifacts[0].name, "manifest.json");
         assert_eq!(card.digest.output_set_digest.as_deref(), Some("abc"));
+        assert!(card.digest.certified);
     }
 
     #[test]

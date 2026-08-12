@@ -87,6 +87,7 @@ fn render_html(config: &DappPreviewConfig, schema: &AbiFormSchema) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>{title} · ProofShip Preview</title>
 <style>
+  /* Tokens aligned with proofship/templates/_design/DESIGN.md */
   :root {{
     --bg: #0f1115;
     --panel: #171a21;
@@ -96,24 +97,32 @@ fn render_html(config: &DappPreviewConfig, schema: &AbiFormSchema) -> String {
     --accent: #6ee7b7;
     --warn: #fbbf24;
     --danger: #f87171;
-    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --font: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
   }}
   * {{ box-sizing: border-box; }}
   body {{
-    margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 10% -10%, #1a2438, var(--bg));
+    margin: 0; min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 10% -10%, #1a2438, transparent 55%),
+      linear-gradient(180deg, #12151c, var(--bg));
     color: var(--text); font: 14px/1.45 var(--font);
   }}
   header {{
-    padding: 20px 24px 12px; border-bottom: 1px solid var(--line);
+    padding: 24px 28px 14px; border-bottom: 1px solid var(--line);
     display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: baseline; justify-content: space-between;
   }}
-  h1 {{ margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }}
-  .meta {{ color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 10px; }}
+  .brand {{
+    margin: 0; font-family: var(--font-display); font-size: clamp(1.6rem, 3vw, 2rem);
+    letter-spacing: -0.03em; line-height: 1.1; font-weight: 600;
+  }}
+  h1 {{ margin: 8px 0 0; font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }}
+  .meta {{ color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }}
   .mono {{ font-family: var(--mono); }}
   .link {{ color: var(--accent); text-decoration: none; }}
   .link:hover {{ text-decoration: underline; }}
-  main {{ padding: 20px 24px 48px; max-width: 920px; margin: 0 auto; display: grid; gap: 18px; }}
+  main {{ padding: 20px 28px 48px; max-width: 920px; margin: 0 auto; display: grid; gap: 18px; }}
   section h2 {{ margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }}
   .card {{
     background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line);
@@ -142,7 +151,7 @@ fn render_html(config: &DappPreviewConfig, schema: &AbiFormSchema) -> String {
   }}
   .out.err {{ color: var(--danger); }}
   .banner {{
-    margin: 0 24px; margin-top: 16px; padding: 10px 12px; border-radius: 10px;
+    margin: 0 28px; margin-top: 16px; padding: 10px 12px; border-radius: 10px;
     border: 1px solid var(--line); background: #1a1f2b; color: var(--muted); font-size: 12px;
   }}
   .banner strong {{ color: var(--warn); font-weight: 600; }}
@@ -151,6 +160,7 @@ fn render_html(config: &DappPreviewConfig, schema: &AbiFormSchema) -> String {
 <body>
   <header>
     <div>
+      <p class="brand">ProofShip</p>
       <h1>{title}</h1>
       <div class="meta">
         <span>{module}</span>
@@ -377,6 +387,8 @@ mod tests {
         assert!(html.contains("0xabc123"));
         assert!(html.contains("totalSupply"));
         assert!(html.contains("ProofShip preview"));
+        assert!(html.contains("class=\"brand\""));
+        assert!(html.contains("--font-display"));
         assert!(html.contains("chain 1952"));
     }
 }

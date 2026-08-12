@@ -12,7 +12,8 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use comet_proto::{
-    StudioGateArtifact, StudioGateDigest, StudioGateEvent, StudioGateStage, StudioStatusResponse,
+    StudioGateArtifact, StudioGateDigest, StudioGateEvent, StudioGateReport, StudioGateStage,
+    StudioStatusResponse,
 };
 use futures::StreamExt;
 use futures::stream::BoxStream;
@@ -235,7 +236,28 @@ impl StudioGate {
         }
 
         let artifacts = list_artifacts(&out_dir).await?;
-        let digest = parse_digest(&inspect.output);
+        let mut digest = parse_digest(&inspect.output);
+        digest.certified = true;
+        let report = StudioGateReport::pass(&module, &digest, artifacts.clone());
+        let report_path = out_dir.join(StudioGateReport::FILE_NAME);
+        let report_json = serde_json::to_string_pretty(&report).map_err(|e| {
+            GateError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            ))
+        })?;
+        tokio::fs::write(&report_path, report_json).await?;
+        let mut artifacts = list_artifacts(&out_dir).await?;
+        // Keep gate-report.json visible near the top of the manifest.
+        artifacts.sort_by(|a, b| {
+            let a_rep = a.name == StudioGateReport::FILE_NAME;
+            let b_rep = b.name == StudioGateReport::FILE_NAME;
+            match (a_rep, b_rep) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            }
+        });
         let _ = tx
             .send(StudioGateEvent::Done {
                 ok: true,
@@ -480,6 +502,7 @@ fn parse_digest(raw: &str) -> StudioGateDigest {
     StudioGateDigest {
         output_set_digest,
         raw: raw.trim().to_string(),
+        certified: false,
     }
 }
 
@@ -610,6 +633,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn studio_gate_writes_gate_report_on_pass() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("proofship/scripts")).unwrap();
+        std::fs::write(root.join("proofship/scripts/gate.sh"), "#!/bin/sh\n").unwrap();
+        let cli = root.join("fake-pf");
+        let script = "#!/bin/sh\ncase \"$1\" in\ncheck) exit 0;;\nbuild) out=\"\"; prev=\"\"; for arg in \"$@\"; do if [ \"$prev\" = \"-o\" ]; then out=\"$arg\"; fi; prev=\"$arg\"; done; mkdir -p \"$out\"; echo bin > \"$out/Demo.bin\"; exit 0;;\ninspect) echo 'outputSetDigest 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'; exit 0;;\nesac\n";
+        std::fs::write(&cli, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&cli).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&cli, perms).unwrap();
+        }
+        let inbox = root.join("proofship/inbox");
+        let gate = StudioGate::new(GateConfig {
+            paths: StudioPaths {
+                repo_root: Some(root.to_path_buf()),
+                inbox_root: Some(inbox.clone()),
+                pf_cli: Some(cli),
+                ..StudioPaths::default()
+            },
+            timeout: Duration::from_secs(5),
+        });
+        let source = "import ProofForgeV2\nnamespace Proofship\nopen ProofForgeV2.Language\nend Proofship\n";
+        let mut stream = gate.run_gate("Demo".into(), source.into());
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            if let StudioGateEvent::Done { .. } = &event {
+                done = Some(event);
+            }
+        }
+        let Some(StudioGateEvent::Done {
+            ok,
+            artifacts,
+            digest,
+            ..
+        }) = done
+        else {
+            panic!("missing done");
+        };
+        assert!(ok);
+        assert!(digest.certified);
+        assert_eq!(
+            digest.output_set_digest.as_deref(),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(artifacts[0].name, StudioGateReport::FILE_NAME);
+        let report_path = inbox.join("studio-inbox/out-demo").join(StudioGateReport::FILE_NAME);
+        let report: StudioGateReport =
+            serde_json::from_str(&std::fs::read_to_string(report_path).unwrap()).unwrap();
+        assert!(report.ok);
+        assert!(report.certified);
+        assert_eq!(report.module, "Demo");
+        assert_eq!(report.schema_version, StudioGateReport::SCHEMA_VERSION);
+    }
+
+    #[tokio::test]
     #[ignore = "requires the vendored proofship toolchain"]
     async fn studio_gate_real_toolchain_passes() {
         let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -645,6 +727,8 @@ mod tests {
         assert!(artifacts.iter().any(|a| a.name.ends_with(".abi.json")));
         assert!(artifacts.iter().any(|a| a.name.ends_with(".yul")));
         assert!(artifacts.iter().any(|a| a.name.ends_with(".bin")));
+        assert!(artifacts.iter().any(|a| a.name == StudioGateReport::FILE_NAME));
         assert!(digest.output_set_digest.is_some());
+        assert!(digest.certified);
     }
 }

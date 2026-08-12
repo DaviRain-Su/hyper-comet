@@ -85,6 +85,27 @@ rm -rf "$proj/$out"  # product build fails closed on pre-existing output dir
 "$cli" build "$rel_source" --module "$module" --root "$proj" --target evm -o "$out"
 
 echo "== gate: inspect (exact disk closure) ==" >&2
-"$cli" inspect --output-dir "$proj/$out"
+inspect_out="$("$cli" inspect --output-dir "$proj/$out")"
+printf '%s\n' "$inspect_out"
+digest="$(printf '%s\n' "$inspect_out" | sed -n 's/.*outputSetDigest[^0-9a-fA-F]*\([0-9a-fA-F]\{64\}\).*/\1/p' | head -n1)"
+generated_at="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+report="$proj/$out/gate-report.json"
+{
+  printf '{\n'
+  printf '  "schemaVersion": 1,\n'
+  printf '  "ok": true,\n'
+  printf '  "module": "%s",\n' "$module"
+  printf '  "target": "evm",\n'
+  if [[ -n "$digest" ]]; then
+    printf '  "outputSetDigest": "%s",\n' "$digest"
+  else
+    printf '  "outputSetDigest": null,\n'
+  fi
+  printf '  "artifacts": [],\n'
+  printf '  "certified": true,\n'
+  printf '  "honesty": "Engineering-grade machine gate (check/build/inspect + same-file theorem certification). Not full formal verification or bytecode-proven.",\n'
+  printf '  "generatedAt": "%s"\n' "$generated_at"
+  printf '}\n'
+} >"$report"
 
-echo "gate: PASS $module → $proj/$out" >&2
+echo "gate: PASS $module → $proj/$out (report: $report)" >&2
