@@ -51,6 +51,7 @@
 | 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | ✅ Connect + 会话签名 |
 | 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | ✅ |
 | 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志 `StudioLogs`(cast logs,近 10k 块) | ✅ |
+| 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
 | 2.6 Studio Preview | 右侧 Preview:ABI→HTML + **应用内 ABI 镜像**(views/events);`Open in browser`;原生 WebView 待 gpui | ✅ 镜像+浏览器;WebView 后置 |
 
 **本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**(Studio 网络选择仅 X Layer;Settings 仍保留其它 EVM 预设)。Preview=应用内 ABI 镜像 + 浏览器 HTML;`StudioLogs` 拉最近事件。多链 deploy lane / 真 WebView 后置。Web/账户(Phase 3–4)后置。
