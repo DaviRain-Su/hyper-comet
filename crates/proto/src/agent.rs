@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 pub enum HarnessId {
     ClaudeCode,
     Codex,
+    /// Cursor's coding agent, driven over ACP (`cursor-agent acp`).
     Cursor,
+    /// OpenCode, driven over ACP (`opencode acp`).
+    OpenCode,
     /// xAI's Grok Build agent, driven over ACP (`grok agent stdio`).
     Grok,
     /// Nous Research's Hermes Agent, driven over ACP (`hermes acp`).
@@ -362,6 +365,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&HarnessId::ClaudeCode).unwrap(),
             "\"claude-code\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HarnessId::OpenCode).unwrap(),
+            "\"open-code\""
         );
     }
 }

@@ -264,7 +264,7 @@ async fn question_shaped_requests_bridge_to_the_input_panel() {
 }
 
 #[tokio::test]
-async fn claude_and_codex_specs_drive_the_same_wire() {
+async fn all_agent_specs_drive_the_same_wire() {
     // The whole point of the conversion: every spec runs against the same
     // fake ACP agent with no per-agent protocol code. Model ids in the
     // fixture are grok-flavored, so config sets simply skip.
@@ -274,6 +274,14 @@ async fn claude_and_codex_specs_drive_the_same_wire() {
             AcpHarness::claude().with_executable(fixture_path()),
         ),
         ("codex", AcpHarness::codex().with_executable(fixture_path())),
+        (
+            "cursor",
+            AcpHarness::cursor().with_executable(fixture_path()),
+        ),
+        (
+            "opencode",
+            AcpHarness::opencode().with_executable(fixture_path()),
+        ),
         (
             "hermes",
             AcpHarness::hermes().with_executable(fixture_path()),
@@ -400,7 +408,11 @@ async fn steer_racing_the_turn_end_never_emits_steered_after_done() {
     .await
     .expect("run finished in time");
 
-    assert_eq!(dones(&events), vec![(DoneStatus::Completed, None)], "{events:?}");
+    assert_eq!(
+        dones(&events),
+        vec![(DoneStatus::Completed, None)],
+        "{events:?}"
+    );
     let steered = events
         .iter()
         .position(|e| matches!(e, AgentEvent::Steered { .. }))
@@ -409,7 +421,10 @@ async fn steer_racing_the_turn_end_never_emits_steered_after_done() {
         .iter()
         .position(|e| matches!(e, AgentEvent::Done { .. }))
         .expect("checked above");
-    assert!(steered < done, "Steered after Done strands the session: {events:?}");
+    assert!(
+        steered < done,
+        "Steered after Done strands the session: {events:?}"
+    );
 }
 
 #[tokio::test]
@@ -749,10 +764,33 @@ async fn models_fall_back_to_the_static_catalog_when_the_probe_fails() {
     let models = harness.models().await.expect("static fallback");
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["default"], "{models:?}");
+
+    let cursor = AcpHarness::cursor().with_executable("/nonexistent/never-a-cursor-agent");
+    let models = cursor.models().await.expect("static fallback");
+    let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(ids, vec!["auto"], "{models:?}");
+
+    let opencode = AcpHarness::opencode().with_executable("/nonexistent/never-an-opencode");
+    let models = opencode.models().await.expect("static fallback");
+    assert!(models.is_empty(), "{models:?}");
 }
 
 #[test]
-fn hermes_and_pi_descriptor_surfaces_match_registry_expectations() {
+fn cursor_opencode_hermes_and_pi_descriptor_surfaces_match_registry_expectations() {
+    let cursor = AcpHarness::cursor();
+    assert_eq!(cursor.id(), HarnessId::Cursor);
+    assert_eq!(cursor.display_name(), "Cursor");
+    assert!(cursor.supports_steering());
+    assert_eq!(cursor.steering_mode(), SteeringMode::StepBoundary);
+    assert!(cursor.reasoning_levels().is_empty());
+
+    let opencode = AcpHarness::opencode();
+    assert_eq!(opencode.id(), HarnessId::OpenCode);
+    assert_eq!(opencode.display_name(), "OpenCode");
+    assert!(opencode.supports_steering());
+    assert_eq!(opencode.steering_mode(), SteeringMode::TurnBoundary);
+    assert!(opencode.reasoning_levels().is_empty());
+
     let hermes = AcpHarness::hermes();
     assert_eq!(hermes.id(), HarnessId::Hermes);
     assert_eq!(hermes.display_name(), "Hermes");

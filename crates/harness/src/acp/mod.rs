@@ -1,9 +1,10 @@
 //! ACP harness: spawns an Agent Client Protocol agent (JSON-RPC 2.0 over
 //! stdio, protocol v1) and maps its session updates onto [`AgentEvent`]s. One
 //! implementation covers every ACP agent; [`AcpHarness::grok`] configures it
-//! for xAI's Grok Build (`grok agent stdio`), the first registered agent —
-//! [`AcpHarness::hermes`] (Nous Research, `hermes acp`) and [`AcpHarness::pi`]
-//! (pi.dev via `pi-acp`) followed.
+//! for xAI's Grok Build (`grok agent stdio`), [`AcpHarness::cursor`] for
+//! Cursor (`cursor-agent acp`), [`AcpHarness::opencode`] for OpenCode
+//! (`opencode acp`), [`AcpHarness::hermes`] for Nous Research's Hermes
+//! (`hermes acp`), and [`AcpHarness::pi`] for pi.dev via `pi-acp`.
 //!
 //! - `initialize` (protocolVersion 1, fs/terminal capabilities declined) →
 //!   `session/new`, or `session/load` with a fresh-session fallback when
@@ -218,6 +219,76 @@ fn codex_spec() -> AcpAgentSpec {
     }
 }
 
+fn cursor_install_paths() -> Vec<PathBuf> {
+    npm_global_bins("cursor-agent")
+}
+
+fn cursor_spec() -> AcpAgentSpec {
+    AcpAgentSpec {
+        id: HarnessId::Cursor,
+        display_name: "Cursor",
+        executable: "cursor-agent",
+        env_override: "COMET_CURSOR_ACP",
+        args: &["acp"],
+        npx_package: None,
+        extra_paths: cursor_install_paths,
+        cli_executable: "cursor-agent",
+        cli_extra_paths: cursor_install_paths,
+        install_hint: "cursor-agent (searched PATH, the login shell's PATH, npm global \
+             bins, /opt/homebrew/bin, /usr/local/bin, and fnm/nvm/volta/pnpm/bun \
+             install dirs; install Cursor CLI and authenticate it; set \
+             COMET_CURSOR_ACP to override)",
+        // Cursor's catalog is account/CLI-specific and is discovered over ACP;
+        // keep only the provider-owned default when discovery is unavailable.
+        models: || {
+            vec![Model {
+                id: "auto".into(),
+                label: "Auto".into(),
+                description: Some("Cursor's provider-owned default model".into()),
+                reasoning_levels: Vec::new(),
+                options: Vec::new(),
+            }]
+        },
+        // Cursor supports `session/load`; waku also observed live steering via
+        // a second prompt. The shared harness uses step injection when the
+        // `_session/steering` extension is advertised and otherwise queues.
+        steering_mode: SteeringMode::StepBoundary,
+        reasoning_levels: &[],
+        prompt_transform: identity_transform,
+        effort_values: default_effort_values,
+        ladder_extras: &[],
+    }
+}
+
+fn opencode_install_paths() -> Vec<PathBuf> {
+    npm_global_bins("opencode")
+}
+
+fn opencode_spec() -> AcpAgentSpec {
+    AcpAgentSpec {
+        id: HarnessId::OpenCode,
+        display_name: "OpenCode",
+        executable: "opencode",
+        env_override: "COMET_OPENCODE_ACP",
+        args: &["acp"],
+        npx_package: None,
+        extra_paths: opencode_install_paths,
+        cli_executable: "opencode",
+        cli_extra_paths: opencode_install_paths,
+        install_hint: "opencode (searched PATH, the login shell's PATH, npm global bins, \
+             /opt/homebrew/bin, /usr/local/bin, and fnm/nvm/volta/pnpm/bun install \
+             dirs; install and authenticate OpenCode; set COMET_OPENCODE_ACP to override)",
+        // OpenCode advertises configured provider/model rows from the agent;
+        // no static fallback avoids presenting unavailable account-specific ids.
+        models: Vec::new,
+        steering_mode: SteeringMode::TurnBoundary,
+        reasoning_levels: &[],
+        prompt_transform: identity_transform,
+        effort_values: default_effort_values,
+        ladder_extras: &[],
+    }
+}
+
 /// npm-global bin dirs for an adapter binary (`npm i -g` installs).
 fn npm_global_paths(exe: &'static str) -> fn() -> Vec<PathBuf> {
     // fn pointers can't capture; probe the fixed npm-global locations and
@@ -412,8 +483,8 @@ fn pi_spec() -> AcpAgentSpec {
     }
 }
 
-/// The ACP harness. Construct with [`AcpHarness::grok`]; tests point it at a
-/// fake agent with [`AcpHarness::with_executable`].
+/// The ACP harness. Construct with one of the per-agent constructors; tests
+/// point it at a fake agent with [`AcpHarness::with_executable`].
 pub struct AcpHarness {
     spec: AcpAgentSpec,
     executable: Option<PathBuf>,
@@ -450,6 +521,16 @@ impl AcpHarness {
     /// codex app-server.
     pub fn codex() -> Self {
         Self::with_spec(codex_spec())
+    }
+
+    /// Cursor over ACP — Cursor's native `cursor-agent acp` server.
+    pub fn cursor() -> Self {
+        Self::with_spec(cursor_spec())
+    }
+
+    /// OpenCode over ACP — OpenCode's native `opencode acp` server.
+    pub fn opencode() -> Self {
+        Self::with_spec(opencode_spec())
     }
 
     /// Grok Build (`grok agent stdio`) — xAI's native ACP agent.
@@ -1628,8 +1709,7 @@ async fn run_session(session: Session) {
     // deadlocks against a full incoming channel when the agent floods
     // updates (the reader blocks on the channel and never parses the
     // steering response).
-    let mut steering_call: Option<(String, BoxFuture<'static, Result<Value, HarnessError>>)> =
-        None;
+    let mut steering_call: Option<(String, BoxFuture<'static, Result<Value, HarnessError>>)> = None;
     let mut steer_backlog: VecDeque<String> = VecDeque::new();
     let mut steering_open = true;
     let mut interrupted = false;
@@ -2306,7 +2386,13 @@ mod tests {
         let models = models_from_session(&response, &[]);
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec!["default", "opus[1m]", "claude-fable-5[1m]", "sonnet", "haiku"]
+            vec![
+                "default",
+                "opus[1m]",
+                "claude-fable-5[1m]",
+                "sonnet",
+                "haiku"
+            ]
         );
         assert!(models.iter().all(|m| m.options.is_empty()));
     }

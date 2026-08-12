@@ -1,6 +1,6 @@
 //! HarnessRegistry — the engine's harness catalog: eager instances (mock) plus lazy
-//! slots resolved on first use (claude-code spawns subprocess discovery; codex/cursor
-//! later). Lazy slots carry a static descriptor so `ListHarnesses` never forces a spawn.
+//! slots resolved on first use. Lazy slots carry a static descriptor so
+//! `ListHarnesses` never forces a spawn.
 //!
 //! Also owns the device's harness ENABLEMENT (Settings → Agents): which harnesses
 //! this device's composer offers, persisted in `{data_dir}/harness-prefs.json`.
@@ -199,9 +199,7 @@ impl HarnessRegistry {
             }
         };
         let tmp = path.with_extension("json.tmp");
-        if let Err(err) =
-            std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &path))
-        {
+        if let Err(err) = std::fs::write(&tmp, json).and_then(|()| std::fs::rename(&tmp, &path)) {
             tracing::warn!(error = %err, "harness-prefs save failed");
         }
     }
@@ -378,6 +376,40 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| comet_harness::AcpHarness::codex().installed()),
         Box::new(|| Ok(Arc::new(comet_harness::AcpHarness::codex()) as Arc<dyn Harness>)),
     );
+    // Cursor over ACP (`cursor-agent acp`), same lazy pattern: the static
+    // descriptor mirrors AcpHarness::cursor() exactly. The agent supports
+    // session/load and can absorb steers during a live turn; model rows are
+    // discovered from the CLI/account with an Auto fallback.
+    registry.register_lazy(
+        HarnessDescriptor {
+            id: HarnessId::Cursor,
+            name: "Cursor".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::StepBoundary,
+            reasoning_levels: Vec::new(),
+            installed: true,
+            enabled: None,
+        },
+        Box::new(|| comet_harness::AcpHarness::cursor().installed()),
+        Box::new(|| Ok(Arc::new(comet_harness::AcpHarness::cursor()) as Arc<dyn Harness>)),
+    );
+    // OpenCode over ACP (`opencode acp`), same lazy pattern: the static
+    // descriptor mirrors AcpHarness::opencode() exactly. No extension-backed
+    // steering assumption yet and no static catalog; the agent advertises the
+    // user's configured provider/model rows over ACP.
+    registry.register_lazy(
+        HarnessDescriptor {
+            id: HarnessId::OpenCode,
+            name: "OpenCode".into(),
+            supports_steering: true,
+            steering_mode: SteeringMode::TurnBoundary,
+            reasoning_levels: Vec::new(),
+            installed: true,
+            enabled: None,
+        },
+        Box::new(|| comet_harness::AcpHarness::opencode().installed()),
+        Box::new(|| Ok(Arc::new(comet_harness::AcpHarness::opencode()) as Arc<dyn Harness>)),
+    );
     // Grok Build over ACP, same lazy pattern: the static descriptor mirrors
     // AcpHarness::grok() exactly. No `_session/steering` extension yet, so
     // steers deliver at turn boundaries; the effort ladder applies per
@@ -492,6 +524,8 @@ mod tests {
                 HarnessId::Mock,
                 HarnessId::ClaudeCode,
                 HarnessId::Codex,
+                HarnessId::Cursor,
+                HarnessId::OpenCode,
                 HarnessId::Grok,
                 HarnessId::Hermes,
                 HarnessId::Pi
@@ -503,6 +537,16 @@ mod tests {
         // cheap; CLI discovery is deferred to models()/run()).
         let codex = registry.resolve(HarnessId::Codex).unwrap();
         assert_eq!(codex.id(), HarnessId::Codex);
+        let cursor = registry.resolve(HarnessId::Cursor).unwrap();
+        assert_eq!(cursor.id(), HarnessId::Cursor);
+        assert_eq!(cursor.display_name(), "Cursor");
+        assert_eq!(cursor.steering_mode(), SteeringMode::StepBoundary);
+        assert!(cursor.reasoning_levels().is_empty());
+        let opencode = registry.resolve(HarnessId::OpenCode).unwrap();
+        assert_eq!(opencode.id(), HarnessId::OpenCode);
+        assert_eq!(opencode.display_name(), "OpenCode");
+        assert_eq!(opencode.steering_mode(), SteeringMode::TurnBoundary);
+        assert!(opencode.reasoning_levels().is_empty());
         // Grok resolves through the shared ACP harness; its descriptor must
         // mirror the resolved harness (descriptor-stability rule).
         let grok = registry.resolve(HarnessId::Grok).unwrap();

@@ -23,6 +23,8 @@ async fn cli_on_login_shell_path_only_is_resolved() {
     std::fs::create_dir(&shell_bin).unwrap();
     write_executable(&shell_bin.join("codex-acp"), "#!/bin/sh\nexit 0\n");
     write_executable(&shell_bin.join("claude-agent-acp"), "#!/bin/sh\nexit 0\n");
+    write_executable(&shell_bin.join("cursor-agent"), "#!/bin/sh\nexit 0\n");
+    write_executable(&shell_bin.join("opencode"), "#!/bin/sh\nexit 0\n");
     write_executable(&shell_bin.join("hermes"), "#!/bin/sh\nexit 0\n");
     write_executable(&shell_bin.join("pi-acp"), "#!/bin/sh\nexit 0\n");
 
@@ -49,6 +51,8 @@ async fn cli_on_login_shell_path_only_is_resolved() {
         std::env::set_var("PATH", "/usr/bin:/bin");
         std::env::remove_var("CODEX_ACP_EXECUTABLE");
         std::env::remove_var("CLAUDE_ACP_EXECUTABLE");
+        std::env::remove_var("COMET_CURSOR_ACP");
+        std::env::remove_var("COMET_OPENCODE_ACP");
         std::env::remove_var("HERMES_EXECUTABLE");
         std::env::remove_var("PI_ACP_EXECUTABLE");
         std::env::remove_var("COMET_NO_LOGIN_SHELL");
@@ -72,6 +76,14 @@ async fn cli_on_login_shell_path_only_is_resolved() {
         .launch_program()
         .expect("claude-agent-acp resolves via login-shell PATH");
     assert_eq!(claude, shell_bin.join("claude-agent-acp"), "{claude:?}");
+    let cursor = AcpHarness::cursor()
+        .launch_program()
+        .expect("cursor-agent resolves via login-shell PATH");
+    assert_eq!(cursor, shell_bin.join("cursor-agent"), "{cursor:?}");
+    let opencode = AcpHarness::opencode()
+        .launch_program()
+        .expect("opencode resolves via login-shell PATH");
+    assert_eq!(opencode, shell_bin.join("opencode"), "{opencode:?}");
     let hermes = AcpHarness::hermes()
         .launch_program()
         .expect("hermes resolves via login-shell PATH");

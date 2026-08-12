@@ -38,6 +38,7 @@ pub fn blurb(harness: HarnessId) -> &'static str {
         HarnessId::ClaudeCode => "Anthropic's coding agent, driven through the Claude Code CLI.",
         HarnessId::Codex => "OpenAI's coding agent, driven through the Codex CLI.",
         HarnessId::Cursor => "Cursor's CLI agent.",
+        HarnessId::OpenCode => "OpenCode's coding agent.",
         HarnessId::Grok => "xAI's Grok Build agent (grok CLI).",
         HarnessId::Hermes => "Nous Research's Hermes Agent (hermes CLI).",
         HarnessId::Pi => "The pi coding agent (pi CLI).",
@@ -50,7 +51,8 @@ pub fn cli_name(harness: HarnessId) -> &'static str {
     match harness {
         HarnessId::ClaudeCode => "claude",
         HarnessId::Codex => "codex",
-        HarnessId::Cursor => "cursor",
+        HarnessId::Cursor => "cursor-agent",
+        HarnessId::OpenCode => "opencode",
         HarnessId::Grok => "grok",
         HarnessId::Hermes => "hermes",
         HarnessId::Pi => "pi",
@@ -306,13 +308,17 @@ impl HarnessesPage {
                                     .child(SharedString::from("You")),
                             )
                         })
-                        .child(div().size(px(6.0)).rounded_full().flex_none().bg(
-                            if is_local {
-                                emerald
-                            } else {
-                                crate::theme::ink(0.2)
-                            },
-                        ))
+                        .child(
+                            div()
+                                .size(px(6.0))
+                                .rounded_full()
+                                .flex_none()
+                                .bg(if is_local {
+                                    emerald
+                                } else {
+                                    crate::theme::ink(0.2)
+                                }),
+                        )
                 }))
                 .into_any_element();
             trigger = trigger.child(popover::anchored_menu("harnesses-device-menu", menu, None));
@@ -389,11 +395,10 @@ impl HarnessesPage {
                         widgets::toggle_switch(&theme, enabled)
                             .id(("harness-toggle", ix))
                             .when(interactive, |el| {
-                                el.cursor_pointer().on_click(cx.listener(
-                                    move |this, _, _, cx| {
+                                el.cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
                                         this.toggle(harness, !enabled, cx);
-                                    },
-                                ))
+                                    }))
                             }),
                     )
                     .into_any_element()
@@ -435,7 +440,9 @@ impl Render for HarnessesPage {
             }
             Loadable::Ready(_) => {
                 let rows = self.rows(cx);
-                widgets::section_card(&theme).children(rows).into_any_element()
+                widgets::section_card(&theme)
+                    .children(rows)
+                    .into_any_element()
             }
         };
         let error = self
