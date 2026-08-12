@@ -1,44 +1,70 @@
-# ProofShip Relay (R0 spike)
+# ProofShip Relay (W1+)
 
-Cloudflare Worker + one Durable Object that relays a local ProofShip bridge/engine to any browser. The engine is the single writer and gate authority; the web app observes state and may enqueue commands for the local engine to execute.
+Cloudflare Worker + Durable Object coordinating **Sessions-shaped** rooms between
+web viewers and executors.
 
-## Event contract
+- **Room key:** `sessionId` (URL alias: `launchId` paths still work)
+- **Roles:** `engine` (UserExecutor), `platform` (PlatformExecutor), `viewer`
+- **Invariant:** private keys and deploy signing never transit this Worker
 
-Engine WebSocket: `GET /ws/engine/:launchId?token=...`
+## Auth
 
-Engine messages are JSON:
+| Role | How |
+|---|---|
+| Engine / platform | `?token=&deviceId=` matched against `DEVICE_TOKENS` JSON, or `DEVICE_TOKEN` / `ENGINE_TOKEN` (`*` fallback). Empty config accepts any token (local spike). |
+| Viewer | Optional `VIEWER_TOKEN` → require `?viewerToken=` |
 
-```json
-{"type":"event","kind":"session.open","payload":{"launchId":"...","fields":{},"agentLane":"..."}}
-{"type":"event","kind":"draft.ready","payload":{"program":"...","source":"...","lane":"..."}}
-{"type":"event","kind":"gate.start","payload":{}}
-{"type":"event","kind":"gate.done","payload":{"ok":true,"stage":"...","digests":{}}}
-{"type":"event","kind":"artifact.sealed","payload":{"outputSetDigest":"...","files":[]}}
-{"type":"event","kind":"note","payload":{"text":"..."}}
+## WebSockets
+
+```
+GET /ws/engine/:sessionId?token=…&deviceId=…&role=engine|platform
+GET /ws/web/:sessionId?viewerToken=…
 ```
 
-The relay assigns each event `{seq, ts}` and broadcasts:
+Aliases: `/ws/session/engine/…`, `/ws/session/web/…`.
+
+## Events (engine → relay → viewers)
+
+Sessions-shaped (preferred):
 
 ```json
-{"type":"event","event":{"seq":1,"ts":"2026-08-11T00:00:00.000Z","kind":"draft.ready","payload":{}}}
+{"type":"event","kind":"session.user","payload":{"text":"…"}}
+{"type":"event","kind":"session.agent","payload":{"text":"…"}}
+{"type":"event","kind":"session.tool","payload":{"id":"…","call":{}}}
+{"type":"event","kind":"session.done","payload":{"status":"…"}}
+{"type":"event","kind":"executor.online","payload":{"role":"engine","deviceId":"…"}}
+{"type":"event","kind":"deploy.done","payload":{"ok":true,"record":{}}}
 ```
 
-Viewer WebSocket: `GET /ws/web/:launchId`
+Legacy projections still accepted: `draft.ready`, `gate.start`, `gate.done`,
+`artifact.sealed`, `note`.
 
-On connect, viewers receive:
+Relay assigns `{seq, ts}` and broadcasts `{type:"event", event:{…}}`.
+
+## Viewer commands
+
+Queued with TTL (~15m); drained to the selected online executor. Executors may
+`{"type":"cmd.ack","id":"…"}`.
 
 ```json
-{"type":"snapshot","state":{},"tail":[]}
-```
-
-Viewer commands are JSON and are persisted until delivered to a connected engine:
-
-```json
-{"type":"cmd.prompt","nl":"revise the draft","lane":"optional"}
+{"type":"cmd.prompt","nl":"…","lane":"codex","executor":"user"|"platform","chatId":"…"}
+{"type":"cmd.steer","nl":"…"}
 {"type":"cmd.cancel"}
+{"type":"cmd.deploy","networkId":"…","module":"…","digest":"…"}
 ```
 
-HTTP snapshot: `GET /api/launches/:id/state` returns the same materialized state plus the last 50 events.
+`cmd.deploy` always targets the **user** executor. If the only online executor is
+platform (or deploy is forced platform), relay emits `executor.refused`.
+
+## HTTP snapshot
+
+```
+GET /api/sessions/:id/state
+GET /api/launches/:id/state   # alias
+```
+
+Returns `{ state, tail, queueDepth }`. Snapshot includes `transcript`,
+`executors`, `deployment`, gate/artifact fields.
 
 ## Development
 
@@ -49,18 +75,16 @@ npm run typecheck
 npm run dev
 ```
 
-Set `ENGINE_TOKEN` for engine authentication in deployed/dev environments. If `ENGINE_TOKEN` is absent, the spike accepts any engine token to keep local development simple.
-
 ## Deploy
 
 ```sh
 cd proofship/relay
-wrangler secret put ENGINE_TOKEN
+wrangler secret put DEVICE_TOKENS   # '{"laptop":"…"}' preferred
+# or: wrangler secret put ENGINE_TOKEN
 npm run deploy
 ```
 
-`wrangler.toml` intentionally has no `account_id`; deployment uses ambient Wrangler authentication.
+## Follow-on (not W1)
 
-## Security note
-
-The relay never holds chain private keys or LLM API credentials. The local engine remains the only writer and the only gate executor. `ENGINE_TOKEN` is a shared secret for this R0 spike; per-device tokens, accounts, sharing policy, D1, and OAuth/SIWE belong to R1+.
+SIWE / WorkOS accounts, share links, D1, billing quotas — see product-plan
+Phase 4 and `proofship/platform-sandbox/`.

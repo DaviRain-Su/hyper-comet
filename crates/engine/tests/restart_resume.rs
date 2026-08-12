@@ -45,6 +45,7 @@ fn run_request(prompt: &str, cwd: &str) -> RunRequest {
         sandbox: SandboxLevel::WorkspaceWrite,
         auto_approve: true,
         attachments: Vec::new(),
+            mcp_servers: Vec::new(),
         resume: None,
     }
 }
@@ -788,6 +789,7 @@ async fn real_claude_remembers_codeword_across_engine_restart() {
         sandbox: SandboxLevel::WorkspaceWrite,
         auto_approve: false,
         attachments: Vec::new(),
+            mcp_servers: Vec::new(),
         resume: None,
     };
     let assemble_real = || {

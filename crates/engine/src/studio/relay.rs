@@ -1,10 +1,11 @@
-//! Engine → Cloudflare relay WebSocket client (Phase 3.2).
+//! Engine → Cloudflare relay WebSocket client (web coordinator).
 //!
-//! Mirrors `proofship/bridge/server.mjs` relay behavior: the local engine is the
-//! sole writer. Env:
+//! The local engine is a **UserExecutor**. Env:
 //! - `PROOFSHIP_RELAY` — Worker base URL (required to enable)
-//! - `PROOFSHIP_DEVICE_TOKEN` / `ENGINE_TOKEN` — shared spike token
-//! - `PROOFSHIP_LAUNCH_ID` — room id (default `default`)
+//! - `PROOFSHIP_DEVICE_TOKEN` / `DEVICE_TOKEN` / `ENGINE_TOKEN` — device auth
+//! - `PROOFSHIP_DEVICE_ID` — device id matched in relay DEVICE_TOKENS (default `default`)
+//! - `PROOFSHIP_SESSION_ID` / `PROOFSHIP_LAUNCH_ID` — room id (default `default`)
+//! - `PROOFSHIP_RELAY_CHAT_ID` — Sessions chat used for web prompts (default `proofship-relay`)
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,15 +28,23 @@ struct RelayState {
 
 #[derive(Debug, Clone)]
 pub struct RelayCommand {
+    pub id: Option<String>,
     pub kind: RelayCommandKind,
     pub nl: Option<String>,
     pub lane: Option<String>,
+    pub chat_id: Option<String>,
+    pub network_id: Option<String>,
+    pub module: Option<String>,
+    pub digest: Option<String>,
+    pub executor: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelayCommandKind {
     Prompt,
     Cancel,
+    Steer,
+    Deploy,
 }
 
 impl StudioRelay {
@@ -44,8 +53,6 @@ impl StudioRelay {
     }
 
     /// Spawn the reconnecting client when `PROOFSHIP_RELAY` is set.
-    /// Returns a command receiver for web→engine prompts (optional consumers).
-    /// No-ops (returns None) if already started or env is unset.
     pub fn start_from_env(&self) -> Option<mpsc::UnboundedReceiver<RelayCommand>> {
         {
             let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -59,13 +66,20 @@ impl StudioRelay {
             return None;
         }
         let token = std::env::var("PROOFSHIP_DEVICE_TOKEN")
+            .or_else(|_| std::env::var("DEVICE_TOKEN"))
             .or_else(|_| std::env::var("ENGINE_TOKEN"))
             .unwrap_or_default();
-        let launch_id = std::env::var("PROOFSHIP_LAUNCH_ID").unwrap_or_else(|_| "default".into());
+        let device_id =
+            std::env::var("PROOFSHIP_DEVICE_ID").unwrap_or_else(|_| "default".into());
+        let session_id = std::env::var("PROOFSHIP_SESSION_ID")
+            .or_else(|_| std::env::var("PROOFSHIP_LAUNCH_ID"))
+            .unwrap_or_else(|_| "default".into());
         let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(RelayState { tx: out_tx });
-        tokio::spawn(run_client(base, token, launch_id, out_rx, cmd_tx));
+        tokio::spawn(run_client(
+            base, token, device_id, session_id, out_rx, cmd_tx,
+        ));
         Some(cmd_rx)
     }
 
@@ -83,21 +97,31 @@ impl StudioRelay {
         }
     }
 
+    pub fn ack(&self, id: &str) {
+        let msg = serde_json::json!({ "type": "cmd.ack", "id": id }).to_string();
+        if let Ok(guard) = self.inner.lock()
+            && let Some(state) = guard.as_ref()
+        {
+            let _ = state.tx.send(msg);
+        }
+    }
+
     pub fn note(&self, text: &str) {
         let trimmed: String = text.chars().take(MAX_TEXT).collect();
         self.publish("note", serde_json::json!({ "text": trimmed }));
     }
 }
 
-fn socket_url(base: &str, launch_id: &str, token: &str) -> String {
+fn socket_url(base: &str, session_id: &str, token: &str, device_id: &str) -> String {
     let mut u = base.replace("https://", "wss://").replace("http://", "ws://");
     if u.ends_with('/') {
         u.pop();
     }
     format!(
-        "{u}/ws/engine/{}?token={}",
-        urlencoding_encode(launch_id),
-        urlencoding_encode(token)
+        "{u}/ws/engine/{}?token={}&deviceId={}&role=engine",
+        urlencoding_encode(session_id),
+        urlencoding_encode(token),
+        urlencoding_encode(device_id)
     )
 }
 
@@ -117,19 +141,32 @@ fn urlencoding_encode(s: &str) -> String {
 async fn run_client(
     base: String,
     token: String,
-    launch_id: String,
+    device_id: String,
+    session_id: String,
     mut out_rx: mpsc::UnboundedReceiver<String>,
     cmd_tx: mpsc::UnboundedSender<RelayCommand>,
 ) {
     let mut backoff = Duration::from_secs(1);
     let mut queue: Vec<String> = Vec::new();
     loop {
-        let url = socket_url(&base, &launch_id, &token);
+        let url = socket_url(&base, &session_id, &token, &device_id);
         match connect_async(&url).await {
             Ok((ws, _)) => {
-                tracing::info!(%url, "studio relay connected");
+                tracing::info!(%url, "proofship relay connected (user executor)");
                 backoff = Duration::from_secs(1);
                 let (mut write, mut read) = ws.split();
+                // Announce session to viewers (relay also emits executor.online).
+                let open = serde_json::json!({
+                    "type": "event",
+                    "kind": "session.open",
+                    "payload": {
+                        "sessionId": session_id,
+                        "deviceId": device_id,
+                        "role": "engine",
+                    },
+                })
+                .to_string();
+                let _ = write.send(Message::Text(open)).await;
                 for msg in queue.drain(..) {
                     if write.send(Message::Text(msg)).await.is_err() {
                         break;
@@ -170,10 +207,10 @@ async fn run_client(
                 }
             }
             Err(err) => {
-                tracing::warn!(error = %err, "studio relay connect failed");
+                tracing::warn!(error = %err, "proofship relay connect failed");
             }
         }
-        tracing::warn!(?backoff, "studio relay reconnecting");
+        tracing::warn!(?backoff, "proofship relay reconnecting");
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(Duration::from_secs(30));
     }
@@ -182,6 +219,18 @@ async fn run_client(
 fn parse_command(text: &str) -> Option<RelayCommand> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
     let ty = value.get("type")?.as_str()?;
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let chat_id = value
+        .get("chatId")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let executor = value
+        .get("executor")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     match ty {
         "cmd.prompt" => {
             let nl = value.get("nl")?.as_str()?.to_string();
@@ -193,16 +242,64 @@ fn parse_command(text: &str) -> Option<RelayCommand> {
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
             Some(RelayCommand {
+                id,
                 kind: RelayCommandKind::Prompt,
                 nl: Some(nl.chars().take(4000).collect()),
                 lane,
+                chat_id,
+                network_id: None,
+                module: None,
+                digest: None,
+                executor,
+            })
+        }
+        "cmd.steer" => {
+            let nl = value.get("nl")?.as_str()?.to_string();
+            if nl.trim().is_empty() {
+                return None;
+            }
+            Some(RelayCommand {
+                id,
+                kind: RelayCommandKind::Steer,
+                nl: Some(nl.chars().take(4000).collect()),
+                lane: None,
+                chat_id,
+                network_id: None,
+                module: None,
+                digest: None,
+                executor,
             })
         }
         "cmd.cancel" => Some(RelayCommand {
+            id,
             kind: RelayCommandKind::Cancel,
             nl: None,
             lane: None,
+            chat_id,
+            network_id: None,
+            module: None,
+            digest: None,
+            executor,
         }),
+        "cmd.deploy" => {
+            let network_id = value.get("networkId")?.as_str()?.to_string();
+            let module = value.get("module")?.as_str()?.to_string();
+            let digest = value
+                .get("digest")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            Some(RelayCommand {
+                id,
+                kind: RelayCommandKind::Deploy,
+                nl: None,
+                lane: None,
+                chat_id,
+                network_id: Some(network_id),
+                module: Some(module),
+                digest,
+                executor,
+            })
+        }
         _ => None,
     }
 }
@@ -213,17 +310,33 @@ mod tests {
 
     #[test]
     fn socket_url_rewrites_https() {
-        let url = socket_url("https://example.workers.dev", "launch/1", "tok");
+        let url = socket_url("https://example.workers.dev", "launch/1", "tok", "dev-a");
         assert!(url.starts_with("wss://example.workers.dev/ws/engine/"));
         assert!(url.contains("token=tok"));
+        assert!(url.contains("deviceId=dev-a"));
         assert!(url.contains("launch%2F1"));
     }
 
     #[test]
     fn parse_prompt_command() {
-        let cmd = parse_command(r#"{"type":"cmd.prompt","nl":"hi","lane":"codex"}"#).unwrap();
+        let cmd = parse_command(
+            r#"{"type":"cmd.prompt","nl":"hi","lane":"codex","id":"1","executor":"user"}"#,
+        )
+        .unwrap();
         assert_eq!(cmd.kind, RelayCommandKind::Prompt);
         assert_eq!(cmd.nl.as_deref(), Some("hi"));
         assert_eq!(cmd.lane.as_deref(), Some("codex"));
+        assert_eq!(cmd.id.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn parse_deploy_command() {
+        let cmd = parse_command(
+            r#"{"type":"cmd.deploy","networkId":"xlayer-testnet","module":"Escrow","digest":"abc"}"#,
+        )
+        .unwrap();
+        assert_eq!(cmd.kind, RelayCommandKind::Deploy);
+        assert_eq!(cmd.network_id.as_deref(), Some("xlayer-testnet"));
+        assert_eq!(cmd.module.as_deref(), Some("Escrow"));
     }
 }

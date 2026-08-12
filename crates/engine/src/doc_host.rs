@@ -2219,6 +2219,7 @@ impl DocHost {
                 .unwrap_or(comet_proto::SandboxLevel::WorkspaceWrite),
             auto_approve: false,
             attachments: Vec::new(),
+            mcp_servers: Vec::new(),
             resume: None,
         })
     }

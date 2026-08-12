@@ -312,6 +312,7 @@ mod tests {
             sandbox: comet_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: false,
             attachments: Vec::new(),
+            mcp_servers: Vec::new(),
             resume: None,
         }
     }

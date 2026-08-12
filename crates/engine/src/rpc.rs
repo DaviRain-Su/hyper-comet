@@ -1177,6 +1177,7 @@ impl RpcService for EngineRpc {
             methods::STUDIO_LAUNCH_RUN => {
                 let p: StudioLaunchRunRequest = parse_params(params)?;
                 let relay = self.studio_relay.clone();
+                let interact = self.studio_interact.clone();
                 relay.publish(
                     "session.open",
                     serde_json::json!({
@@ -1226,19 +1227,34 @@ impl RpcService for EngineRpc {
                         }
                         comet_proto::StudioLaunchRunEvent::Done {
                             ok,
+                            module,
                             artifacts,
                             digest,
                             exhausted,
                             ..
                         } => {
                             if *ok {
-                                relay.publish(
-                                    "artifact.sealed",
+                                let mut payload = if let Some(name) = module.as_deref() {
+                                    interact.sealed_for_relay(
+                                        name,
+                                        digest.output_set_digest.as_deref(),
+                                        None,
+                                    )
+                                } else {
                                     serde_json::json!({
                                         "outputSetDigest": digest.output_set_digest,
                                         "files": artifacts,
-                                    }),
-                                );
+                                    })
+                                };
+                                // Prefer live event file list when present.
+                                if !artifacts.is_empty() {
+                                    payload["files"] = serde_json::to_value(artifacts)
+                                        .unwrap_or_else(|_| serde_json::json!([]));
+                                }
+                                if let Some(name) = module {
+                                    payload["module"] = serde_json::json!(name);
+                                }
+                                relay.publish("artifact.sealed", payload);
                             } else if *exhausted {
                                 relay.note("repair exhausted");
                             }

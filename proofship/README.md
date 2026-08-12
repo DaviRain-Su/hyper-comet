@@ -4,11 +4,13 @@
 > 面向 web3 开发者的产品开发部署 app：任何合约产品，从自然语言到机器门禁到上链。
 
 ProofShip 的本体是一个**本地优先的桌面 app**(gpui 原生 UI + Rust 引擎；基座架构
-见仓库根 `ARCHITECTURE.md`，Studio 产品层见 `docs/proofship-studio.md`)，
+见仓库根 `ARCHITECTURE.md`，门禁/部署服务见 `docs/proofship-studio.md`)，
 内嵌 **ProofForge 机器门禁**作为合约开发/部署内核：
-AI agent 起草 ProgramV1 源 → `check → build → inspect` 门禁（不过门禁就没有制品、
-没有部署）→ 部署到目标链（首发 X Layer)。后续提供 **web app**（托管前端 +
-Cloudflare relay 旁观/驱动本机引擎）与纯云端 agent 形态。
+在 **Sessions** 里用 ACP agent（skill + MCP）起草 ProgramV1 →
+`check → build → inspect`（不过门禁就没有制品、没有部署）→ 部署到目标链
+（首发 X Layer)。**没有**第二套 Studio 聊天房——形态对齐 Cursor / ChatGPT。
+后续提供 **web app**（托管前端 + Cloudflare relay 旁观/驱动本机引擎）与纯云端
+agent 形态。
 
 本目录是 ProofShip 的**平台件**所在（门禁工具链、relay、桥接参考）；具体业务
 vertical(如黑客松的 RWA 示例）不入库——它们由 agent 在用户项目里生成。
@@ -19,8 +21,8 @@ vertical(如黑客松的 RWA 示例）不入库——它们由 agent 在用户�
 
 Claude Code · Codex · Grok Build · Hermes · Pi · Cursor · OpenCode
 
-实现：`crates/harness`（统一 AcpHarness + per-agent spec)。Studio 起草链路
-（C2）复用同一套 lanes。
+实现：`crates/harness`（统一 AcpHarness + per-agent spec)。**Sessions** 发消息时
+自动注入 ProofForge skill 并挂载 MCP（`enrich_sessions_run_request`）。
 
 ## 布局
 
@@ -30,12 +32,18 @@ proofship/
     install-toolchain.sh   ← 一键就绪门禁工具链（bin + olean 闭包 + 锁定链工具）
     gate.sh                ← 通用门禁:任意 .lean → check/build/inspect(开发/调试用)
     ci-gate-example.sh     ← CI 示例:gate + 断言 gate-report.json(certified)
-  templates/               ← Studio 数据驱动模板(RWA / Time-Lock;X Layer first)
+  templates/               ← Studio 数据驱动模板(RWA / Time-Lock;X Layer first；仅为起步样例)
   web/                     ← Phase 3 静态壳(未来真内嵌 dapp UI)
   … (bridge/relay/toolchain/inbox) …
 ```
 
-Studio Preview opens the host system browser for the localhost HTML dapp
+本地起草权威 skill：`.agents/skills/proofforge-program-v1/`（任意 ProgramV1 合约；
+**Sessions** 对话自动注入，并挂载 `proofship/mcp/` stdio MCP）。
+Web / 远程 agent 走 ProofForge HTTP MCP（见 `proofship/web/`）。
+`proofship/prompts/program-v1-author.md` 仅作指针。
+独立 Studio 聊天入口已移除。
+
+Preview（引擎服务）可用系统浏览器打开 localhost HTML dapp
 (no separate WebView binary / window on desktop).
 
 ## 快速复现（本机门禁）

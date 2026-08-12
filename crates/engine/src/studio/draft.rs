@@ -22,6 +22,10 @@ use crate::studio::{GateConfig, GateError, StudioGate, StudioPaths};
 
 const NOTE_CAP_CHARS: usize = 600;
 pub(crate) const REPAIR_DIAGNOSTIC_CAP_CHARS: usize = 4 * 1024;
+/// Canonical local authoring surface (skill). Prompt under `proofship/prompts/`
+/// is a human pointer only.
+const AUTHOR_SKILL_REL: &str = ".agents/skills/proofforge-program-v1/SKILL.md";
+const LEGACY_AUTHOR_PROMPT_REL: &str = "proofship/prompts/program-v1-author.md";
 const FALLBACK_PROMPT: &str = r#"You draft ProofForge ProgramV1 contracts. Output exactly one .lean file.
 First line must be exactly: import ProofForgeV2
 Use this skeleton:
@@ -130,6 +134,7 @@ impl DraftRunner {
         });
         let status = gate.status();
         let prompt = compose_prompt(&repo_root, &nl, status.pf_cli.as_deref()).await;
+        let mcp_servers = crate::studio::resolve_studio_mcp_servers(&repo_root, &status);
         let request = RunRequest {
             prompt,
             harness: Some(harness_id),
@@ -141,6 +146,7 @@ impl DraftRunner {
             auto_approve: true,
             resume: None,
             attachments: Vec::new(),
+            mcp_servers,
         };
         let (_steer_tx, steer_rx) = mpsc::channel::<SteerMessage>(1);
         let controls = RunControls {
@@ -234,14 +240,45 @@ impl DraftRunner {
 }
 
 async fn compose_prompt(repo_root: &Path, nl: &str, pf_cli: Option<&str>) -> String {
-    let system =
-        tokio::fs::read_to_string(repo_root.join("proofship/prompts/program-v1-author.md"))
-            .await
-            .unwrap_or_else(|_| FALLBACK_PROMPT.to_string());
+    let system = load_author_system(repo_root).await;
     let cli = pf_cli.unwrap_or("proof-forge-next");
     format!(
-        "{system}\n\n## Local gate self-check\n\nThe resolved ProofForge CLI is `{cli}`. Before returning, self-verify from the repository's `proofship/inbox` project root (or the current draft workdir if you copy the file there) with:\n\n```sh\n{cli} check <Module>.lean --module <Module>\n{cli} build <Module>.lean --module <Module> --target evm -o out-<module-lowercase>\n{cli} inspect --output-dir out-<module-lowercase>\n```\n\nUse the absolute CLI path exactly as shown when available.\n\n## User request\n\n{nl}\n\nWrite exactly one `<Module>.lean` file in the current working directory. Choose `<Module>` from the contract domain as a valid Lean identifier."
+        "{system}\n\n## Local gate self-check\n\nThe resolved ProofForge CLI is `{cli}`. Before returning, self-verify from the repository's `proofship/inbox` project root (or the current draft workdir if you copy the file there) with:\n\n```sh\n{cli} check <Module>.lean --module <Module>\n{cli} build <Module>.lean --module <Module> --target evm -o out-<module-lowercase>\n{cli} inspect --output-dir out-<module-lowercase>\n```\n\nWhen the session exposes ProofForge MCP tools (`pf_check` / `pf_build` / `pf_artifacts`, or the full PF tool set), prefer those over shelling out. Studio still re-runs the machine gate after you write the file.\n\nUse the absolute CLI path exactly as shown when available.\n\n## User request\n\n{nl}\n\nWrite exactly one `<Module>.lean` file in the current working directory. Choose `<Module>` from the contract domain as a valid Lean identifier."
     )
+}
+
+/// Load the ProgramV1 authoring system prompt: skill first, then legacy prompt
+/// file (only if it still carries body beyond a pointer), else embedded fallback.
+async fn load_author_system(repo_root: &Path) -> String {
+    if let Ok(raw) = tokio::fs::read_to_string(repo_root.join(AUTHOR_SKILL_REL)).await {
+        let body = strip_yaml_frontmatter(&raw);
+        if body_looks_like_author_skill(body) {
+            return body.to_string();
+        }
+    }
+    if let Ok(raw) = tokio::fs::read_to_string(repo_root.join(LEGACY_AUTHOR_PROMPT_REL)).await {
+        let body = strip_yaml_frontmatter(&raw);
+        if body_looks_like_author_skill(body) {
+            return body.to_string();
+        }
+    }
+    FALLBACK_PROMPT.to_string()
+}
+
+fn strip_yaml_frontmatter(text: &str) -> &str {
+    let Some(rest) = text.strip_prefix("---") else {
+        return text.trim();
+    };
+    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    let Some(end) = rest.find("\n---") else {
+        return text.trim();
+    };
+    let after = &rest[end + "\n---".len()..];
+    after.strip_prefix('\n').unwrap_or(after).trim()
+}
+
+fn body_looks_like_author_skill(body: &str) -> bool {
+    body.contains("import ProofForgeV2") && body.contains("ProgramV1")
 }
 
 pub(crate) fn compose_repair_prompt(
@@ -302,6 +339,43 @@ mod tests {
 
     use super::*;
     use crate::registry::HarnessRegistry;
+
+    #[test]
+    fn strip_yaml_frontmatter_drops_metadata_block() {
+        let raw = "---\nname: x\ndescription: y\n---\n\n# Body\n\nimport ProofForgeV2\n";
+        assert_eq!(
+            strip_yaml_frontmatter(raw),
+            "# Body\n\nimport ProofForgeV2"
+        );
+    }
+
+    #[tokio::test]
+    async fn compose_prompt_prefers_proofforge_skill_over_legacy_pointer() {
+        let temp = tempfile::tempdir().unwrap();
+        let skill_dir = temp
+            .path()
+            .join(".agents/skills/proofforge-program-v1");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: proofforge-program-v1\ndescription: test\n---\n\n# Skill body\n\nimport ProofForgeV2\nProgramV1 DSL allow-list.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(temp.path().join("proofship/prompts")).unwrap();
+        std::fs::write(
+            temp.path().join(LEGACY_AUTHOR_PROMPT_REL),
+            "# pointer only — no language body\n",
+        )
+        .unwrap();
+
+        let prompt = compose_prompt(temp.path(), "escrow for Alice", Some("/opt/pf/proof-forge-next"))
+            .await;
+        assert!(prompt.contains("Skill body"));
+        assert!(prompt.contains("import ProofForgeV2"));
+        assert!(prompt.contains("/opt/pf/proof-forge-next"));
+        assert!(prompt.contains("## User request\n\nescrow for Alice"));
+        assert!(!prompt.contains("pointer only"));
+    }
 
     #[tokio::test]
     async fn mock_draft_collects_single_lean_file() {

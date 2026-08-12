@@ -9,15 +9,15 @@
 <body>
   <header class="top">
     <div class="brand">ProofShip</div>
-    <p class="tag">AI drafts the contract. The gate decides if it ships.</p>
+    <p class="tag">Sessions on the web — observe transcript, send prompts. Code and keys stay on the executor.</p>
   </header>
 
   <main class="layout">
     <section class="panel">
-      <h1>Web viewer</h1>
+      <h1>Session</h1>
       <p class="lede">
-        Observe a local Studio launch over the relay. The desktop engine remains
-        the only writer and gate authority — keys never cross this page.
+        Same shape as desktop Sessions: watch the transcript and enqueue prompts.
+        Without an online executor this page stays read-only.
       </p>
 
       <label class="field">
@@ -25,21 +25,64 @@
         <input id="relay" type="url" placeholder="https://proofship-relay.example.workers.dev" spellcheck="false"/>
       </label>
       <label class="field">
-        Launch id
-        <input id="launch" type="text" placeholder="launch uuid" spellcheck="false"/>
+        Session id
+        <input id="session" type="text" placeholder="session uuid" spellcheck="false"/>
       </label>
-      <div class="row">
-        <button id="connect" type="button">Connect viewer</button>
-        <button id="disconnect" type="button" class="ghost" disabled>Disconnect</button>
-      </div>
       <label class="field">
-        Prompt to local engine
-        <textarea id="prompt" rows="3" placeholder="describe the contract…" spellcheck="true"></textarea>
+        Viewer token <span class="hint">(optional)</span>
+        <input id="viewer-token" type="password" placeholder="when VIEWER_TOKEN is set" spellcheck="false" autocomplete="off"/>
+      </label>
+      <fieldset class="executor">
+        <legend>Executor</legend>
+        <label class="radio"><input type="radio" name="executor" value="user" checked/> My desktop / VPS</label>
+        <label class="radio"><input type="radio" name="executor" value="platform"/> Platform (Sandbox)</label>
+        <p id="executor-status" class="status">Not connected — executor presence unknown.</p>
+      </fieldset>
+      <div class="row">
+        <button id="connect" type="button">Connect</button>
+        <button id="disconnect" type="button" class="ghost" disabled>Disconnect</button>
+        <button id="cancel" type="button" class="ghost" disabled>Cancel run</button>
+      </div>
+      <p id="status" class="status">Disconnected — open desktop ProofShip or choose Platform.</p>
+    </section>
+
+    <section class="panel session-panel">
+      <h2>Transcript</h2>
+      <div id="transcript" class="transcript" aria-live="polite"></div>
+      <div class="composer">
+        <label class="field">
+          Prompt
+          <textarea id="prompt" rows="3" placeholder="describe the contract…" spellcheck="true"></textarea>
+        </label>
+        <div class="row">
+          <button id="send-prompt" type="button" disabled>Send</button>
+          <button id="steer" type="button" class="ghost" disabled>Steer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Deploy (UserExecutor only)</h2>
+      <p class="lede">
+        Sends <code>cmd.deploy</code> to your desktop/VPS. Platform refuses keyed deploy.
+        Private keys never transit the relay.
+      </p>
+      <label class="field">
+        Network id
+        <input id="deploy-network" type="text" placeholder="xlayer-testnet" spellcheck="false"/>
+      </label>
+      <label class="field">
+        Module
+        <input id="deploy-module" type="text" placeholder="RwaShareRegistry" spellcheck="false"/>
+      </label>
+      <label class="field">
+        Expected digest <span class="hint">(optional)</span>
+        <input id="deploy-digest" type="text" placeholder="output-set digest" spellcheck="false"/>
       </label>
       <div class="row">
-        <button id="send-prompt" type="button" class="ghost" disabled>Send prompt</button>
+        <button id="deploy" type="button" class="ghost" disabled>Deploy on desktop</button>
       </div>
-      <p id="status" class="status">Disconnected — without a local engine this page is read-only.</p>
+      <p id="deploy-status" class="status"></p>
     </section>
 
     <section class="panel">
@@ -50,10 +93,10 @@
     </section>
 
     <section class="panel span">
-      <h2>Contract interact (browser)</h2>
+      <h2>Contract interact</h2>
       <p class="lede">
-        Paste ABI JSON + address to call views via your RPC. Writes use
-        <code>window.ethereum</code> when present (Phase 3.3 stub).
+        Views via RPC <code>eth_call</code>. Writes use <code>window.ethereum</code> when present.
+        ABI + address fill from sealed snapshot when available.
       </p>
       <label class="field">
         RPC URL
@@ -68,15 +111,35 @@
         <textarea id="abi" rows="6" placeholder='[{"type":"function",…}]' spellcheck="false"></textarea>
       </label>
       <div class="row">
-        <button id="load-abi" type="button">Load views</button>
+        <button id="load-abi" type="button">Load functions</button>
+        <button id="fill-snapshot" type="button" class="ghost">Fill from snapshot</button>
       </div>
       <div id="views" class="views"></div>
       <p id="call-status" class="status"></p>
     </section>
+
+    <section class="panel span">
+      <h2>ProofForge MCP (external IDE agents)</h2>
+      <p class="lede">
+        Not the main conversation surface. Remote IDE agents can attach this HTTP MCP.
+        Local compile + gate + deploy stay on the executor (skill + stdio MCP).
+      </p>
+      <label class="field">
+        ProofForge MCP URL
+        <input id="pf-mcp" type="url" spellcheck="false"
+          placeholder="https://proof-forge-mcp.davirain-yin.workers.dev/mcp"/>
+      </label>
+      <div class="row">
+        <button id="copy-pf-mcp" type="button" class="ghost">Copy MCP URL</button>
+        <a id="pf-mcp-health" class="ghost linkish" href="#" target="_blank" rel="noopener">Health</a>
+      </div>
+      <pre id="pf-mcp-snippet" class="code"></pre>
+      <p id="pf-mcp-status" class="status"></p>
+    </section>
   </main>
 
   <footer class="foot">
-    Phase 3 shell · deploy with Cloudflare Pages · engine ↔ relay seam in
+    Dual executor · UserExecutor (desktop/VPS) + Platform Sandbox · keys never on relay ·
     <code>proofship/relay/</code>
   </footer>
   <script type="module" src="./app.js"></script>

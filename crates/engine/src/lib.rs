@@ -87,6 +87,232 @@ fn parse_relay_harness(lane: Option<&str>) -> HarnessId {
     serde_json::from_str(&quoted).unwrap_or(HarnessId::Codex)
 }
 
+fn mirror_agent_event(relay: &StudioRelay, event: &comet_proto::AgentEvent) {
+    match event {
+        comet_proto::AgentEvent::TextDelta { text } => {
+            relay.publish("session.agent", serde_json::json!({ "text": text }));
+        }
+        comet_proto::AgentEvent::ToolCall { id, call } => {
+            relay.publish(
+                "session.tool",
+                serde_json::json!({ "id": id, "call": call }),
+            );
+        }
+        comet_proto::AgentEvent::Done {
+            status, error, ..
+        } => {
+            relay.publish(
+                "session.done",
+                serde_json::json!({
+                    "status": status,
+                    "error": error,
+                }),
+            );
+        }
+        comet_proto::AgentEvent::Error { message } => {
+            relay.publish(
+                "session.done",
+                serde_json::json!({ "ok": false, "error": message }),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn relay_module_source(module: &str) -> Option<String> {
+    let file = format!("{module}.lean");
+    let mut candidates = Vec::new();
+    if let Ok(cwd) = std::env::var("PROOFSHIP_RELAY_CWD") {
+        candidates.push(std::path::PathBuf::from(cwd).join(&file));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join(&file));
+        candidates.push(cwd.join("proofship").join("inbox").join(&file));
+    }
+    candidates.push(crate::repos::home_dir().join("proofship").join("inbox").join(&file));
+    for path in candidates {
+        if let Ok(src) = std::fs::read_to_string(&path)
+            && !src.trim().is_empty()
+        {
+            return Some(src);
+        }
+    }
+    None
+}
+
+async fn handle_relay_deploy(
+    relay: &StudioRelay,
+    network_store: &NetworkStore,
+    wallet_store: &WalletStore,
+    studio_deploy: &StudioDeployer,
+    studio_interact: &StudioInteract,
+    network_id: Option<&str>,
+    module: Option<&str>,
+    digest: Option<&str>,
+) {
+    use futures::StreamExt;
+    let Some(network_id) = network_id else {
+        relay.publish(
+            "executor.refused",
+            serde_json::json!({ "reason": "missing_network_id" }),
+        );
+        return;
+    };
+    let Some(module) = module else {
+        relay.publish(
+            "executor.refused",
+            serde_json::json!({ "reason": "missing_module" }),
+        );
+        return;
+    };
+    let networks = match network_store.load() {
+        Ok(n) => n,
+        Err(err) => {
+            relay.note(&format!("deploy networks: {err}"));
+            return;
+        }
+    };
+    let Some(network) = networks.into_iter().find(|n| n.id == network_id) else {
+        relay.publish(
+            "executor.refused",
+            serde_json::json!({ "reason": "unknown_network", "networkId": network_id }),
+        );
+        return;
+    };
+    let wallets = match wallet_store.load() {
+        Ok(w) => w,
+        Err(err) => {
+            relay.note(&format!("deploy wallets: {err}"));
+            return;
+        }
+    };
+    let Some(wallet) = wallets
+        .into_iter()
+        .find(|w| !matches!(w.source, comet_proto::WalletSource::Watch))
+    else {
+        relay.publish(
+            "executor.refused",
+            serde_json::json!({
+                "reason": "no_signing_wallet",
+                "hint": "Add WalletConnect or DevEnvKey on the desktop executor",
+            }),
+        );
+        return;
+    };
+    let Some(source) = relay_module_source(module) else {
+        relay.publish(
+            "executor.refused",
+            serde_json::json!({
+                "reason": "missing_module_source",
+                "module": module,
+                "hint": "Place a gated {Module}.lean under PROOFSHIP_RELAY_CWD or proofship/inbox",
+            }),
+        );
+        return;
+    };
+    let expected_digest = digest.map(str::to_string);
+    let req = comet_proto::StudioDeployRequest {
+        module: module.into(),
+        source,
+        network_id: network_id.into(),
+        wallet_id: wallet.id.clone(),
+        ctor_sig: "-".into(),
+        ctor_args: Vec::new(),
+        launch_id: None,
+        project_id: None,
+    };
+    relay.publish("gate.start", serde_json::json!({ "phase": "deploy" }));
+    let mut stream = studio_deploy.deploy(req, network, wallet);
+    let mut digest_ok = true;
+    let mut sealed_digest: Option<String> = None;
+    while let Some(ev) = stream.next().await {
+        match ev {
+            comet_proto::StudioDeployEvent::Done {
+                ok,
+                record,
+                error,
+            } => {
+                if !digest_ok {
+                    relay.publish(
+                        "deploy.done",
+                        serde_json::json!({
+                            "ok": false,
+                            "error": "digest_mismatch_after_gate",
+                            "record": record,
+                        }),
+                    );
+                    continue;
+                }
+                let deployed_addr = record.as_ref().map(|r| r.address.clone());
+                relay.publish(
+                    "deploy.done",
+                    serde_json::json!({
+                        "ok": ok,
+                        "record": record,
+                        "error": error,
+                    }),
+                );
+                // Attach deployed address onto sealed artifact for Fill-from-snapshot.
+                if ok {
+                    relay.publish(
+                        "artifact.sealed",
+                        studio_interact.sealed_for_relay(
+                            module,
+                            sealed_digest.as_deref(),
+                            deployed_addr.as_deref(),
+                        ),
+                    );
+                }
+            }
+            comet_proto::StudioDeployEvent::Gate { ok, output } => {
+                if ok
+                    && let Some(expected) = expected_digest.as_deref()
+                    && output != expected
+                {
+                    digest_ok = false;
+                    relay.publish(
+                        "executor.refused",
+                        serde_json::json!({
+                            "reason": "digest_mismatch",
+                            "expected": expected,
+                            "got": output,
+                        }),
+                    );
+                }
+                let digests = if ok {
+                    serde_json::json!({
+                        "outputSetDigest": output,
+                        "raw": output,
+                        "certified": true,
+                    })
+                } else {
+                    serde_json::json!({
+                        "raw": output,
+                        "certified": false,
+                    })
+                };
+                relay.publish(
+                    "gate.done",
+                    serde_json::json!({
+                        "ok": ok,
+                        "output": output,
+                        "digests": digests,
+                    }),
+                );
+                if ok && digest_ok {
+                    sealed_digest = Some(output.clone());
+                    relay.publish(
+                        "artifact.sealed",
+                        studio_interact.sealed_for_relay(module, Some(&output), None),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[allow(dead_code)]
 fn mirror_launch_event(relay: &StudioRelay, event: &comet_proto::StudioLaunchRunEvent) {
     match event {
         comet_proto::StudioLaunchRunEvent::Draft { event, .. } => {
@@ -125,6 +351,7 @@ fn mirror_launch_event(relay: &StudioRelay, event: &comet_proto::StudioLaunchRun
         },
         comet_proto::StudioLaunchRunEvent::Done {
             ok,
+            module,
             artifacts,
             digest,
             exhausted,
@@ -134,6 +361,7 @@ fn mirror_launch_event(relay: &StudioRelay, event: &comet_proto::StudioLaunchRun
                 relay.publish(
                     "artifact.sealed",
                     serde_json::json!({
+                        "module": module,
                         "outputSetDigest": digest.output_set_digest,
                         "files": artifacts,
                     }),
@@ -440,32 +668,121 @@ impl EngineCore {
         comet_rpc::HostRelay::spawn(config, self.rpc_service(), on_nudge)
     }
 
-    /// Start the Cloudflare Studio relay client when `PROOFSHIP_RELAY` is set.
-    /// Safe to call multiple times (only the first connect sticks).
+    /// Start the Cloudflare relay client when `PROOFSHIP_RELAY` is set.
+    /// Web prompts become Sessions runs (skill + MCP via enrich_sessions_run_request).
     pub fn boot_studio_relay(&self) {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
             if let Some(mut cmds) = self.studio_relay.start_from_env() {
                 let relay = self.studio_relay.clone();
-                let launch = self.studio_launch.clone();
+                let sessions = self.sessions.clone();
+                let doc_host = self.doc_host.clone();
+                let default_harness = std::env::var("PROOFSHIP_DEFAULT_HARNESS")
+                    .ok()
+                    .map(|s| parse_relay_harness(Some(&s)))
+                    .unwrap_or(HarnessId::Codex);
+                let network_store = self.network_store.clone();
+                let wallet_store = self.wallet_store.clone();
+                let studio_deploy = self.studio_deploy.clone();
+                let studio_interact = self.studio_interact.clone();
                 tokio::spawn(async move {
                     while let Some(cmd) = cmds.recv().await {
+                        if let Some(id) = cmd.id.as_deref() {
+                            relay.ack(id);
+                        }
+                        let chat_id = cmd
+                            .chat_id
+                            .clone()
+                            .or_else(|| std::env::var("PROOFSHIP_RELAY_CHAT_ID").ok())
+                            .unwrap_or_else(|| "proofship-relay".into());
                         match cmd.kind {
                             crate::studio::RelayCommandKind::Prompt => {
                                 let nl = cmd.nl.unwrap_or_default();
-                                let harness = parse_relay_harness(cmd.lane.as_deref());
+                                let harness = cmd
+                                    .lane
+                                    .as_deref()
+                                    .map(|l| parse_relay_harness(Some(l)))
+                                    .unwrap_or(default_harness);
+                                if let Err(err) = doc_host.open(&chat_id) {
+                                    relay.note(&format!("relay open chat failed: {err}"));
+                                    continue;
+                                }
                                 relay.publish(
-                                    "session.open",
-                                    serde_json::json!({ "nl": nl, "harness": harness }),
+                                    "session.user",
+                                    serde_json::json!({ "text": nl, "chatId": chat_id, "harness": harness }),
                                 );
-                                use futures::StreamExt;
-                                let mut stream = launch.launch_run(nl, harness);
-                                while let Some(event) = stream.next().await {
-                                    mirror_launch_event(&relay, &event);
+                                let cwd = std::env::var("PROOFSHIP_RELAY_CWD").unwrap_or_else(|_| {
+                                    crate::repos::home_dir().to_string_lossy().into_owned()
+                                });
+                                let request = comet_proto::RunRequest {
+                                    prompt: nl,
+                                    harness: Some(harness),
+                                    model: None,
+                                    reasoning: Some(comet_proto::ReasoningLevel::High),
+                                    model_options: serde_json::Map::new(),
+                                    cwd,
+                                    sandbox: comet_proto::SandboxLevel::WorkspaceWrite,
+                                    auto_approve: true,
+                                    resume: None,
+                                    attachments: Vec::new(),
+                                    mcp_servers: Vec::new(),
+                                };
+                                let Ok((_hist, mut rx)) = sessions.subscribe(&chat_id, 0) else {
+                                    relay.note("relay subscribe failed");
+                                    continue;
+                                };
+                                match sessions
+                                    .dispatch(&chat_id, harness, request, None)
+                                    .await
+                                {
+                                    Ok(_run_id) => {
+                                        while let Ok(ev) = rx.recv().await {
+                                            mirror_agent_event(&relay, &ev.event);
+                                            if matches!(
+                                                ev.event,
+                                                comet_proto::AgentEvent::Done { .. }
+                                            ) {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        relay.publish(
+                                            "session.done",
+                                            serde_json::json!({
+                                                "ok": false,
+                                                "error": err.to_string(),
+                                            }),
+                                        );
+                                    }
+                                }
+                            }
+                            crate::studio::RelayCommandKind::Steer => {
+                                let nl = cmd.nl.unwrap_or_default();
+                                match sessions.steer(&chat_id, &nl, None).await {
+                                    Ok(_) => relay.note("steer delivered"),
+                                    Err(err) => relay.note(&format!("steer failed: {err}")),
                                 }
                             }
                             crate::studio::RelayCommandKind::Cancel => {
-                                relay.note("web cancel received (active run cancel not yet wired)");
+                                match sessions.interrupt(&chat_id).await {
+                                    Ok(true) => relay.note("run interrupted"),
+                                    Ok(false) => relay.note("no live run to cancel"),
+                                    Err(err) => relay.note(&format!("cancel failed: {err}")),
+                                }
+                            }
+                            crate::studio::RelayCommandKind::Deploy => {
+                                handle_relay_deploy(
+                                    &relay,
+                                    &network_store,
+                                    &wallet_store,
+                                    &studio_deploy,
+                                    &studio_interact,
+                                    cmd.network_id.as_deref(),
+                                    cmd.module.as_deref(),
+                                    cmd.digest.as_deref(),
+                                )
+                                .await;
                             }
                         }
                     }

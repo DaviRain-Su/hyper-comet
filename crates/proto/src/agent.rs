@@ -87,6 +87,69 @@ pub struct ModelOptionChoice {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct McpEnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// ACP `session/new` MCP server entry (stdio or HTTP).
+///
+/// Stdio is untagged (ACP v1); HTTP carries `"type":"http"`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum McpServerConfig {
+    Http {
+        #[serde(rename = "type")]
+        transport: String,
+        name: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<McpHttpHeader>,
+    },
+    Stdio {
+        name: String,
+        command: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        env: Vec<McpEnvVar>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpHttpHeader {
+    pub name: String,
+    pub value: String,
+}
+
+impl McpServerConfig {
+    pub fn stdio(
+        name: impl Into<String>,
+        command: impl Into<String>,
+        args: Vec<String>,
+        env: Vec<McpEnvVar>,
+    ) -> Self {
+        Self::Stdio {
+            name: name.into(),
+            command: command.into(),
+            args,
+            env,
+        }
+    }
+
+    pub fn http(name: impl Into<String>, url: impl Into<String>) -> Self {
+        Self::Http {
+            transport: "http".into(),
+            name: name.into(),
+            url: url.into(),
+            headers: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunRequest {
     pub prompt: String,
     /// The harness picked at send time. Rides the command plane so
@@ -114,6 +177,10 @@ pub struct RunRequest {
     /// content blocks. Additive + serde-defaulted for wire compat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    /// MCP servers attached to the ACP `session/new` (Studio ProofForge lane).
+    /// Empty means none — additive wire field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 /// The session-scoped singleton id for the live plan/todo chip. ACP plan
@@ -350,14 +417,20 @@ mod tests {
         // …and an empty list serializes away (old readers never see it).
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.get("attachments").is_none());
+        assert!(json.get("mcpServers").is_none());
         // Populated lists round-trip.
         let req = RunRequest {
             attachments: vec!["/tmp/a.png".into()],
+            mcp_servers: vec![McpServerConfig::http(
+                "proof-forge-http",
+                "https://example.test/mcp",
+            )],
             ..req
         };
         let round: RunRequest =
             serde_json::from_value(serde_json::to_value(&req).unwrap()).unwrap();
         assert_eq!(round.attachments, vec!["/tmp/a.png".to_string()]);
+        assert_eq!(round.mcp_servers.len(), 1);
     }
 
     #[test]

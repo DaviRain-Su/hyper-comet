@@ -1,66 +1,65 @@
+/**
+ * ProofShip Relay (W1+) — coordinate Sessions-shaped rooms between web viewers
+ * and executors (user desktop/VPS or platform sandbox).
+ *
+ * Room key: sessionId (alias: launchId for R0 URLs).
+ * Engine auth: per-device token via DEVICE_TOKENS JSON map or DEVICE_TOKEN / ENGINE_TOKEN.
+ * Viewer auth: optional VIEWER_TOKEN query param when set.
+ * Keys never transit this Worker.
+ */
 import { DurableObject } from "cloudflare:workers";
+import {
+  PLATFORM_DEPLOY_REFUSAL,
+  authorizeEngine,
+  eventStatePatch,
+  isRecord,
+  parseViewerCommand,
+  resolveExecutor,
+  shouldRefusePlatformDeploy,
+  type CommandMessage,
+  type EngineEventMessage,
+  type SessionState,
+  type StoredEvent,
+} from "./contract";
+
+// Re-export contract helpers for consumers / tests that import the Worker entry.
+export {
+  PLATFORM_DEPLOY_REFUSAL,
+  authorizeEngine,
+  eventStatePatch,
+  parseViewerCommand,
+  resolveExecutor,
+  shouldRefusePlatformDeploy,
+} from "./contract";
 
 export interface Env {
   SESSION_ROOM: DurableObjectNamespace<SessionRoom>;
+  /** Shared fallback (R0). Prefer DEVICE_TOKENS. */
   ENGINE_TOKEN?: string;
+  DEVICE_TOKEN?: string;
+  /** JSON object: { "device-id": "token", ... } */
+  DEVICE_TOKENS?: string;
+  /** When set, viewers must pass ?viewerToken= */
+  VIEWER_TOKEN?: string;
 }
 
-type Role = "engine" | "viewer";
+type Role = "engine" | "viewer" | "platform";
 
-type EventKind =
-  | "session.open"
-  | "draft.ready"
-  | "gate.start"
-  | "gate.done"
-  | "artifact.sealed"
-  | "note";
-
-interface EngineEventMessage {
-  type: "event";
-  kind: EventKind;
-  payload: unknown;
-}
-
-interface StoredEvent {
-  seq: number;
+interface QueuedCommand {
+  id: string;
   ts: string;
-  kind: EventKind;
-  payload: unknown;
-}
-
-interface PromptCommand {
-  type: "cmd.prompt";
-  nl: string;
-  lane?: string;
-}
-
-interface CancelCommand {
-  type: "cmd.cancel";
-}
-
-type CommandMessage = PromptCommand | CancelCommand;
-
-type QueuedCommand = CommandMessage;
-
-interface SessionState {
-  launch?: unknown;
-  draft?: unknown;
-  gate?: "running" | {
-    ok?: unknown;
-    stage?: unknown;
-    digests?: unknown;
-  };
-  artifact?: unknown;
-  notes?: unknown[];
+  expiresAt: string;
+  command: CommandMessage;
 }
 
 interface SocketAttachment {
   role: Role;
+  deviceId?: string;
 }
 
 const MAX_EVENTS = 500;
-const SNAPSHOT_TAIL = 50;
-const MAX_NOTES = 20;
+const SNAPSHOT_TAIL = 80;
+const COMMAND_TTL_MS = 15 * 60 * 1000;
 
 function json(data: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(data), {
@@ -76,18 +75,18 @@ function badRequest(message: string): Response {
   return json({ ok: false, error: message }, { status: 400 });
 }
 
+function unauthorized(message = "unauthorized"): Response {
+  return json({ ok: false, error: message }, { status: 401 });
+}
+
 function notFound(): Response {
   return json({ ok: false, error: "not found" }, { status: 404 });
 }
 
-function extractLaunchId(pathname: string, prefix: string): string | null {
-  if (!pathname.startsWith(prefix)) {
-    return null;
-  }
+function extractRoomId(pathname: string, prefix: string): string | null {
+  if (!pathname.startsWith(prefix)) return null;
   const rest = pathname.slice(prefix.length);
-  if (rest.length === 0 || rest.includes("/")) {
-    return null;
-  }
+  if (rest.length === 0 || rest.includes("/")) return null;
   try {
     return decodeURIComponent(rest);
   } catch {
@@ -99,54 +98,20 @@ function isUpgrade(request: Request): boolean {
   return request.headers.get("Upgrade")?.toLowerCase() === "websocket";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function authorizeViewer(env: Env, url: URL): boolean {
+  if (!env.VIEWER_TOKEN) return true;
+  return url.searchParams.get("viewerToken") === env.VIEWER_TOKEN;
 }
 
 function parseEngineEvent(raw: unknown): EngineEventMessage | null {
   if (!isRecord(raw) || raw.type !== "event" || typeof raw.kind !== "string") {
     return null;
   }
-  switch (raw.kind) {
-    case "session.open":
-    case "draft.ready":
-    case "gate.start":
-    case "gate.done":
-    case "artifact.sealed":
-    case "note":
-      return { type: "event", kind: raw.kind, payload: raw.payload };
-    default:
-      return null;
-  }
-}
-
-function parseViewerCommand(raw: unknown): CommandMessage | null {
-  if (!isRecord(raw) || typeof raw.type !== "string") {
-    return null;
-  }
-  if (raw.type === "cmd.prompt") {
-    if (typeof raw.nl !== "string") {
-      return null;
-    }
-    const command: PromptCommand = { type: "cmd.prompt", nl: raw.nl };
-    if (raw.lane !== undefined) {
-      if (typeof raw.lane !== "string") {
-        return null;
-      }
-      command.lane = raw.lane;
-    }
-    return command;
-  }
-  if (raw.type === "cmd.cancel") {
-    return { type: "cmd.cancel" };
-  }
-  return null;
+  return { type: "event", kind: raw.kind, payload: raw.payload };
 }
 
 function parseJsonMessage(message: string | ArrayBuffer): unknown | null {
-  if (typeof message !== "string") {
-    return null;
-  }
+  if (typeof message !== "string") return null;
   try {
     return JSON.parse(message) as unknown;
   } catch {
@@ -162,40 +127,8 @@ function sendJson(ws: WebSocket, data: unknown): void {
   }
 }
 
-function eventStatePatch(state: SessionState, event: StoredEvent): SessionState {
-  const next: SessionState = { ...state };
-  switch (event.kind) {
-    case "session.open":
-      next.launch = event.payload;
-      break;
-    case "draft.ready":
-      next.draft = event.payload;
-      break;
-    case "gate.start":
-      next.gate = "running";
-      break;
-    case "gate.done":
-      if (isRecord(event.payload)) {
-        next.gate = {
-          ok: event.payload.ok,
-          stage: event.payload.stage,
-          digests: event.payload.digests,
-        };
-      } else {
-        next.gate = {};
-      }
-      break;
-    case "artifact.sealed":
-      next.artifact = event.payload;
-      break;
-    case "note": {
-      const notes = Array.isArray(next.notes) ? [...next.notes] : [];
-      notes.push(event.payload);
-      next.notes = notes.slice(-MAX_NOTES);
-      break;
-    }
-  }
-  return next;
+function newId(): string {
+  return crypto.randomUUID();
 }
 
 export default {
@@ -203,37 +136,43 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true });
+      return json({
+        ok: true,
+        contract: "proofship-relay-w1",
+        dualExecutor: true,
+      });
     }
 
-    const engineLaunchId = extractLaunchId(url.pathname, "/ws/engine/");
-    if (request.method === "GET" && engineLaunchId !== null) {
-      if (!isUpgrade(request)) {
-        return badRequest("expected WebSocket upgrade");
+    // Prefer /ws/engine/:sessionId; keep /ws/engine/:launchId alias.
+    for (const prefix of ["/ws/engine/", "/ws/session/engine/"]) {
+      const roomId = extractRoomId(url.pathname, prefix);
+      if (request.method === "GET" && roomId !== null) {
+        if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
+        const auth = authorizeEngine(env, url);
+        if (!auth.ok) return unauthorized("invalid device token");
+        const roleParam = url.searchParams.get("role");
+        const role: Role = roleParam === "platform" ? "platform" : "engine";
+        return forwardToRoom(request, env, roomId, role, auth.deviceId);
       }
-      // R0 local development accepts any token when ENGINE_TOKEN is unset.
-      // Deployed environments should set ENGINE_TOKEN as a Wrangler secret/var.
-      if (env.ENGINE_TOKEN !== undefined && url.searchParams.get("token") !== env.ENGINE_TOKEN) {
-        return json({ ok: false, error: "unauthorized" }, { status: 401 });
-      }
-      return forwardToRoom(request, env, engineLaunchId, "engine");
     }
 
-    const viewerLaunchId = extractLaunchId(url.pathname, "/ws/web/");
-    if (request.method === "GET" && viewerLaunchId !== null) {
-      if (!isUpgrade(request)) {
-        return badRequest("expected WebSocket upgrade");
+    for (const prefix of ["/ws/web/", "/ws/session/web/"]) {
+      const roomId = extractRoomId(url.pathname, prefix);
+      if (request.method === "GET" && roomId !== null) {
+        if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
+        if (!authorizeViewer(env, url)) return unauthorized("invalid viewer token");
+        return forwardToRoom(request, env, roomId, "viewer");
       }
-      return forwardToRoom(request, env, viewerLaunchId, "viewer");
     }
 
-    const stateMatch = url.pathname.match(/^\/api\/launches\/([^/]+)\/state$/u);
+    const stateMatch =
+      url.pathname.match(/^\/api\/sessions\/([^/]+)\/state$/u) ??
+      url.pathname.match(/^\/api\/launches\/([^/]+)\/state$/u);
     if (request.method === "GET" && stateMatch !== null) {
-      const launchId = decodeURIComponent(stateMatch[1] ?? "");
-      if (launchId.length === 0) {
-        return badRequest("missing launch id");
-      }
-      const id = env.SESSION_ROOM.idFromName(launchId);
+      const roomId = decodeURIComponent(stateMatch[1] ?? "");
+      if (!roomId) return badRequest("missing session id");
+      if (!authorizeViewer(env, url)) return unauthorized("invalid viewer token");
+      const id = env.SESSION_ROOM.idFromName(roomId);
       const room = env.SESSION_ROOM.get(id);
       return room.fetch(new Request(new URL("/state", request.url), { method: "GET" }));
     }
@@ -242,15 +181,21 @@ export default {
   },
 };
 
-async function forwardToRoom(request: Request, env: Env, launchId: string, role: Role): Promise<Response> {
-  if (launchId.length === 0) {
-    return badRequest("missing launch id");
-  }
-  const id = env.SESSION_ROOM.idFromName(launchId);
+async function forwardToRoom(
+  request: Request,
+  env: Env,
+  roomId: string,
+  role: Role,
+  deviceId?: string,
+): Promise<Response> {
+  if (!roomId) return badRequest("missing session id");
+  const id = env.SESSION_ROOM.idFromName(roomId);
   const room = env.SESSION_ROOM.get(id);
   const url = new URL(request.url);
   url.pathname = "/ws";
-  url.search = `?role=${role}`;
+  const q = new URLSearchParams({ role });
+  if (deviceId) q.set("deviceId", deviceId);
+  url.search = `?${q.toString()}`;
   return room.fetch(new Request(url, request));
 }
 
@@ -260,44 +205,54 @@ export class SessionRoom extends DurableObject<Env> {
   private state: SessionState = {};
   private queue: QueuedCommand[] = [];
   private nextSeq = 1;
-
-  constructor(ctx: DurableObjectState, env: Env) {
-    super(ctx, env);
-  }
+  private sessionId = "";
 
   async fetch(request: Request): Promise<Response> {
     await this.ensureLoaded();
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/state") {
-      return json({ state: this.state, tail: this.events.slice(-SNAPSHOT_TAIL) });
+      return json({
+        state: this.state,
+        tail: this.events.slice(-SNAPSHOT_TAIL),
+        queueDepth: this.queue.length,
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/ws") {
-      if (!isUpgrade(request)) {
-        return badRequest("expected WebSocket upgrade");
-      }
+      if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
       const role = url.searchParams.get("role");
-      if (role !== "engine" && role !== "viewer") {
+      if (role !== "engine" && role !== "viewer" && role !== "platform") {
         return badRequest("invalid role");
       }
+      const deviceId = url.searchParams.get("deviceId") ?? undefined;
 
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-      server.serializeAttachment({ role } satisfies SocketAttachment);
+      server.serializeAttachment({ role, deviceId } satisfies SocketAttachment);
 
-      if (role === "engine") {
-        for (const socket of this.engineSockets()) {
-          socket.close(1012, "engine replaced");
+      if (role === "engine" || role === "platform") {
+        for (const socket of this.socketsFor(role)) {
+          socket.close(1012, `${role} replaced`);
         }
       }
 
       this.ctx.acceptWebSocket(server);
 
       if (role === "viewer") {
-        sendJson(server, { type: "snapshot", state: this.state, tail: this.events.slice(-SNAPSHOT_TAIL) });
+        sendJson(server, {
+          type: "snapshot",
+          state: this.state,
+          tail: this.events.slice(-SNAPSHOT_TAIL),
+          queueDepth: this.queue.length,
+        });
       } else {
-        await this.drainQueueToEngine(server);
+        await this.appendEvent({
+          type: "event",
+          kind: "executor.online",
+          payload: { role, deviceId },
+        });
+        await this.drainQueueToExecutors();
       }
 
       return new Response(null, { status: 101, webSocket: client });
@@ -311,7 +266,12 @@ export class SessionRoom extends DurableObject<Env> {
     const attachment = this.attachmentFor(ws);
     const parsed = parseJsonMessage(message);
 
-    if (attachment.role === "engine") {
+    if (attachment.role === "engine" || attachment.role === "platform") {
+      if (isRecord(parsed) && parsed.type === "cmd.ack" && typeof parsed.id === "string") {
+        this.queue = this.queue.filter((q) => q.id !== parsed.id);
+        await this.ctx.storage.put({ queue: this.queue });
+        return;
+      }
       const engineEvent = parseEngineEvent(parsed);
       if (engineEvent === null) {
         sendJson(ws, { type: "error", error: "invalid engine event" });
@@ -329,11 +289,15 @@ export class SessionRoom extends DurableObject<Env> {
     await this.enqueueCommand(command);
   }
 
-  webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): void {
-    void ws;
-    void code;
-    void reason;
-    void wasClean;
+  webSocketClose(ws: WebSocket): void {
+    const attachment = this.attachmentFor(ws);
+    if (attachment.role === "engine" || attachment.role === "platform") {
+      void this.appendEvent({
+        type: "event",
+        kind: "executor.offline",
+        payload: { role: attachment.role, deviceId: attachment.deviceId },
+      });
+    }
   }
 
   webSocketError(ws: WebSocket, error: unknown): void {
@@ -342,37 +306,36 @@ export class SessionRoom extends DurableObject<Env> {
   }
 
   private async ensureLoaded(): Promise<void> {
-    if (this.loaded) {
-      return;
-    }
-    const [events, state, queue, nextSeq] = await Promise.all([
+    if (this.loaded) return;
+    const [events, state, queue, nextSeq, sessionId] = await Promise.all([
       this.ctx.storage.get<StoredEvent[]>("events"),
       this.ctx.storage.get<SessionState>("state"),
       this.ctx.storage.get<QueuedCommand[]>("queue"),
       this.ctx.storage.get<number>("nextSeq"),
+      this.ctx.storage.get<string>("sessionId"),
     ]);
-
     this.events = events ?? [];
     this.state = state ?? {};
-    this.queue = queue ?? [];
+    this.queue = (queue ?? []).filter((q) => Date.parse(q.expiresAt) > Date.now());
     this.nextSeq = nextSeq ?? (this.events.at(-1)?.seq ?? 0) + 1;
+    this.sessionId = sessionId ?? "";
     this.loaded = true;
   }
 
   private attachmentFor(ws: WebSocket): SocketAttachment {
     const attachment = ws.deserializeAttachment() as Partial<SocketAttachment> | undefined;
-    if (attachment?.role === "engine" || attachment?.role === "viewer") {
-      return { role: attachment.role };
+    if (
+      attachment?.role === "engine" ||
+      attachment?.role === "viewer" ||
+      attachment?.role === "platform"
+    ) {
+      return { role: attachment.role, deviceId: attachment.deviceId };
     }
     return { role: "viewer" };
   }
 
-  private engineSockets(): WebSocket[] {
-    return this.ctx.getWebSockets().filter((socket) => this.attachmentFor(socket).role === "engine");
-  }
-
-  private viewerSockets(): WebSocket[] {
-    return this.ctx.getWebSockets().filter((socket) => this.attachmentFor(socket).role === "viewer");
+  private socketsFor(role: Role): WebSocket[] {
+    return this.ctx.getWebSockets().filter((s) => this.attachmentFor(s).role === role);
   }
 
   private async appendEvent(message: EngineEventMessage): Promise<void> {
@@ -385,6 +348,7 @@ export class SessionRoom extends DurableObject<Env> {
     this.nextSeq += 1;
     this.events = [...this.events, event].slice(-MAX_EVENTS);
     this.state = eventStatePatch(this.state, event);
+    if (!this.state.sessionId && this.sessionId) this.state.sessionId = this.sessionId;
 
     await this.ctx.storage.put({
       events: this.events,
@@ -392,35 +356,66 @@ export class SessionRoom extends DurableObject<Env> {
       nextSeq: this.nextSeq,
     });
 
-    for (const viewer of this.viewerSockets()) {
+    for (const viewer of this.socketsFor("viewer")) {
       sendJson(viewer, { type: "event", event });
     }
   }
 
   private async enqueueCommand(command: CommandMessage): Promise<void> {
-    this.queue = [...this.queue, command];
+    const target = resolveExecutor(command, this.state.preferredExecutor);
 
-    await this.ctx.storage.put({
-      queue: this.queue,
-    });
-
-    const [engine] = this.engineSockets();
-    if (engine !== undefined) {
-      await this.drainQueueToEngine(engine);
-    }
-  }
-
-  private async drainQueueToEngine(engine: WebSocket): Promise<void> {
-    if (this.queue.length === 0) {
+    // Defensive: unreachable while resolveExecutor maps deploy → user.
+    if (shouldRefusePlatformDeploy(command, target)) {
+      await this.appendEvent({
+        type: "event",
+        kind: "executor.refused",
+        payload: { ...PLATFORM_DEPLOY_REFUSAL },
+      });
       return;
     }
 
-    const pending = this.queue;
-    this.queue = [];
+    if (command.type === "cmd.prompt" || command.type === "cmd.steer") {
+      this.state.preferredExecutor = target;
+    }
+
+    const queued: QueuedCommand = {
+      id: newId(),
+      ts: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + COMMAND_TTL_MS).toISOString(),
+      command,
+    };
+    this.queue = [...this.queue, queued];
+    await this.ctx.storage.put({ queue: this.queue, state: this.state });
+    await this.drainQueueToExecutors();
+  }
+
+  private async drainQueueToExecutors(): Promise<void> {
+    if (this.queue.length === 0) return;
+
+    const remaining: QueuedCommand[] = [];
+    for (const item of this.queue) {
+      if (Date.parse(item.expiresAt) <= Date.now()) continue;
+      const target = resolveExecutor(item.command, this.state.preferredExecutor);
+      const role: Role = target === "platform" ? "platform" : "engine";
+      const [socket] = this.socketsFor(role);
+      if (!socket) {
+        remaining.push(item);
+        continue;
+      }
+      sendJson(socket, { ...item.command, id: item.id });
+      // Optimistic remove; executor may cmd.ack — if disconnect, viewer can resend.
+    }
+    this.queue = remaining;
     await this.ctx.storage.put({ queue: this.queue });
 
-    for (const command of pending) {
-      sendJson(engine, command);
+    if (remaining.length > 0) {
+      await this.appendEvent({
+        type: "event",
+        kind: "note",
+        payload: {
+          text: `${remaining.length} command(s) queued — open desktop ProofShip or Platform executor.`,
+        },
+      });
     }
   }
 }

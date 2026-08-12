@@ -484,6 +484,7 @@ pub struct Shell {
     harnesses_page: Option<Entity<HarnessesPage>>,
     networks_page: Option<Entity<NetworksPage>>,
     wallets_page: Option<Entity<WalletsPage>>,
+    #[allow(dead_code)] // Studio chat UI unlinked; field kept to avoid a large delete this round.
     studio_page: Option<Entity<StudioView>>,
     shortcuts_sub: Option<Subscription>,
     notifications_sub: Option<Subscription>,
@@ -674,7 +675,10 @@ impl Shell {
             Some("settings/notifications") => Route::Settings(SettingsSection::Notifications),
             Some("settings/shortcuts") => Route::Settings(SettingsSection::Shortcuts),
             Some("settings/archived") => Route::Settings(SettingsSection::Archived),
-            Some("studio") => Route::Studio,
+            Some("studio") => {
+                // Studio chat entry is deprecated — Sessions is the only chat UI.
+                Route::Chat
+            }
             // `new` pins the new-chat canvas (suppresses boot auto-select).
             Some("new") => {
                 state.update(cx, |s, _| s.auto_selected = true);
@@ -697,8 +701,7 @@ impl Shell {
             _ => None,
         };
         let nav = NavHistory::new(match route {
-            Route::Chat => NavEntry::Chat(String::new()),
-            Route::Studio => NavEntry::Studio,
+            Route::Chat | Route::Studio => NavEntry::Chat(String::new()),
             Route::Settings(section) => NavEntry::Settings(section),
         });
         Self {
@@ -1279,25 +1282,11 @@ impl Shell {
         cx.notify();
     }
 
+    #[allow(dead_code)] // Kept for deep-link / history cleanup; nav toggle removed.
     fn toggle_studio(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.route, Route::Studio) {
-            self.route = Route::Chat;
-            self.nav.push(NavEntry::Chat(self.active_chat.clone()));
-        } else {
-            self.route = Route::Studio;
-            self.nav.push(NavEntry::Studio);
-            self.close_user_menu(cx);
-            self.close_chat_menu(cx);
-            // Codex-style: open the right Preview pane when entering Studio.
-            let key = self.panel_key(cx);
-            if !self.panels.get(&key).changes_open {
-                let from = self.right_target(cx);
-                self.panels.toggle_changes(&key);
-                let preview = self.studio_preview_pane(cx);
-                preview.update(cx, |pane, cx| pane.refresh(cx));
-                self.right_tween = Some(WidthTween::new(from, self.right_target(cx)));
-            }
-        }
+        // Studio chat mode removed: always land on Sessions.
+        self.route = Route::Chat;
+        self.nav.push(NavEntry::Chat(self.active_chat.clone()));
         cx.notify();
     }
 
@@ -1328,7 +1317,8 @@ impl Shell {
                 }
             }
             NavEntry::Studio => {
-                self.route = Route::Studio;
+                // History entries from older builds redirect to Sessions.
+                self.route = Route::Chat;
             }
             NavEntry::Settings(section) => {
                 self.route = Route::Settings(section);
@@ -1800,51 +1790,7 @@ impl Shell {
     /// and control cluster overlay its left end.
     fn render_title_bar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         match self.route {
-            Route::Chat => self.render_session_title_bar(cx),
-            Route::Studio => {
-                let preview_open = self.right_pane_open(cx);
-                let inner = div()
-                    .size_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .pt(px(Theme::TITLEBAR_TOP_PAD))
-                    .pl(px(self.title_bar_content_start()))
-                    .pr(px(titlebar_right_padding(
-                        cfg!(target_os = "windows"),
-                        Theme::SPACE_LG,
-                    )))
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(Theme::of(cx).text)
-                            .child("Studio"),
-                    )
-                    .child(
-                        div()
-                            .id("studio-toggle-preview")
-                            .px(px(10.0))
-                            .py(px(4.0))
-                            .rounded(px(6.0))
-                            .border_1()
-                            .border_color(Theme::of(cx).border)
-                            .text_size(px(12.0))
-                            .text_color(if preview_open {
-                                Theme::of(cx).accent
-                            } else {
-                                Theme::of(cx).text_muted
-                            })
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_right_pane(cx)))
-                            .child(if preview_open {
-                                "Hide Preview"
-                            } else {
-                                "Preview"
-                            }),
-                    );
-                inner.into_any_element()
-            }
+            Route::Chat | Route::Studio => self.render_session_title_bar(cx),
             Route::Settings(_) => {
                 let inner = div()
                     .size_full()
@@ -2536,37 +2482,6 @@ impl Shell {
         // The space filter lives ABOVE the scroll region (fixed) so its
         // dropdown can float without being clipped by the list's overflow.
         let filter_row = self.render_spaces_filter(theme, cx);
-        let studio_selected = matches!(self.route, Route::Studio);
-        let studio_row = div()
-            .id("sidebar-studio-toggle")
-            .mx(px(Theme::SPACE_SM))
-            .mt(px(4.0))
-            .mb(px(4.0))
-            .rounded(px(8.0))
-            .px(px(Theme::SPACE_SM))
-            .py(px(6.0))
-            .flex()
-            .items_center()
-            .gap(px(8.0))
-            .text_size(px(13.0))
-            .text_color(if studio_selected {
-                theme.text
-            } else {
-                theme.text_muted
-            })
-            .when(studio_selected, |el| {
-                el.bg(crate::theme::glass_selected_bg())
-                    .font_weight(gpui::FontWeight::MEDIUM)
-            })
-            .hover(|s| s.bg(theme.glass_hover()).text_color(theme.text))
-            .cursor_pointer()
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_studio(cx)))
-            .child(
-                icon(icons::CHECKLIST)
-                    .size(px(16.0))
-                    .text_color(theme.text_muted),
-            )
-            .child("Studio");
 
         div()
             .w(px(self.settings.sidebar_width))
@@ -2576,7 +2491,6 @@ impl Shell {
             // (No titlebar strip: the unified window titlebar spans the whole
             // window above this column.)
             .child(filter_row)
-            .child(studio_row)
             // The (filtered) Sessions list scrolls inside an EdgeFade scope —
             // a true per-glyph gradient at active overflow edges. Glass-safe
             // (no painted overlay can fade content over see-through blur) and
@@ -3183,23 +3097,9 @@ impl Shell {
         }
 
         let _ = (text, border);
+        // Studio chat route is retired — always show Sessions.
         if matches!(self.route, Route::Studio) {
-            if self.studio_page.is_none() {
-                let state = self.state.clone();
-                self.studio_page = Some(cx.new(|cx| StudioView::new(state, cx)));
-            }
-            return div()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .pt(px(Theme::TITLEBAR_HEIGHT))
-                .child(
-                    self.studio_page
-                        .as_ref()
-                        .map(|page| page.clone().into_any_element())
-                        .unwrap_or_else(|| gpui::Empty.into_any_element()),
-                )
-                .into_any_element();
+            self.route = Route::Chat;
         }
         let has_selection = self.state.read(cx).selected_chat.is_some();
         let has_spaces = !self.state.read(cx).spaces.is_empty();
@@ -4383,14 +4283,7 @@ impl Render for Shell {
         if self.focus_sub.is_none() {
             self.focus_sub = Some(cx.on_focus_lost(window, |this: &mut Shell, window, cx| {
                 match this.route {
-                    Route::Chat => window.focus(&this.composer.focus_handle(cx), cx),
-                    Route::Studio => {
-                        if let Some(studio) = &this.studio_page {
-                            window.focus(&studio.read(cx).focus_handle(cx), cx);
-                        } else {
-                            window.blur();
-                        }
-                    }
+                    Route::Chat | Route::Studio => window.focus(&this.composer.focus_handle(cx), cx),
                     // No composer here — clear the stale handle so `focused()`
                     // reads None (the render hook below re-lands focus when the
                     // route returns to Chat; a lingering unmounted handle would
@@ -4401,12 +4294,7 @@ impl Render for Shell {
         }
         if matches!(gate, GatePhase::Ready) && window.focused(cx).is_none() {
             match self.route {
-                Route::Chat => window.focus(&self.composer.focus_handle(cx), cx),
-                Route::Studio => {
-                    if let Some(studio) = &self.studio_page {
-                        window.focus(&studio.read(cx).focus_handle(cx), cx);
-                    }
-                }
+                Route::Chat | Route::Studio => window.focus(&self.composer.focus_handle(cx), cx),
                 Route::Settings(_) => {}
             }
         }

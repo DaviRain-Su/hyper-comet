@@ -8,11 +8,11 @@
 
 已有(本地优先闭环,全部验证绿):
 
-- **Launch Studio**(gpui):NL → 7 个 agent lane(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode,统一 ACP)起草 ProgramV1 → 机器门禁(check→build→inspect,digest 与脚本逐位一致)→ 失败自动带 PF-\* 诊断修复(≤4 轮)→ 制品清单。
-- **引擎**:StudioGate / DraftRunner / StudioLaunchRunner / launch 存储 / RPC;多设备同步基座(Loro CRDT + DO)休眠中。
+- **Sessions 对话**(gpui,Cursor 形态):普通 ACP 聊天 + `proofforge-program-v1` skill + ProofForge stdio MCP(`pf_check`/`pf_build`/`pf_artifacts`)→ 同一条 transcript。**无独立 Studio 聊天入口**。
+- **引擎服务层**(`studio::*`):门禁 / 部署 / Preview / 网络钱包 RPC(不是第二套对话 UI)。
 - **工具链**:vendored proof-forge-next + olean 闭包 + 锁定链工具(solc=EVM / sbpf=Solana / leo=Aleo / nargo=Noir / wat2wasm=wasm 系目标(near/ton)—— 工具已在手)。
 - **脚本**:`gate.sh`(任意 .lean→门禁)、`deploy-xlayer-testnet.sh`(gate→`cast send --create`→X Layer testnet,env 持钥)。
-- **web 预备**:`proofship/relay/`(Worker+DO,engine→web 旁观/命令)、`proofship/bridge/server.mjs`(参考)。
+- **web 预备**:`proofship/relay/`(Worker+DO,Sessions 旁观/命令)、`proofship/web/`(Sessions UI)、`proofship/platform-sandbox/`(Platform executor 脚手架)。
 - **Cloudflare 使用面**(继承自基座,未删):Durable Objects(session/device rooms)、R2(附件)、Workers(auth/relay 路由)。
 
 ## 1. 差距分析
@@ -41,7 +41,7 @@
 |---|---|---|
 | 1.1 | X Layer testnet 实际部署(funded key + `deploy-xlayer-testnet.sh`) | 用户 |
 | 1.2 | 90s 演示视频(修复环为高潮)+ X 账号首帖 @XLayerOfficial + Google 表单 | 用户(材料 docs/competition/) |
-| 1.3 | 全链路彩排:app 内 Studio 起草→门禁→脚本部署→浏览器查合约 | 一起 |
+| 1.3 | 全链路彩排:Sessions 对话起草(+MCP)→门禁/部署脚本→浏览器查合约 | 一起 |
 
 ### Phase 2 — 本地产品完整化(赛后第一波)
 
@@ -54,27 +54,47 @@
 | 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
 | 2.6 Studio Preview | 右侧 Preview:ABI→localhost HTML + 应用内 ABI 镜像;Start **默认用主机浏览器打开**;真 WebView 内嵌留给 web app | ✅ |
 
-**本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**。Preview=系统浏览器 + 应用内 ABI 镜像。多链 deploy / 真内嵌 dapp 留给 web。Web/账户(Phase 3–4)后置。
+**本地进度(2026-08-12):** Phase 2 能力已齐;产品聚焦 **OKX X Layer**。**主入口 = Sessions**(无 Studio 聊天页)。Preview/Deploy 为引擎服务,侧栏入口后置整理。
+**起草权威:** Sessions 自动注入 `.agents/skills/proofforge-program-v1` + stdio MCP（`proofship/mcp/`；有 `PROOF_FORGE_ROOT` 时用完整 PF MCP）；web 侧表面 HTTP MCP URL（`proofship/web/`）。任意 ProgramV1，非竖切模板限制。
 
-### Phase 3 — web app(Cloudflare 托管)
+### Phase 3 — web app(Cloudflare 托管) · W1–W5
 
-| 项 | 内容 |
-|---|---|
-| 3.1 托管壳 | Cloudflare Pages 静态前端(`proofship/web/`);无引擎时展示只读旁观/空快照(诚实降级) |
-| 3.2 relay 接通 | `proofship/relay/`:web 旁观本机 Studio(快照+事件尾);web 下命令(prompt/cancel)给本机引擎;engine 侧 WS 客户端在引擎内(Rust),替代 bridge |
-| 3.3 web 交互台 | viem + 2.4 的 ABI schema;钱包=浏览器注入/WalletConnect |
-| 3.4 部署(web) | 引擎仍是唯一部署执行者(key 不过 relay;安全纪律不变) |
+一个对话面:web 与桌面都是 **Sessions**(旁观 transcript / 下 prompt),不再以
+`StudioLaunchRun` 为产品主路径。云协调、机执行:relay/DO 管房间与命令队列;
+代码与门禁跑在 executor 上。
 
-**进度(2026-08-12):** 3.1 静态壳已落在 `proofship/web/`(relay 旁观 + ABI eth_call stub + Send prompt)。3.2 engine→relay Rust WS 客户端已接(`PROOFSHIP_RELAY`);web `cmd.prompt` 会触发本机 `StudioLaunchRun` 并回推事件。3.4 待做。
+#### Executor
+
+| 类型 | 形态 | 职责 |
+|---|---|---|
+| **UserExecutor** | 本机桌面引擎或用户自挂 VPS(`PROOFSHIP_RELAY` 注册) | Sessions `QueueCommand` + skill/MCP;gate;deploy(DevEnvKey / WC) |
+| **PlatformExecutor** | Cloudflare **Sandbox**(`proofship/platform-sandbox/`) | gate / 后续 agent_draft;**拒绝** keyed deploy |
+| `@cloudflare/computer` | 仅 spike | 编排/文件;gate 仍进 container — 见 `COMPUTER_SPIKE.md`;**非**生产默认 |
+
+#### 切片
+
+| 项 | 内容 | 状态 |
+|---|---|---|
+| W1 relay | session 房间;per-device token;Sessions 事件;`cmd.prompt`/`cancel`/`steer`/`deploy`;executor 路由 | ✅ `proofship/relay/` |
+| W2 web Sessions | 连接态 + executor 选择器 + transcript + composer;`cmd.prompt` → 引擎 Sessions(enrich skill/MCP) | ✅ `proofship/web/` + engine relay boot |
+| W3 interact | viem eth_call + `window.ethereum` 写;从 snapshot ABI/地址填充 | ✅ web interact |
+| W4 deploy | UI → `cmd.deploy` → **仅 UserExecutor**;Platform 拒绝 | ✅ relay + web + engine |
+| W5 Platform | Sandbox 镜像脚手架 + Computer spike 文档 | ✅ `proofship/platform-sandbox/` |
+
+**不变量:** 不过门禁无制品;私钥/部署签名不过 relay;平台云可跑 check/build/inspect,**不能**代持用户 deploy key。
+
+**验收主路径:** 手机打开 web → 选「我的桌面」在线 → 发 NL → 桌面 Sessions 跑 agent+MCP → 事件回 web;另选 Platform → 仅门禁 job 在 Sandbox;deploy 仍回本机/钱包。
+
+**进度(2026-08-12):** W1–W5 合同与壳已落地。Platform Sandbox 入口为脚手架(非生产镜像)。SIWE/分享见 Phase 4。
 
 ### Phase 4 — 平台账户与云(多用户)
 
 | 项 | 内容 |
 |---|---|
 | 4.1 自托管 edge | 部署 `edge/`(Workers+DO+R2);`COMET_EDGE_URL` 指回自有域 |
-| 4.2 平台登录(多用户) | 很多开发者各自注册/登录:WorkOS(邮箱/OAuth,管线已内建)+ **SIWE 钱包登录**(web3 用户习惯;钱包地址即账户,与 2.2 的钱包连接打通);D1 用户/组织表;会话与 token 刷新 |
-| 4.3 隔离与权限 | 每用户/每 org 空间隔离(org 门禁已内建于 workspace room 授权);relay 升级为 per-device/per-user token(R0 共享 token 仅 spike);分享链接的权限策略(只读/可评论/可下命令) |
-| 4.4 分享链接 | 只读 launch/门禁报告链接(relay 签发) |
+| 4.2 平台登录(多用户) | **Follow-on after W1–W5:** 很多开发者各自注册/登录:WorkOS(邮箱/OAuth,管线已内建)+ **SIWE 钱包登录**(web3 用户习惯;钱包地址即账户,与 2.2 的钱包连接打通);D1 用户/组织表;会话与 token 刷新 |
+| 4.3 隔离与权限 | 每用户/每 org 空间隔离(org 门禁已内建于 workspace room 授权);relay 已支持 per-device token(W1);分享链接的权限策略(只读/可评论/可下命令)仍后置 |
+| 4.4 分享链接 | 只读 gate-report + transcript 尾(relay 签发);与 web Sessions 旁观对齐 |
 | 4.5 托管 agent lane | 纯云端执行(pi 等 lane 的托管形态);按需 |
 
 ### Phase 5 — 生态与差异化

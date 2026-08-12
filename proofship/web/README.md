@@ -1,19 +1,32 @@
-# ProofShip web shell (Phase 3.1)
+# ProofShip web (Sessions viewer)
 
-Static Cloudflare Pages front end for observing a local Studio launch through
-[`../relay/`](../relay/). The desktop engine is still the only writer and gate
-executor; this page is a viewer (+ later command enqueue).
+Static Cloudflare Pages front end: **Sessions-shaped** observe + command surface
+over [`../relay/`](../relay/). Executors run code and gate; this page never holds
+deploy keys.
+
+## Surfaces
+
+- Connection + **executor picker** (UserExecutor desktop/VPS vs Platform Sandbox)
+- Transcript tail (`session.user` / `session.agent` / `session.tool` / `session.done`)
+- Composer → `cmd.prompt` / `cmd.steer` / `cmd.cancel`
+- Deploy → `cmd.deploy` (UserExecutor only; platform refused by relay)
+- Interact → viem `eth_call` + `window.ethereum` writes; fill from snapshot
+- ProofForge HTTP MCP panel for **external IDE agents** (not the main chat)
 
 ## Local
-
-Open `index.html` via any static server:
 
 ```sh
 cd proofship/web
 python3 -m http.server 4173
 ```
 
-Query params: `?relay=https://…&launch=<id>`.
+Query params:
+
+- `?relay=https://…&session=<id>`
+- `?launch=<id>` (alias for session)
+- `?viewerToken=…` when relay sets `VIEWER_TOKEN`
+- `?executor=platform` to preselect Platform
+- `?pfMcp=https://…/mcp`
 
 ## Deploy (Pages)
 
@@ -21,10 +34,13 @@ Query params: `?relay=https://…&launch=<id>`.
 npx wrangler pages deploy proofship/web --project-name proofship-web
 ```
 
-Point the UI at a deployed relay Worker from `proofship/relay`.
-
 ## Honest degradation
 
-With no engine / empty relay room the snapshot stays `{}` and the status line
-says the page is read-only. Do not claim a live product URL until a real
-testnet deploy + relay are wired.
+If the chosen executor is offline, the page stays connected but **read-only**
+and says to open desktop ProofShip or choose Platform. Empty rooms show `{}`.
+
+## Auth contract
+
+Viewer: optional `viewerToken` query param. Engine/platform: per-device token on
+the executor WebSocket (see relay README). SIWE / share links are Phase 4
+follow-on.

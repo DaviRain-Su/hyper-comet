@@ -26,6 +26,10 @@ impl StudioInteract {
         }
     }
 
+    pub fn inbox_root(&self) -> &Path {
+        &self.inbox_root
+    }
+
     pub async fn load_abi(&self, module: &str) -> Result<StudioAbiResponse, String> {
         let path = find_abi_path(&self.inbox_root, module).await?;
         let abi_json = tokio::fs::read_to_string(&path)
@@ -37,6 +41,16 @@ impl StudioInteract {
             module: module.to_string(),
             abi_json,
         })
+    }
+
+    /// Relay-safe sealed artifact meta for web W3 Fill-from-snapshot.
+    pub fn sealed_for_relay(
+        &self,
+        module: &str,
+        output_set_digest: Option<&str>,
+        address: Option<&str>,
+    ) -> serde_json::Value {
+        sealed_artifact_payload(&self.inbox_root, module, output_set_digest, address)
     }
 
     pub async fn call(
@@ -73,23 +87,72 @@ pub fn artifact_out_dir(inbox_root: &Path, module: &str) -> PathBuf {
         .join(format!("out-{}", module.to_lowercase()))
 }
 
-async fn find_abi_path(inbox_root: &Path, module: &str) -> Result<PathBuf, String> {
+/// Relay-safe `artifact.sealed` payload for web Fill-from-snapshot (no private keys).
+pub fn sealed_artifact_payload(
+    inbox_root: &Path,
+    module: &str,
+    output_set_digest: Option<&str>,
+    address: Option<&str>,
+) -> serde_json::Value {
+    let out_dir = artifact_out_dir(inbox_root, module);
+    let mut files = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&out_dir) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            files.push(serde_json::json!({ "name": name, "size": size }));
+        }
+    }
+    files.sort_by(|a, b| {
+        a.get("name")
+            .and_then(|v| v.as_str())
+            .cmp(&b.get("name").and_then(|v| v.as_str()))
+    });
+
+    let digest = output_set_digest
+        .map(str::to_string)
+        .or_else(|| {
+            let report_path = out_dir.join(comet_proto::StudioGateReport::FILE_NAME);
+            std::fs::read_to_string(report_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<comet_proto::StudioGateReport>(&raw).ok())
+                .and_then(|r| r.output_set_digest)
+        });
+
+    let abi = find_abi_path_sync(inbox_root, module)
+        .ok()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+
+    let mut payload = serde_json::json!({
+        "module": module,
+        "files": files,
+    });
+    if let Some(d) = digest {
+        payload["outputSetDigest"] = serde_json::json!(d);
+    }
+    if let Some(abi) = abi {
+        payload["abi"] = abi;
+    }
+    if let Some(addr) = address.filter(|a| !a.is_empty()) {
+        payload["address"] = serde_json::json!(addr);
+    }
+    payload
+}
+
+fn find_abi_path_sync(inbox_root: &Path, module: &str) -> Result<PathBuf, String> {
     let out_dir = artifact_out_dir(inbox_root, module);
     let preferred = out_dir.join(format!("{module}.abi.json"));
-    if tokio::fs::try_exists(&preferred).await.unwrap_or(false) {
+    if preferred.is_file() {
         return Ok(preferred);
     }
-    let mut dir = tokio::fs::read_dir(&out_dir).await.map_err(|err| {
+    let rd = std::fs::read_dir(&out_dir).map_err(|err| {
         format!(
             "no gate artifacts for {module} under {}: {err}",
             out_dir.display()
         )
     })?;
-    while let Some(entry) = dir
-        .next_entry()
-        .await
-        .map_err(|err| format!("read artifacts: {err}"))?
-    {
+    for entry in rd.flatten() {
         let name = entry.file_name();
         if name.to_string_lossy().ends_with(".abi.json") {
             return Ok(entry.path());
@@ -99,6 +162,10 @@ async fn find_abi_path(inbox_root: &Path, module: &str) -> Result<PathBuf, Strin
         "no *.abi.json in {} — run the gate first",
         out_dir.display()
     ))
+}
+
+async fn find_abi_path(inbox_root: &Path, module: &str) -> Result<PathBuf, String> {
+    find_abi_path_sync(inbox_root, module)
 }
 
 async fn call_inner(
@@ -419,5 +486,28 @@ mod tests {
         let schema = comet_abi::schema_from_abi_json(&resp.abi_json).unwrap();
         assert!(schema.constructor.is_some());
         assert!(schema.entries.iter().any(|f| f.name == "issue"));
+    }
+
+    #[test]
+    fn sealed_artifact_payload_includes_abi_and_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = artifact_out_dir(dir.path(), "RwaShareRegistry");
+        std::fs::create_dir_all(&out).unwrap();
+        let abi = include_str!("../../../abi/tests/fixtures/rwa_share_registry.abi.json");
+        std::fs::write(out.join("RwaShareRegistry.abi.json"), abi).unwrap();
+        std::fs::write(out.join("RwaShareRegistry.bin"), b"00").unwrap();
+        let payload = sealed_artifact_payload(
+            dir.path(),
+            "RwaShareRegistry",
+            Some("deadbeef"),
+            Some("0xabc"),
+        );
+        assert_eq!(payload["module"], "RwaShareRegistry");
+        assert_eq!(payload["outputSetDigest"], "deadbeef");
+        assert_eq!(payload["address"], "0xabc");
+        assert!(payload["abi"].is_array());
+        let files = payload["files"].as_array().unwrap();
+        assert!(files.iter().any(|f| f["name"] == "RwaShareRegistry.abi.json"));
+        assert!(!payload.to_string().contains("private"));
     }
 }

@@ -4752,6 +4752,7 @@ impl Composer {
                             auto_approve: false,
                             resume: None,
                             attachments: attachment_paths,
+                            mcp_servers: Vec::new(),
                         },
                         message_id: message_id.clone(),
                     }
