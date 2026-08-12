@@ -20,8 +20,8 @@ use comet_proto::studio::{
 use comet_proto::{
     DeploymentRecord, DeploymentsResponse, EvmNetwork, NetworksResponse, StudioAbiRequest,
     StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse, StudioDeployEvent,
-    StudioDeployRequest, StudioTemplate, StudioTemplatesResponse, WalletAccount, WalletSource,
-    WalletsResponse,
+    StudioDeployRequest, StudioLogEntry, StudioLogsRequest, StudioLogsResponse, StudioTemplate,
+    StudioTemplatesResponse, WalletAccount, WalletSource, WalletsResponse,
 };
 use comet_rpc::methods;
 
@@ -469,6 +469,19 @@ fn slug_project_id(name: &str) -> String {
     }
 }
 
+/// Studio deploy/interact focus: OKX X Layer only (multi-EVM presets stay in Settings).
+fn studio_focus_networks(networks: &[EvmNetwork]) -> Vec<&EvmNetwork> {
+    let focused: Vec<&EvmNetwork> = networks
+        .iter()
+        .filter(|n| n.id.starts_with("xlayer"))
+        .collect();
+    if focused.is_empty() {
+        networks.iter().collect()
+    } else {
+        focused
+    }
+}
+
 fn guess_field(fields: &BTreeMap<String, String>, name: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     fields.iter().find_map(|(key, value)| {
@@ -530,6 +543,10 @@ pub struct StudioView {
     interact_output: Option<SharedString>,
     interact_task: Option<Task<()>>,
     fn_menu_open: bool,
+    event_logs: Vec<StudioLogEntry>,
+    logs_event_sig: Option<String>,
+    logs_note: Option<SharedString>,
+    logs_task: Option<Task<()>>,
     project_input: Entity<ComposerInput>,
     templates: Vec<StudioTemplate>,
     template_menu_open: bool,
@@ -590,6 +607,10 @@ impl StudioView {
             interact_output: None,
             interact_task: None,
             fn_menu_open: false,
+            event_logs: Vec::new(),
+            logs_event_sig: None,
+            logs_note: None,
+            logs_task: None,
             project_input,
             templates: Vec::new(),
             template_menu_open: false,
@@ -1549,6 +1570,68 @@ impl StudioView {
         }));
     }
 
+    fn fetch_event_logs(&mut self, event_signature: Option<String>, cx: &mut Context<Self>) {
+        let Some(address) = self.active_address.clone() else {
+            self.logs_note = Some("Deploy first".into());
+            cx.notify();
+            return;
+        };
+        let Some(network_id) = self.selected_network_id.clone() else {
+            self.logs_note = Some("Pick an X Layer network".into());
+            cx.notify();
+            return;
+        };
+        let Some(engine) = self.engine(cx) else {
+            return;
+        };
+        self.logs_event_sig = event_signature.clone();
+        self.logs_note = Some("Fetching logs…".into());
+        let params = match serde_json::to_value(StudioLogsRequest {
+            network_id,
+            address,
+            event_signature,
+            from_block: None,
+            to_block: Some("latest".into()),
+        }) {
+            Ok(v) => v,
+            Err(err) => {
+                self.logs_note = Some(err.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        self.logs_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine.client().call(methods::STUDIO_LOGS, params).await;
+            this.update(cx, |view, cx| {
+                view.logs_task = None;
+                match result {
+                    Ok(value) => match serde_json::from_value::<StudioLogsResponse>(value) {
+                        Ok(resp) => {
+                            if resp.ok {
+                                view.event_logs = resp.logs;
+                                view.logs_note = Some(
+                                    format!(
+                                        "{} log(s) · last ~10k blocks on X Layer",
+                                        view.event_logs.len()
+                                    )
+                                    .into(),
+                                );
+                            } else {
+                                view.event_logs.clear();
+                                view.logs_note = Some(resp.output.into());
+                            }
+                        }
+                        Err(err) => view.logs_note = Some(err.to_string().into()),
+                    },
+                    Err(err) => view.logs_note = Some(err.to_string().into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
     fn apply_gate_event(&mut self, row_id: &str, event: StudioGateEvent, cx: &mut Context<Self>) {
         let passed = matches!(event, StudioGateEvent::Done { ok: true, .. });
         if let Some(StudioRow {
@@ -1989,9 +2072,10 @@ impl StudioView {
                 }),
             );
         if self.network_menu_open {
+            let choices = studio_focus_networks(&self.networks);
             let menu = div()
                 .w(px(240.0))
-                .children(self.networks.iter().enumerate().map(|(ix, network)| {
+                .children(choices.into_iter().enumerate().map(|(ix, network)| {
                     let id = network.id.clone();
                     let active = self.selected_network_id.as_deref() == Some(network.id.as_str());
                     popover::menu_row(&theme, active, format!("studio-net-row-{ix}"))
@@ -2009,6 +2093,14 @@ impl StudioView {
                             network.name, network.chain_id
                         )))
                 }))
+                .child(
+                    div()
+                        .px(px(10.0))
+                        .py(px(6.0))
+                        .text_size(px(10.0))
+                        .text_color(theme.text_dim)
+                        .child("X Layer only in Studio · other EVMs in Settings"),
+                )
                 .into_any_element();
             network_btn =
                 network_btn.child(popover::anchored_menu_above("studio-net-menu", menu, None));
@@ -2787,6 +2879,84 @@ impl StudioView {
                             .child(out.clone()),
                     )
                 })
+                .child(
+                    div()
+                        .mt(px(4.0))
+                        .flex()
+                        .flex_col()
+                        .gap(px(6.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text)
+                                        .child("Events"),
+                                )
+                                .child(
+                                    button("Refresh logs", address.is_none(), &theme).on_mouse_up(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.fetch_event_logs(this.logs_event_sig.clone(), cx);
+                                        }),
+                                    ),
+                                ),
+                        )
+                        .when(!schema.events.is_empty(), |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap(px(6.0))
+                                    .children(schema.events.iter().enumerate().map(|(ix, ev)| {
+                                        let sig = ev.signature();
+                                        let label = ev.name.clone();
+                                        button_dynamic(label, address.is_none(), &theme)
+                                            .id(("studio-ev", ix))
+                                            .on_mouse_up(
+                                                gpui::MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    this.fetch_event_logs(Some(sig.clone()), cx);
+                                                }),
+                                            )
+                                    }))
+                                    .child(
+                                        button("All", address.is_none(), &theme).on_mouse_up(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|this, _, _, cx| {
+                                                this.fetch_event_logs(None, cx);
+                                            }),
+                                        ),
+                                    ),
+                            )
+                        })
+                        .when_some(self.logs_note.as_ref(), |el, note| {
+                            el.child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_muted)
+                                    .child(note.clone()),
+                            )
+                        })
+                        .children(self.event_logs.iter().take(12).enumerate().map(|(ix, log)| {
+                            let line = format!(
+                                "{} · {} · {}",
+                                log.event_name.as_deref().unwrap_or("log"),
+                                log.block_number.as_deref().unwrap_or("?"),
+                                truncate_middle(log.tx_hash.as_deref().unwrap_or(""), 8)
+                            );
+                            div()
+                                .id(("studio-log", ix))
+                                .font_family(theme.font_mono.clone())
+                                .text_size(px(11.0))
+                                .text_color(theme.text_dim)
+                                .child(SharedString::from(line))
+                        })),
+                )
                 .into_any_element(),
         )
     }

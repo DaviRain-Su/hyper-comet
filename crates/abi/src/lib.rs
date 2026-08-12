@@ -78,6 +78,19 @@ pub struct AbiEvent {
     pub inputs: Vec<AbiFormParam>,
 }
 
+impl AbiEvent {
+    /// Solidity-style event signature for `cast logs`, e.g. `Claimed(uint64)`.
+    pub fn signature(&self) -> String {
+        let inputs = self
+            .inputs
+            .iter()
+            .map(|param| param.sol_type.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{}({inputs})", self.name)
+    }
+}
+
 /// Errors while parsing an ABI JSON payload.
 #[derive(Debug, thiserror::Error)]
 pub enum AbiError {

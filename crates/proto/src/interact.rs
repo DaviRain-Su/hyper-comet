@@ -47,3 +47,43 @@ pub struct StudioCallResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
 }
+
+/// Fetch recent contract logs (X Layer–first interact polish).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioLogsRequest {
+    pub network_id: String,
+    pub address: String,
+    /// Optional Solidity event signature, e.g. `Claimed(uint64)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_signature: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_block: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_block: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioLogEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_number: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
+    #[serde(default)]
+    pub topics: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioLogsResponse {
+    pub ok: bool,
+    #[serde(default)]
+    pub logs: Vec<StudioLogEntry>,
+    #[serde(default)]
+    pub output: String,
+}

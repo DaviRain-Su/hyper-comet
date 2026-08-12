@@ -12,6 +12,10 @@ description: >-
 Borrowed patterns from `paulrberg/agent-skills@evm-chains` (chain metadata
 catalog + resolve-before-RPC) and adapted to ProofShip's local-first Studio.
 
+**Product focus right now: OKX X Layer only** (testnet 1952 default, mainnet 196
+for funded ops). Sepolia/Base Sepolia remain as Settings builtins for power users
+but Studio deploy/interact pickers only offer X Layer.
+
 ## Scope
 
 Authoritative builtins live in `comet_proto::builtin_networks()`:

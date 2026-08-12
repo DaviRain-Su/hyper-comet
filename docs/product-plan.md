@@ -29,7 +29,7 @@
 5. **部署管理** —— ✅ `deployments.json` + Studio Deploy 条;按 project/launch 归集。
 6. **项目模型** —— ✅ launch `project_*` + 侧栏分组 + 项目概览(源/门禁计数/部署)。
 7. **ABI 驱动的交互台** —— ✅ `comet-abi` schema + Studio call/send;链上事件日志仍靠 explorer。
-8. **模板/vertical 体系** —— ✅ 首个 RWA 模板;模板市场后置。
+8. **模板/vertical 体系** —— ✅ RWA + Time-Lock Payout;模板市场后置。
 9. **分享** —— `gate-report.json` ✅;只读 launch 链接仍依赖 relay/web(后置)。
 10. **多链 deploy lanes** —— 工具已 vendor;ProofForge 目标(evm 已通;solana/aleo/near/ton/cosmwasm 在 proof_forge 侧)按需接。
 
@@ -50,11 +50,10 @@
 | 2.1 网络设置 | settings 新增 Networks 页:X Layer testnet(1952)/mainnet(196)预设优先 + Sepolia/Base Sepolia 多 EVM 预备 + 自定义 EVM;存 `networks.json`(本地,非同步) | ✅ |
 | 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | ✅ Connect + 会话签名 |
 | 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | ✅ |
-| 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志/交易历史(v1 可链外查 explorer) | ✅ schema + Studio 面板;历史仍靠 explorer |
-| 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
-| 2.6 Studio Preview | 右侧栏在 Studio 路由下切到 **Preview**(不再只是 git Changes):ABI→自包含 dapp HTML,引擎本机 HTTP 预览;`Open in browser` + 应用内 gpui 镜像。对标 Codex 的 app preview。WebView 内嵌为后续切片 | ✅ HTTP Preview;WebView 后置 |
+| 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志 `StudioLogs`(cast logs,近 10k 块) | ✅ |
+| 2.6 Studio Preview | 右侧 Preview:ABI→HTML + **应用内 ABI 镜像**(views/events);`Open in browser`;原生 WebView 待 gpui | ✅ 镜像+浏览器;WebView 后置 |
 
-**本地进度(2026-08-12):** Phase 2 主路径已齐。模板含 RWA + Time-Lock Payout;`ci-gate-example.sh` 覆盖 gate-report CI 断言。剩余 polish:Preview WebView 真内嵌、交互台链上事件日志、多链 deploy lane。Web/账户(Phase 3–4)后置。
+**本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**(Studio 网络选择仅 X Layer;Settings 仍保留其它 EVM 预设)。Preview=应用内 ABI 镜像 + 浏览器 HTML;`StudioLogs` 拉最近事件。多链 deploy lane / 真 WebView 后置。Web/账户(Phase 3–4)后置。
 
 ### Phase 3 — web app(Cloudflare 托管)
 

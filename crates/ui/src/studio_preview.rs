@@ -1,12 +1,17 @@
-//! Studio right-pane Preview: local HTML dapp + Open in browser.
+//! Studio right-pane Preview: local HTML dapp + in-app ABI mirror.
+//!
+//! Native WebView is not available in this gpui fork yet; the pane mirrors
+//! views/events in gpui and opens the full HTML dapp in the browser.
 
 use gpui::{
     App, Context, Entity, FocusHandle, Render, SharedString, Task, Window, div, prelude::*, px,
 };
 
+use comet_abi::{AbiFormSchema, schema_from_abi_json};
 use comet_proto::{
-    DeploymentRecord, DeploymentsResponse, EvmNetwork, NetworksResponse, StudioPreviewStartRequest,
-    StudioPreviewStatus,
+    DeploymentRecord, DeploymentsResponse, EvmNetwork, NetworksResponse, StudioAbiRequest,
+    StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse,
+    StudioPreviewStartRequest, StudioPreviewStatus,
 };
 use comet_rpc::methods;
 
@@ -20,9 +25,12 @@ pub struct StudioPreviewPane {
     networks: Vec<EvmNetwork>,
     selected: Option<DeploymentRecord>,
     preview: Option<StudioPreviewStatus>,
+    schema: Option<AbiFormSchema>,
+    call_output: Option<String>,
     error: Option<String>,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
+    call_task: Option<Task<()>>,
 }
 
 impl StudioPreviewPane {
@@ -34,9 +42,12 @@ impl StudioPreviewPane {
             networks: Vec::new(),
             selected: None,
             preview: None,
+            schema: None,
+            call_output: None,
             error: None,
             load_task: None,
             action_task: None,
+            call_task: None,
         };
         pane.refresh(cx);
         pane
@@ -66,7 +77,16 @@ impl StudioPreviewPane {
             this.update(cx, |pane, cx| {
                 match deployments {
                     Ok(value) => match serde_json::from_value::<DeploymentsResponse>(value) {
-                        Ok(resp) => pane.deployments = resp.deployments,
+                        Ok(resp) => {
+                            // Prefer X Layer deployments in the preview list.
+                            let mut deps = resp.deployments;
+                            deps.sort_by(|a, b| {
+                                let a_x = a.network_id.starts_with("xlayer") as i32;
+                                let b_x = b.network_id.starts_with("xlayer") as i32;
+                                b_x.cmp(&a_x)
+                            });
+                            pane.deployments = deps;
+                        }
                         Err(err) => pane.error = Some(err.to_string()),
                     },
                     Err(err) => pane.error = Some(err.to_string()),
@@ -82,7 +102,49 @@ impl StudioPreviewPane {
                     pane.preview = if resp.url.is_some() { Some(resp) } else { None };
                 }
                 if pane.selected.is_none() {
-                    pane.selected = pane.deployments.first().cloned();
+                    pane.selected = pane
+                        .deployments
+                        .iter()
+                        .find(|d| d.network_id.starts_with("xlayer"))
+                        .cloned()
+                        .or_else(|| pane.deployments.first().cloned());
+                    if pane.selected.is_some() {
+                        pane.load_schema(cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn load_schema(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let Some(module) = self.selected.as_ref().map(|d| d.module.clone()) else {
+            return;
+        };
+        let req = StudioAbiRequest { module };
+        self.call_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(methods::STUDIO_ABI, serde_json::to_value(req).unwrap())
+                .await;
+            this.update(cx, |pane, cx| {
+                pane.call_task = None;
+                match result {
+                    Ok(value) => match serde_json::from_value::<StudioAbiResponse>(value) {
+                        Ok(resp) => match schema_from_abi_json(&resp.abi_json) {
+                            Ok(schema) => {
+                                pane.schema = Some(schema);
+                                pane.error = None;
+                            }
+                            Err(err) => pane.error = Some(err.to_string()),
+                        },
+                        Err(err) => pane.error = Some(err.to_string()),
+                    },
+                    Err(err) => pane.error = Some(err.to_string()),
                 }
                 cx.notify();
             })
@@ -99,6 +161,7 @@ impl StudioPreviewPane {
             cx.notify();
             return;
         };
+        self.load_schema(cx);
         let req = StudioPreviewStartRequest {
             module: dep.module.clone(),
             address: dep.address.clone(),
@@ -108,7 +171,10 @@ impl StudioPreviewPane {
         self.action_task = Some(cx.spawn(async move |this, cx| {
             let result = engine
                 .client()
-                .call(methods::STUDIO_PREVIEW_START, serde_json::to_value(req).unwrap())
+                .call(
+                    methods::STUDIO_PREVIEW_START,
+                    serde_json::to_value(req).unwrap(),
+                )
                 .await;
             this.update(cx, |pane, cx| {
                 match result {
@@ -147,6 +213,53 @@ impl StudioPreviewPane {
         if let Some(url) = self.preview.as_ref().and_then(|p| p.url.clone()) {
             cx.open_url(&url);
         }
+    }
+
+    fn call_view(&mut self, signature: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let Some(dep) = self.selected.clone() else {
+            return;
+        };
+        let params = match serde_json::to_value(StudioCallRequest {
+            network_id: dep.network_id,
+            address: dep.address,
+            signature: signature.clone(),
+            args: Vec::new(),
+            kind: StudioCallKind::View,
+            wallet_id: None,
+        }) {
+            Ok(v) => v,
+            Err(err) => {
+                self.call_output = Some(err.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        self.call_output = Some(format!("calling {signature}…"));
+        self.action_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine.client().call(methods::STUDIO_CALL, params).await;
+            this.update(cx, |pane, cx| {
+                pane.action_task = None;
+                pane.call_output = Some(match result {
+                    Ok(value) => match serde_json::from_value::<StudioCallResponse>(value) {
+                        Ok(resp) => {
+                            if resp.ok {
+                                format!("{signature} → {}", resp.output)
+                            } else {
+                                format!("{signature} failed: {}", resp.output)
+                            }
+                        }
+                        Err(err) => err.to_string(),
+                    },
+                    Err(err) => err.to_string(),
+                });
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
     }
 
     fn network_label(&self, network_id: &str) -> String {
@@ -226,7 +339,7 @@ impl Render for StudioPreviewPane {
                             .text_size(px(11.0))
                             .text_color(theme.text_muted)
                             .child(SharedString::from(
-                                "ABI → local dapp (DESIGN.md tokens). Select a deployment to start; Open renders the live page in your browser (WebView embed later).",
+                                "In-app ABI mirror + localhost HTML for X Layer. Open browser for the full dapp page (native WebView when gpui gains it).",
                             )),
                     ),
             )
@@ -291,6 +404,8 @@ impl Render for StudioPreviewPane {
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.selected = Some(dep.clone());
+                                        this.schema = None;
+                                        this.call_output = None;
                                         this.start_preview(cx);
                                     }))
                                     .child(
@@ -423,7 +538,7 @@ impl Render for StudioPreviewPane {
                                                         .text_size(px(12.0))
                                                         .text_color(theme.text_muted)
                                                         .child(
-                                                            "Live HTML is served on localhost. Open in browser for the full ABI form UI; in-app WebView is next.",
+                                                            "In-app mirror below · Open for full HTML dapp (DESIGN.md). Native WebView pending gpui support.",
                                                         ),
                                                 )
                                                 .child(
@@ -448,6 +563,91 @@ impl Render for StudioPreviewPane {
                                                 ),
                                         ),
                                 ),
+                        )
+                    })
+                    .when_some(self.schema.as_ref(), |el, schema| {
+                        el.child(
+                            div()
+                                .rounded(px(10.0))
+                                .border_1()
+                                .border_color(theme.border)
+                                .p(px(14.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(10.0))
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text)
+                                        .child("In-app mirror"),
+                                )
+                                .when(!schema.views.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(6.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(theme.text_muted)
+                                                    .child("Views (no-arg)"),
+                                            )
+                                            .child(
+                                                div().flex().flex_wrap().gap(px(6.0)).children(
+                                                    schema
+                                                        .views
+                                                        .iter()
+                                                        .filter(|f| f.inputs.is_empty())
+                                                        .enumerate()
+                                                        .map(|(ix, func)| {
+                                                            let sig = func.signature();
+                                                            action_chip_owned(sig.clone(), &theme)
+                                                                .id(("preview-view", ix))
+                                                                .on_click(cx.listener(
+                                                                    move |this, _, _, cx| {
+                                                                        this.call_view(
+                                                                            sig.clone(),
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                ))
+                                                        }),
+                                                ),
+                                            ),
+                                    )
+                                })
+                                .when(!schema.events.is_empty(), |el| {
+                                    el.child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap(px(4.0))
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(theme.text_muted)
+                                                    .child("Events"),
+                                            )
+                                            .children(schema.events.iter().map(|ev| {
+                                                div()
+                                                    .font_family("Geist Mono")
+                                                    .text_size(px(11.0))
+                                                    .text_color(theme.text_dim)
+                                                    .child(SharedString::from(ev.signature()))
+                                            })),
+                                    )
+                                })
+                                .when_some(self.call_output.clone(), |el, out| {
+                                    el.child(
+                                        div()
+                                            .font_family("Geist Mono")
+                                            .text_size(px(11.0))
+                                            .text_color(theme.text)
+                                            .child(SharedString::from(out)),
+                                    )
+                                }),
                         )
                     })
                     .when(url.is_empty() && self.selected.is_some(), |el| {
@@ -501,6 +701,21 @@ fn truncate_addr(address: &str) -> String {
 fn action_chip(label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(label)
+        .px(px(8.0))
+        .py(px(4.0))
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(theme.border)
+        .text_size(px(11.0))
+        .text_color(theme.text)
+        .cursor_pointer()
+        .hover(|s| s.bg(theme.surface))
+        .child(SharedString::from(label))
+}
+
+fn action_chip_owned(label: String, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(label.clone()))
         .px(px(8.0))
         .py(px(4.0))
         .rounded(px(6.0))

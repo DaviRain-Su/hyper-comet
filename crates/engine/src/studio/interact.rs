@@ -5,7 +5,7 @@ use std::process::Stdio;
 
 use comet_proto::{
     EvmNetwork, StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse,
-    WalletAccount, WalletSource,
+    StudioLogEntry, StudioLogsRequest, StudioLogsResponse, WalletAccount, WalletSource,
 };
 use tokio::process::Command;
 
@@ -51,6 +51,17 @@ impl StudioInteract {
                 ok: false,
                 output: err,
                 tx_hash: None,
+            },
+        }
+    }
+
+    pub async fn logs(&self, req: StudioLogsRequest, network: EvmNetwork) -> StudioLogsResponse {
+        match logs_inner(req, network).await {
+            Ok(resp) => resp,
+            Err(err) => StudioLogsResponse {
+                ok: false,
+                logs: Vec::new(),
+                output: err,
             },
         }
     }
@@ -186,6 +197,123 @@ async fn call_inner(
     }
 }
 
+async fn logs_inner(
+    req: StudioLogsRequest,
+    network: EvmNetwork,
+) -> Result<StudioLogsResponse, String> {
+    if !req.address.starts_with("0x") || req.address.len() != 42 {
+        return Err("address must be 0x + 40 hex chars".into());
+    }
+    let cast =
+        resolve_cast().ok_or_else(|| "cast not found (PATH or ~/.foundry/bin)".to_string())?;
+
+    let to_block = req
+        .to_block
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "latest".into());
+    let from_block = if let Some(fb) = req.from_block.filter(|s| !s.trim().is_empty()) {
+        fb
+    } else {
+        recent_from_block(&cast, &network.rpc_url).await?
+    };
+
+    let mut args = vec![
+        "logs".into(),
+        "--json".into(),
+        "--rpc-url".into(),
+        network.rpc_url.clone(),
+        "--address".into(),
+        req.address.clone(),
+        "--from-block".into(),
+        from_block,
+        "--to-block".into(),
+        to_block,
+    ];
+    if let Some(sig) = req
+        .event_signature
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        args.push(sig.to_string());
+    }
+
+    let output = run_cast(&cast, &args, &[], None).await?;
+    let logs = parse_log_entries(&output, req.event_signature.as_deref());
+    Ok(StudioLogsResponse {
+        ok: true,
+        logs,
+        output,
+    })
+}
+
+async fn recent_from_block(cast: &Path, rpc_url: &str) -> Result<String, String> {
+    let raw = run_cast(
+        cast,
+        &[
+            "block-number".into(),
+            "--rpc-url".into(),
+            rpc_url.to_string(),
+        ],
+        &[],
+        None,
+    )
+    .await?;
+    let tip: u64 = raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("cast block-number returned unexpected output: {raw}"))?;
+    Ok(tip.saturating_sub(10_000).to_string())
+}
+
+fn parse_log_entries(raw: &str, event_signature: Option<&str>) -> Vec<StudioLogEntry> {
+    let event_name = event_signature.and_then(|sig| sig.split('(').next()).map(str::to_string);
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(arr) = value.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let block_number = item
+                .get("blockNumber")
+                .or_else(|| item.get("block_number"))
+                .and_then(|v| match v {
+                    serde_json::Value::String(s) => Some(s.clone()),
+                    serde_json::Value::Number(n) => Some(n.to_string()),
+                    _ => None,
+                });
+            let tx_hash = item
+                .get("transactionHash")
+                .or_else(|| item.get("transaction_hash"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let data = item
+                .get("data")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let topics = item
+                .get("topics")
+                .and_then(|v| v.as_array())
+                .map(|topics| {
+                    topics
+                        .iter()
+                        .filter_map(|t| t.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some(StudioLogEntry {
+                block_number,
+                tx_hash,
+                topics,
+                data,
+                event_name: event_name.clone(),
+            })
+        })
+        .collect()
+}
+
 /// `redact_flag` names an argv flag whose following value must never appear in errors.
 async fn run_cast(
     cast: &Path,
@@ -259,6 +387,22 @@ mod tests {
     fn parse_tx_hash_reads_cast_json() {
         let json = r#"{"transactionHash":"0xdead","status":"0x1"}"#;
         assert_eq!(parse_tx_hash(json).as_deref(), Some("0xdead"));
+    }
+
+    #[test]
+    fn parse_log_entries_reads_cast_array() {
+        let raw = r#"[{
+            "address":"0xabc",
+            "topics":["0x111"],
+            "data":"0x222",
+            "blockNumber":"0x10",
+            "transactionHash":"0xdead"
+        }]"#;
+        let logs = parse_log_entries(raw, Some("Claimed(uint64)"));
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].tx_hash.as_deref(), Some("0xdead"));
+        assert_eq!(logs[0].event_name.as_deref(), Some("Claimed"));
+        assert_eq!(logs[0].topics, vec!["0x111".to_string()]);
     }
 
     #[tokio::test]

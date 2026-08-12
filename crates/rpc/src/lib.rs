@@ -134,6 +134,7 @@ pub mod methods {
     pub const STUDIO_DEPLOY: &str = "StudioDeploy";
     pub const STUDIO_ABI: &str = "StudioAbi";
     pub const STUDIO_CALL: &str = "StudioCall";
+    pub const STUDIO_LOGS: &str = "StudioLogs";
     pub const STUDIO_PREVIEW_START: &str = "StudioPreviewStart";
     pub const STUDIO_PREVIEW_STOP: &str = "StudioPreviewStop";
     pub const STUDIO_PREVIEW_STATUS: &str = "StudioPreviewStatus";

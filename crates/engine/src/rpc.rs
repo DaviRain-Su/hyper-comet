@@ -59,7 +59,7 @@ use comet_proto::{
     ChatConfig, HarnessId, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
     RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
     StudioDeployRequest, StudioDraftRequest, StudioGateRequest, StudioLaunchRunRequest,
-    StudioLaunchesResponse, StudioPreviewStartRequest, StudioPreviewStatus,
+    StudioLaunchesResponse, StudioLogsRequest, StudioPreviewStartRequest, StudioPreviewStatus,
     StudioPutLaunchesRequest, StudioTemplateRequest, StudioTemplatesResponse, ToolCall,
     UpsertNetworkRequest, UpsertWalletRequest, WalletConnectStartRequest,
     WalletConnectStartResponse, WalletsResponse,
@@ -859,6 +859,7 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_DEPLOY
             | methods::STUDIO_ABI
             | methods::STUDIO_CALL
+            | methods::STUDIO_LOGS
             | methods::STUDIO_PREVIEW_START
             | methods::STUDIO_PREVIEW_STOP
             | methods::STUDIO_PREVIEW_STATUS
@@ -1390,6 +1391,18 @@ impl RpcService for EngineRpc {
                     StudioCallKind::View => None,
                 };
                 let resp = self.studio_interact.call(p, network, wallet).await;
+                RpcReply::value(&resp)
+            }
+            methods::STUDIO_LOGS => {
+                let p: StudioLogsRequest = parse_params(params)?;
+                let network = self
+                    .network_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?
+                    .into_iter()
+                    .find(|n| n.id == p.network_id)
+                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
+                let resp = self.studio_interact.logs(p, network).await;
                 RpcReply::value(&resp)
             }
             methods::STUDIO_PREVIEW_START => {
