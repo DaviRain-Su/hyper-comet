@@ -10,7 +10,7 @@ Users deploy from a UserExecutor (desktop / VPS) or browser wallet.
 
 | Job | Allowed |
 |---|---|
-| `gate` (check) | Yes — shells `proof-forge-next check` when CLI + ProgramV1 source are present |
+| `gate` | Yes — `proof-forge-next check → build --target evm → inspect` when CLI + ProgramV1 source are present |
 | `agent_draft` | Later — hosted ACP / HTTP MCP loop |
 | `deploy_with_key` | **Never** — relay refuses `cmd.deploy` to platform; client also refuses |
 
@@ -65,10 +65,19 @@ UserExecutor.
 
 1. Connect WS as `role=platform`; reconnect with exponential backoff.
 2. `cmd.prompt` → `session.user`; if Lean source extractable + CLI →
-   `gate.start` / `gate.done` / `artifact.sealed` (meta) / `session.done`.
+   `gate.start` / `gate.done` / `artifact.sealed` (ABI + digest when present) /
+   `session.done`.
 3. `cmd.deploy` → `executor.refused` (`platform_executor_cannot_hold_deploy_keys`).
 4. `cmd.cancel` / `cmd.steer` → polite note + `session.done`.
 5. Always `cmd.ack` when the command carries `id`.
+
+## Smoke
+
+With relay running:
+
+```sh
+RELAY_URL=http://127.0.0.1:8787 node ../scripts/smoke-relay-platform.mjs
+```
 
 ## Container sketch
 

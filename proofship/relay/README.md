@@ -66,6 +66,17 @@ GET /api/launches/:id/state   # alias
 Returns `{ state, tail, queueDepth }`. Snapshot includes `transcript`,
 `executors`, `deployment`, gate/artifact fields.
 
+## Read-only share (Phase 4.4 stub)
+
+```
+GET /api/share/:sessionId?token=…
+```
+
+Auth: `SHARE_TOKEN` when set; otherwise same as viewer (`VIEWER_TOKEN`).
+Response is redacted — gate / artifact / deployment / transcript only; no
+command queue and no write WebSocket. Full SIWE + permissioned share links
+remain Phase 4.
+
 ## Development
 
 ```sh

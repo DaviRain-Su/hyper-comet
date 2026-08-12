@@ -41,6 +41,12 @@ export interface Env {
   DEVICE_TOKENS?: string;
   /** When set, viewers must pass ?viewerToken= */
   VIEWER_TOKEN?: string;
+  /**
+   * Optional read-only share token (Phase 4.4 stub).
+   * When set, `GET /api/share/:sessionId?token=` must match.
+   * When unset, share uses the same auth as viewer endpoints.
+   */
+  SHARE_TOKEN?: string;
 }
 
 type Role = "engine" | "viewer" | "platform";
@@ -101,6 +107,13 @@ function isUpgrade(request: Request): boolean {
 function authorizeViewer(env: Env, url: URL): boolean {
   if (!env.VIEWER_TOKEN) return true;
   return url.searchParams.get("viewerToken") === env.VIEWER_TOKEN;
+}
+
+function authorizeShare(env: Env, url: URL): boolean {
+  if (env.SHARE_TOKEN) {
+    return url.searchParams.get("token") === env.SHARE_TOKEN;
+  }
+  return authorizeViewer(env, url);
 }
 
 function parseEngineEvent(raw: unknown): EngineEventMessage | null {
@@ -177,6 +190,17 @@ export default {
       return room.fetch(new Request(new URL("/state", request.url), { method: "GET" }));
     }
 
+    // Phase 4.4 stub: read-only share (gate + transcript; no command queue).
+    const shareMatch = url.pathname.match(/^\/api\/share\/([^/]+)$/u);
+    if (request.method === "GET" && shareMatch !== null) {
+      const roomId = decodeURIComponent(shareMatch[1] ?? "");
+      if (!roomId) return badRequest("missing session id");
+      if (!authorizeShare(env, url)) return unauthorized("invalid share token");
+      const id = env.SESSION_ROOM.idFromName(roomId);
+      const room = env.SESSION_ROOM.get(id);
+      return room.fetch(new Request(new URL("/share", request.url), { method: "GET" }));
+    }
+
     return notFound();
   },
 };
@@ -216,6 +240,38 @@ export class SessionRoom extends DurableObject<Env> {
         state: this.state,
         tail: this.events.slice(-SNAPSHOT_TAIL),
         queueDepth: this.queue.length,
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/share") {
+      const gate =
+        this.state.gate === "running"
+          ? { status: "running" }
+          : this.state.gate ?? null;
+      return json({
+        readonly: true,
+        sessionId: this.state.sessionId ?? this.sessionId,
+        share: {
+          gate,
+          artifact: this.state.artifact ?? null,
+          deployment: this.state.deployment ?? null,
+          transcript: this.state.transcript ?? [],
+          notes: this.state.notes ?? [],
+        },
+        tail: this.events
+          .filter((e) =>
+            [
+              "session.user",
+              "session.agent",
+              "session.tool",
+              "session.done",
+              "gate.done",
+              "artifact.sealed",
+              "deploy.done",
+              "note",
+            ].includes(e.kind),
+          )
+          .slice(-SNAPSHOT_TAIL),
       });
     }
 
@@ -372,6 +428,22 @@ export class SessionRoom extends DurableObject<Env> {
         payload: { ...PLATFORM_DEPLOY_REFUSAL },
       });
       return;
+    }
+
+    if (command.type === "cmd.deploy") {
+      const userOnline = this.socketsFor("engine").length > 0;
+      if (!userOnline) {
+        await this.appendEvent({
+          type: "event",
+          kind: "executor.refused",
+          payload: {
+            ...PLATFORM_DEPLOY_REFUSAL,
+            reason: "user_executor_offline_for_deploy",
+            hint: "Deploy needs a connected UserExecutor (desktop/VPS). Platform never holds deploy keys.",
+          },
+        });
+        return;
+      }
     }
 
     if (command.type === "cmd.prompt" || command.type === "cmd.steer") {

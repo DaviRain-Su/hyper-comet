@@ -94,7 +94,7 @@
 | 4.1 自托管 edge | 部署 `edge/`(Workers+DO+R2);`COMET_EDGE_URL` 指回自有域 |
 | 4.2 平台登录(多用户) | **Follow-on after W1–W5:** 很多开发者各自注册/登录:WorkOS(邮箱/OAuth,管线已内建)+ **SIWE 钱包登录**(web3 用户习惯;钱包地址即账户,与 2.2 的钱包连接打通);D1 用户/组织表;会话与 token 刷新 |
 | 4.3 隔离与权限 | 每用户/每 org 空间隔离(org 门禁已内建于 workspace room 授权);relay 已支持 per-device token(W1);分享链接的权限策略(只读/可评论/可下命令)仍后置 |
-| 4.4 分享链接 | 只读 gate-report + transcript 尾(relay 签发);与 web Sessions 旁观对齐 |
+| 4.4 分享链接 | 只读 gate-report + transcript 尾 — stub:`GET /api/share/:id`(SHARE_TOKEN);完整 SIWE/分权后置 |
 | 4.5 托管 agent lane | 纯云端执行(pi 等 lane 的托管形态);按需 |
 
 ### Phase 5 — 生态与差异化

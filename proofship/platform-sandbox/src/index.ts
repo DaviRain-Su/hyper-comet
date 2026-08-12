@@ -14,7 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readdir, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { access, constants } from "node:fs/promises";
@@ -221,15 +221,65 @@ function runProcess(
   });
 }
 
-async function runMinimalGate(
+async function listOutFiles(outDir: string): Promise<{ name: string; size: number }[]> {
+  try {
+    const names = await readdir(outDir);
+    const files: { name: string; size: number }[] = [];
+    for (const name of names) {
+      const s = await stat(join(outDir, name));
+      if (s.isFile()) files.push({ name, size: s.size });
+    }
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+async function readAbiJson(
+  outDir: string,
+  module: string,
+): Promise<unknown | undefined> {
+  const candidates = [
+    `${module}.abi.json`,
+    `${module.toLowerCase()}.abi.json`,
+  ];
+  for (const name of candidates) {
+    try {
+      const raw = await readFile(join(outDir, name), "utf8");
+      return JSON.parse(raw) as unknown;
+    } catch {
+      /* try next */
+    }
+  }
+  try {
+    const names = await readdir(outDir);
+    const hit = names.find((n) => n.endsWith(".abi.json"));
+    if (!hit) return undefined;
+    return JSON.parse(await readFile(join(outDir, hit), "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseOutputSetDigest(inspectOut: string): string | undefined {
+  const m =
+    /outputSetDigest\s+([0-9a-fA-F]{16,})/u.exec(inspectOut) ??
+    /"outputSetDigest"\s*:\s*"([0-9a-fA-F]+)"/u.exec(inspectOut);
+  return m?.[1];
+}
+
+async function runGatePipeline(
   cli: string,
   extracted: ExtractedSource,
 ): Promise<{
   ok: boolean;
-  files: string[];
-  digests?: { sourceSha256: string };
+  files: { name: string; size: number }[];
+  abi?: unknown;
+  digests?: { sourceSha256: string; outputSetDigest?: string };
   output?: string;
   error?: string;
+  stage?: string;
 }> {
   const work = await mkdtemp(join(tmpdir(), "proofship-platform-"));
   try {
@@ -239,29 +289,83 @@ async function runMinimalGate(
     const absFile = join(inbox, fileName);
     await writeFile(absFile, extracted.source, "utf8");
     const rel = `studio-inbox/${fileName}`;
+    const outRel = `studio-inbox/out-${extracted.module.toLowerCase()}`;
+    const outDir = join(work, outRel);
     const sourceSha256 = createHash("sha256").update(extracted.source, "utf8").digest("hex");
 
-    const result = await runProcess(
+    const check = await runProcess(
       cli,
       ["check", rel, "--module", extracted.module, "--root", work],
       work,
       GATE_TIMEOUT_MS,
     );
-    const output = truncate(`${result.stdout}\n${result.stderr}`.trim(), 8000);
-    if (result.code !== 0) {
+    if (check.code !== 0) {
       return {
         ok: false,
-        files: [rel],
+        stage: "check",
+        files: [{ name: fileName, size: extracted.source.length }],
         digests: { sourceSha256 },
-        output,
-        error: `proof-forge-next check exited ${result.code}`,
+        output: truncate(`${check.stdout}\n${check.stderr}`.trim(), 8000),
+        error: `proof-forge-next check exited ${check.code}`,
       };
     }
+
+    const build = await runProcess(
+      cli,
+      [
+        "build",
+        rel,
+        "--module",
+        extracted.module,
+        "--target",
+        "evm",
+        "-o",
+        outRel,
+        "--root",
+        work,
+      ],
+      work,
+      GATE_TIMEOUT_MS,
+    );
+    if (build.code !== 0) {
+      return {
+        ok: false,
+        stage: "build",
+        files: [{ name: fileName, size: extracted.source.length }],
+        digests: { sourceSha256 },
+        output: truncate(`${build.stdout}\n${build.stderr}`.trim(), 8000),
+        error: `proof-forge-next build exited ${build.code}`,
+      };
+    }
+
+    const inspect = await runProcess(
+      cli,
+      ["inspect", "--output-dir", outRel, "--root", work],
+      work,
+      GATE_TIMEOUT_MS,
+    );
+    const inspectText = `${inspect.stdout}\n${inspect.stderr}`.trim();
+    if (inspect.code !== 0) {
+      return {
+        ok: false,
+        stage: "inspect",
+        files: await listOutFiles(outDir),
+        digests: { sourceSha256 },
+        output: truncate(inspectText, 8000),
+        error: `proof-forge-next inspect exited ${inspect.code}`,
+      };
+    }
+
+    const outputSetDigest = parseOutputSetDigest(inspectText);
+    const files = await listOutFiles(outDir);
+    const abi = await readAbiJson(outDir, extracted.module);
     return {
       ok: true,
-      files: [rel],
-      digests: { sourceSha256 },
-      output,
+      stage: "inspect",
+      files,
+      abi,
+      digests: { sourceSha256, outputSetDigest },
+      output: truncate(inspectText, 8000),
     };
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => undefined);
@@ -435,30 +539,40 @@ class PlatformExecutor {
 
     if (extracted && cli) {
       this.publish("session.agent", {
-        text: `Platform scaffold: running gate check for module ${extracted.module} via proof-forge-next.`,
+        text: `Platform: running check → build → inspect for module ${extracted.module}.`,
       });
-      this.publish("gate.start", { module: extracted.module, phase: "check" });
-      const result = await runMinimalGate(cli, extracted);
+      this.publish("gate.start", { module: extracted.module, phase: "gate" });
+      const result = await runGatePipeline(cli, extracted);
       this.publish("gate.done", {
         ok: result.ok,
         module: extracted.module,
-        digests: result.digests,
+        stage: result.stage,
+        digests: result.digests?.outputSetDigest
+          ? {
+              outputSetDigest: result.digests.outputSetDigest,
+              sourceSha256: result.digests.sourceSha256,
+              certified: result.ok,
+            }
+          : result.digests,
         output: result.output,
         error: result.error,
       });
       if (result.ok) {
         this.publish("artifact.sealed", {
           module: extracted.module,
+          outputSetDigest: result.digests?.outputSetDigest,
+          abi: result.abi,
           files: result.files,
           digests: result.digests,
           honesty:
-            "Platform check-only seal (meta). Full build/inspect/deploy requires UserExecutor or an image with the full toolchain.",
+            "Platform gate seal (check/build/inspect). Deploy still requires UserExecutor; keys never on platform.",
         });
       }
       this.publish("session.done", {
         ok: result.ok,
         status: result.ok ? "gate_ok" : "gate_failed",
         module: extracted.module,
+        stage: result.stage,
         error: result.error,
       });
       return;
