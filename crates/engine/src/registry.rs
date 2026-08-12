@@ -376,16 +376,16 @@ pub fn default_registry() -> HarnessRegistry {
         Box::new(|| comet_harness::AcpHarness::codex().installed()),
         Box::new(|| Ok(Arc::new(comet_harness::AcpHarness::codex()) as Arc<dyn Harness>)),
     );
-    // Cursor over ACP (`cursor-agent acp`), same lazy pattern: the static
-    // descriptor mirrors AcpHarness::cursor() exactly. The agent supports
-    // session/load and can absorb steers during a live turn; model rows are
-    // discovered from the CLI/account with an Auto fallback.
+    // Cursor Agent over ACP (`cursor-agent acp`), same lazy pattern: the
+    // static descriptor mirrors AcpHarness::cursor() exactly. No steering
+    // extension (turn boundaries) and no effort ladder — Cursor bakes effort
+    // into the model id's bracket suffix instead of a `thought_level` option.
     registry.register_lazy(
         HarnessDescriptor {
             id: HarnessId::Cursor,
             name: "Cursor".into(),
             supports_steering: true,
-            steering_mode: SteeringMode::StepBoundary,
+            steering_mode: SteeringMode::TurnBoundary,
             reasoning_levels: Vec::new(),
             installed: true,
             enabled: None,
@@ -540,7 +540,7 @@ mod tests {
         let cursor = registry.resolve(HarnessId::Cursor).unwrap();
         assert_eq!(cursor.id(), HarnessId::Cursor);
         assert_eq!(cursor.display_name(), "Cursor");
-        assert_eq!(cursor.steering_mode(), SteeringMode::StepBoundary);
+        assert_eq!(cursor.steering_mode(), SteeringMode::TurnBoundary);
         assert!(cursor.reasoning_levels().is_empty());
         let opencode = registry.resolve(HarnessId::OpenCode).unwrap();
         assert_eq!(opencode.id(), HarnessId::OpenCode);
