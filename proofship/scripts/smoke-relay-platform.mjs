@@ -144,9 +144,14 @@ async function main() {
 
     console.log("SMOKE PASS");
   } finally {
-    viewer.close();
-    platform.kill("SIGTERM");
-    await sleep(300);
+    try {
+      viewer.close();
+    } catch {
+      /* ignore */
+    }
+    platform.kill("SIGKILL");
+    await sleep(200);
+    process.exit(0);
   }
 }
 
