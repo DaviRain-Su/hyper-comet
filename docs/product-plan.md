@@ -19,18 +19,18 @@
 
 用户识别(确认):
 
-1. **合约交互前端** —— 部署后没有"用合约"的地方(dapp 的 RegistryPanel 这类),桌面和 web 都需要。
-2. **网络/钱包配置** —— 部署要签名者;目前网络只有 X Layer,且没有给用户连钱包的地方。
+1. **合约交互前端** —— ✅ 本地:Studio Contract 面板 + Preview HTML;`Open in browser`。Web 交互台后置(Phase 3.3)。
+2. **网络/钱包配置** —— ✅ Networks + Wallets + WC 会话签名;多 EVM 预设(X Layer 优先)。
 3. **平台多用户账户体系**(未来)—— 很多开发者各自注册/登录使用 ProofShip:自托管 edge + 登录(WorkOS 管线已内建;**SIWE 钱包登录**对 web3 用户更自然,二选一或并存)、D1 用户/组织表、每用户空间隔离、分享权限策略。注意分层:同步/组织模型从第一天就是多用户设计(workspace doc 按 org 授权、devices 注册表、WorkOS org 门禁,继承自基座);缺的是**托管平台侧**的账户层(relay README 的 R1+ 备注本来就列着:per-device tokens、accounts、sharing policy、D1、OAuth/SIWE)。
-4. **右侧前端预览**(类 Codex / 其它 code-agent app)—— Studio 主栏负责起草/门禁/部署对话流;右侧应渲染可点的 dapp 页面(ABI→前端),本地 `127.0.0.1` HTML 预览 + 应用内镜像;后续可嵌 WebView。
+4. **右侧前端预览**(类 Codex / 其它 code-agent app)—— ✅ Studio 右侧 Preview + 本机 HTTP;WebView 内嵌后置。
 
 补充(产品化必需):
 
-5. **部署管理** —— 部署记录(网络/地址/ctor 参数/制品 digest/tx hash/时间),否则"部署过什么"无迹可查。
-6. **项目模型** —— 一个 web3 产品 = 一个项目(合约源、门禁历史、部署、制品);Studio 目前是单线程,需要项目级归集。
-7. **ABI 驱动的交互台** —— 从制品 `*.abi.json` 自动生成表单(view 只读 eth_call;entry 写操作走钱包签名),schema 一次定义、gpui/web 两端复用。
-8. **模板/vertical 体系** —— "通用"不等于空白页;数据驱动模板(首个:RWA 份额登记,回归样本已在库)。
-9. **分享** —— 只读 launch 链接(relay 已具备 seam);门禁报告即质量证明(`gate-report.json` 已由 Studio gate / `gate.sh` 封存到制品目录;可分享/嵌徽章)。
+5. **部署管理** —— ✅ `deployments.json` + Studio Deploy 条;按 project/launch 归集。
+6. **项目模型** —— ✅ launch `project_*` + 侧栏分组 + 项目概览(源/门禁计数/部署)。
+7. **ABI 驱动的交互台** —— ✅ `comet-abi` schema + Studio call/send;链上事件日志仍靠 explorer。
+8. **模板/vertical 体系** —— ✅ 首个 RWA 模板;模板市场后置。
+9. **分享** —— `gate-report.json` ✅;只读 launch 链接仍依赖 relay/web(后置)。
 10. **多链 deploy lanes** —— 工具已 vendor;ProofForge 目标(evm 已通;solana/aleo/near/ton/cosmwasm 在 proof_forge 侧)按需接。
 
 ## 2. 分阶段计划
@@ -47,12 +47,14 @@
 
 | 项 | 内容 | 依赖/验证 |
 |---|---|---|
-| 2.1 网络设置 | settings 新增 Networks 页:X Layer testnet(1952)/mainnet(196)预设优先 + Sepolia/Base Sepolia 多 EVM 预备 + 自定义 EVM;存 `networks.json`(本地,非同步) | 预设单测:X Layer 排前 |
-| 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | Connect + **会话签名** ✅(本机 bridge keep-alive + pending `eth_sendTransaction`;`PROOFSHIP_WC_PROJECT_ID`);部署/交互可走 WC |
-| 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | 引擎持 cast/或直接 JSON-RPC(评估后选);e2e:anvil 本地链部署回归 |
-| 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志/交易历史(v1 可链外查 explorer) | schema 单测用回归样本 ABI;桌面面板手测 |
-| 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | launch store 扩字段,向后兼容 |
-| 2.6 Studio Preview | 右侧栏在 Studio 路由下切到 **Preview**(不再只是 git Changes):ABI→自包含 dapp HTML,引擎本机 HTTP 预览;`Open in browser` + 应用内 gpui 镜像。对标 Codex 的 app preview。WebView 内嵌为后续切片 | HTML 单测;preview RPC;Studio 右侧栏手测 |
+| 2.1 网络设置 | settings 新增 Networks 页:X Layer testnet(1952)/mainnet(196)预设优先 + Sepolia/Base Sepolia 多 EVM 预备 + 自定义 EVM;存 `networks.json`(本地,非同步) | ✅ |
+| 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | ✅ Connect + 会话签名 |
+| 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | ✅ |
+| 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志/交易历史(v1 可链外查 explorer) | ✅ schema + Studio 面板;历史仍靠 explorer |
+| 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
+| 2.6 Studio Preview | 右侧栏在 Studio 路由下切到 **Preview**(不再只是 git Changes):ABI→自包含 dapp HTML,引擎本机 HTTP 预览;`Open in browser` + 应用内 gpui 镜像。对标 Codex 的 app preview。WebView 内嵌为后续切片 | ✅ HTTP Preview;WebView 后置 |
+
+**本地进度(2026-08-12):** Phase 2 主路径已齐。剩余本地 polish:Preview WebView 内嵌、交互台链上事件日志、第二个模板、多链 deploy lane。Web/账户(Phase 3–4)后置。
 
 ### Phase 3 — web app(Cloudflare 托管)
 

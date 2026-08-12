@@ -9,6 +9,9 @@ pub struct DeploymentRecord {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<String>,
+    /// Studio project id (Phase 2.5); absent on older deployment files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     /// Program / artifact module name (e.g. `RwaShareRegistry`).
     #[serde(default)]
     pub module: String,
@@ -41,6 +44,8 @@ pub struct StudioDeployRequest {
     pub ctor_args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -34,7 +34,9 @@ use crate::pickers::{harness_brand_icon, visible_harnesses};
 use crate::popover::{self, Loadable};
 use crate::settings::composer::ComposerDefaults;
 use crate::state::AppState;
-use crate::studio_projects::group_launches;
+use crate::studio_projects::{
+    deployments_for_project, group_launches, launches_in_project, summarize_project,
+};
 use crate::theme::Theme;
 
 const SAMPLE_SOURCE: &str = include_str!("../../engine/tests/fixtures/rwa_share_registry.lean");
@@ -287,6 +289,11 @@ pub fn launch_from_rows(existing: Option<&StudioLaunch>, rows: &[StudioRow]) -> 
     if launch.project_id.is_none() {
         launch.project_id = Some("default".into());
         launch.project_name = Some("Studio".into());
+        launch.project_path = Some("projects/default".into());
+    } else if launch.project_path.is_none() {
+        if let Some(id) = launch.project_id.as_deref() {
+            launch.project_path = Some(format!("projects/{id}"));
+        }
     }
     launch
 }
@@ -943,6 +950,23 @@ impl StudioView {
         self.composer
             .update(cx, |input, cx| input.set_text(template.nl_seed.clone(), cx));
         self.selected_network_id = Some(template.preferred_network_id.clone());
+        let rename = self
+            .launch
+            .as_ref()
+            .and_then(|l| l.project_name.as_deref())
+            .map(|n| n == "Studio" || n.is_empty())
+            .unwrap_or(true);
+        if rename {
+            let name = template.name.clone();
+            let id = slug_project_id(&name);
+            self.project_input
+                .update(cx, |input, cx| input.set_text(name.clone(), cx));
+            if let Some(launch) = self.launch.as_mut() {
+                launch.project_name = Some(name);
+                launch.project_id = Some(id.clone());
+                launch.project_path = Some(format!("projects/{id}"));
+            }
+        }
         if let Some(source) = template.source.clone() {
             self.mutate_rows(cx, |rows| {
                 rows.push(draft_row(
@@ -1156,6 +1180,7 @@ impl StudioView {
             ctor_sig,
             ctor_args,
             launch_id: self.launch.as_ref().map(|l| l.id.clone()),
+            project_id: self.launch.as_ref().and_then(|l| l.project_id.clone()),
         }) {
             Ok(params) => params,
             Err(err) => {
@@ -1358,22 +1383,31 @@ impl StudioView {
         };
         if let Some(launch) = self.launch.as_mut() {
             launch.project_name = Some(name.clone());
-            launch.project_id = Some(slug_project_id(&name));
+            let id = slug_project_id(&name);
+            launch.project_id = Some(id.clone());
+            launch.project_path = Some(format!("projects/{id}"));
         }
         self.persist(cx);
         cx.notify();
     }
 
+    fn project_deployments(&self) -> Vec<&DeploymentRecord> {
+        let Some(launch) = self.launch.as_ref() else {
+            return self.deployments.iter().collect();
+        };
+        let siblings = launches_in_project(&self.launches, launch);
+        let launch_ids: Vec<&str> = siblings.iter().map(|l| l.id.as_str()).collect();
+        deployments_for_project(
+            &self.deployments,
+            launch.project_id.as_deref(),
+            &launch_ids,
+        )
+    }
+
     fn launch_deployments(&self) -> Vec<&DeploymentRecord> {
-        let launch_id = self.launch.as_ref().map(|l| l.id.as_str());
-        self.deployments
-            .iter()
-            .filter(|d| match (launch_id, d.launch_id.as_deref()) {
-                (Some(id), Some(lid)) => id == lid,
-                (Some(_), None) => false,
-                (None, _) => true,
-            })
-            .collect()
+        // Interact + project overview use project-scoped deployments so sibling
+        // launches under the same project share the address book.
+        self.project_deployments()
     }
 
     fn explorer_url_for(&self, address: &str) -> Option<String> {
@@ -1400,7 +1434,9 @@ impl StudioView {
             name
         };
         launch.project_name = Some(name.clone());
-        launch.project_id = Some(slug_project_id(&name));
+        let id = slug_project_id(&name);
+        launch.project_id = Some(id.clone());
+        launch.project_path = Some(format!("projects/{id}"));
         self.rows.clear();
         self.sync_list();
         self.launch = Some(launch.clone());
@@ -2331,7 +2367,7 @@ impl StudioView {
                             .text_color(theme.text)
                             .child("Projects"),
                     )
-                    .child(button("New", false, &theme).on_mouse_up(
+                    .child(button("New launch", false, &theme).on_mouse_up(
                         gpui::MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.new_launch(cx)),
                     )),
@@ -2392,6 +2428,165 @@ impl StudioView {
                     })),
             )
             .into_any_element()
+    }
+
+    fn render_project_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let launch = self.launch.as_ref()?;
+        let theme = Theme::of(cx).clone();
+        let siblings = launches_in_project(&self.launches, launch);
+        let deployments = self.project_deployments();
+        let summary = summarize_project(launch, &siblings, &deployments);
+        let meta = format!(
+            "{} launch{} · {} gate pass{} · {} fail{} · {} deploy{}",
+            summary.launch_count,
+            if summary.launch_count == 1 { "" } else { "s" },
+            summary.gate_passes,
+            if summary.gate_passes == 1 { "" } else { "es" },
+            summary.gate_fails,
+            if summary.gate_fails == 1 { "" } else { "s" },
+            summary.deployment_count,
+            if summary.deployment_count == 1 { "" } else { "s" },
+        );
+        Some(
+            div()
+                .mx(px(24.0))
+                .mt(px(10.0))
+                .mb(px(4.0))
+                .rounded(px(12.0))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.element_hover)
+                .px(px(14.0))
+                .py(px(12.0))
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .justify_between()
+                        .gap(px(12.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(theme.text_muted)
+                                        .child("Project"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(15.0))
+                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(theme.text)
+                                        .child(SharedString::from(summary.name.clone())),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .font_family(theme.font_mono.clone())
+                                .text_size(px(11.0))
+                                .text_color(theme.text_dim)
+                                .child(SharedString::from(
+                                    summary
+                                        .path
+                                        .clone()
+                                        .unwrap_or_else(|| format!("projects/{}", summary.id)),
+                                )),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme.text_muted)
+                        .child(SharedString::from(meta)),
+                )
+                .when_some(summary.program.as_deref(), |el, program| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(10.0))
+                            .text_size(px(12.0))
+                            .text_color(theme.text)
+                            .child(SharedString::from(format!("Program {program}")))
+                            .when(summary.source_chars > 0, |el| {
+                                el.child(
+                                    div()
+                                        .text_color(theme.text_dim)
+                                        .child(SharedString::from(format!(
+                                            "source {} chars",
+                                            summary.source_chars
+                                        ))),
+                                )
+                            })
+                            .when_some(summary.last_digest.as_deref(), |el, digest| {
+                                el.child(
+                                    div()
+                                        .font_family(theme.font_mono.clone())
+                                        .text_color(theme.text_dim)
+                                        .child(SharedString::from(format!(
+                                            "digest {}",
+                                            truncate_middle(digest, 10)
+                                        ))),
+                                )
+                            }),
+                    )
+                })
+                .when(!deployments.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_muted)
+                                    .child("Deployments"),
+                            )
+                            .children(deployments.into_iter().take(5).enumerate().map(
+                                |(ix, dep)| {
+                                    let addr = dep.address.clone();
+                                    let label = format!(
+                                        "{} · {}",
+                                        truncate_middle(&dep.address, 8),
+                                        dep.network_id
+                                    );
+                                    div()
+                                        .id(SharedString::from(format!("project-dep-{ix}")))
+                                        .rounded(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(5.0))
+                                        .bg(theme.bg)
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap(px(8.0))
+                                        .child(
+                                            div()
+                                                .font_family(theme.font_mono.clone())
+                                                .text_size(px(11.0))
+                                                .text_color(theme.text)
+                                                .child(SharedString::from(label)),
+                                        )
+                                        .on_mouse_up(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.active_address = Some(addr.clone());
+                                                cx.notify();
+                                            }),
+                                        )
+                                },
+                            )),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_interact_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2667,6 +2862,7 @@ impl Render for StudioView {
         let banner = self.render_status_banner(cx);
         let dialog = self.render_gate_dialog(cx);
         let interact = self.render_interact_panel(cx);
+        let project = self.render_project_panel(cx);
         let sidebar = self.render_launch_sidebar(cx);
         let thread = if self.rows.is_empty() {
             div()
@@ -2709,6 +2905,7 @@ impl Render for StudioView {
                             .child("Launch Studio"),
                     )
                     .when_some(banner, |el, banner| el.child(banner))
+                    .when_some(project, |el, panel| el.child(panel))
                     .child(div().flex_1().min_h_0().child(thread))
                     .when_some(interact, |el, panel| el.child(panel))
                     .child(self.render_composer(cx))

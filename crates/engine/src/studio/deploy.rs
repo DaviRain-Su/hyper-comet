@@ -342,6 +342,7 @@ async fn deploy_inner(
             let record = DeploymentRecord {
                 id: Uuid::new_v4().to_string(),
                 launch_id: req.launch_id.clone(),
+                project_id: req.project_id.clone(),
                 module: req.module.clone(),
                 network_id,
                 address,
@@ -611,6 +612,7 @@ mod tests {
         let first = DeploymentRecord {
             id: "d1".into(),
             launch_id: None,
+            project_id: None,
             module: "ModA".into(),
             network_id: "xlayer-testnet".into(),
             address: "0xabc".into(),
@@ -622,6 +624,7 @@ mod tests {
         let second = DeploymentRecord {
             id: "d2".into(),
             launch_id: Some("launch".into()),
+            project_id: Some("studio".into()),
             module: "ModB".into(),
             network_id: "xlayer-testnet".into(),
             address: "0xdef".into(),
