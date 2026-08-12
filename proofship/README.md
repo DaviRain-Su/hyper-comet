@@ -31,10 +31,16 @@ proofship/
     gate.sh                ← 通用门禁:任意 .lean → check/build/inspect(开发/调试用)
     ci-gate-example.sh     ← CI 示例:gate + 断言 gate-report.json(certified)
   templates/               ← Studio 数据驱动模板(RWA / Time-Lock;X Layer first)
-  bridge/server.mjs        ← 本机门禁+agent lanes 的 HTTP 桥(web 版引擎链路参考)
-  relay/                   ← Cloudflare Worker + DO:web 端旁观/下命令给本机引擎(web 版用)
-  toolchain/               ← (gitignored) vendored proof-forge-next + oleans + solc 等
-  inbox/                   ← (gitignored) 默认 staging:门禁/起草的工作目录
+  web/                     ← Phase 3 静态壳
+  … (bridge/relay/toolchain/inbox) …
+```
+
+Preview WebView (desktop):
+
+```bash
+cargo build -p proofship-webview   # wry window; needs libwebkit2gtk-4.1-dev on Linux
+# Studio Preview → Start auto-opens it (or Chromium --app= if binary missing)
+# Override: PROOFSHIP_WEBVIEW=/path/to/proofship-webview
 ```
 
 ## 快速复现（本机门禁）
