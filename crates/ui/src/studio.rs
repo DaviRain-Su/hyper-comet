@@ -20,7 +20,8 @@ use comet_proto::studio::{
 use comet_proto::{
     DeploymentRecord, DeploymentsResponse, EvmNetwork, NetworksResponse, StudioAbiRequest,
     StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse, StudioDeployEvent,
-    StudioDeployRequest, WalletAccount, WalletSource, WalletsResponse,
+    StudioDeployRequest, StudioTemplate, StudioTemplatesResponse, WalletAccount, WalletSource,
+    WalletsResponse,
 };
 use comet_rpc::methods;
 
@@ -523,6 +524,8 @@ pub struct StudioView {
     interact_task: Option<Task<()>>,
     fn_menu_open: bool,
     project_input: Entity<ComposerInput>,
+    templates: Vec<StudioTemplate>,
+    template_menu_open: bool,
     _project_events: Subscription,
     _input_events: Subscription,
     _observe: Subscription,
@@ -581,6 +584,8 @@ impl StudioView {
             interact_task: None,
             fn_menu_open: false,
             project_input,
+            templates: Vec::new(),
+            template_menu_open: false,
             _project_events: project_events,
             _input_events: input_events,
             _observe: observe,
@@ -623,6 +628,10 @@ impl StudioView {
             let deployments = engine
                 .client()
                 .call(methods::STUDIO_DEPLOYMENTS, serde_json::json!({}))
+                .await;
+            let templates = engine
+                .client()
+                .call(methods::STUDIO_TEMPLATES, serde_json::json!({}))
                 .await;
             this.update(cx, |view, cx| {
                 match status {
@@ -705,6 +714,14 @@ impl StudioView {
                         }
                     }
                     Err(err) => view.error = Some(format!("Studio deployments: {err}").into()),
+                }
+                match templates {
+                    Ok(value) => {
+                        if let Ok(resp) = serde_json::from_value::<StudioTemplatesResponse>(value) {
+                            view.templates = resp.templates;
+                        }
+                    }
+                    Err(err) => view.error = Some(format!("Studio templates: {err}").into()),
                 }
                 cx.notify();
             })
@@ -891,15 +908,60 @@ impl StudioView {
         }));
     }
 
+    #[allow(dead_code)]
     fn load_sample(&mut self, cx: &mut Context<Self>) {
-        self.mutate_rows(cx, |rows| {
-            rows.push(draft_row(
-                rows.len(),
-                SAMPLE_MODULE.into(),
-                SAMPLE_SOURCE.into(),
-                Some("bundled offline demo sample".into()),
-            ));
-        });
+        self.apply_template_id("rwa-share-registry", cx);
+    }
+
+    fn apply_template_id(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(template) = self.templates.iter().find(|t| t.id == id).cloned() else {
+            // Bundled offline fallback (engine unavailable / empty list).
+            if id == "rwa-share-registry" {
+                self.composer.update(cx, |input, cx| {
+                    input.set_text(
+                        "Build an RWA share registry: owner-gated issuance up to totalSupply, allowlist-gated transfers, per-transaction cap, and a rolling block-window spending cap.",
+                        cx,
+                    );
+                });
+                self.mutate_rows(cx, |rows| {
+                    rows.push(draft_row(
+                        rows.len(),
+                        SAMPLE_MODULE.into(),
+                        SAMPLE_SOURCE.into(),
+                        Some("bundled RWA template".into()),
+                    ));
+                });
+                self.selected_network_id = Some("xlayer-testnet".into());
+            }
+            return;
+        };
+        self.apply_template(template, cx);
+    }
+
+    fn apply_template(&mut self, template: StudioTemplate, cx: &mut Context<Self>) {
+        self.template_menu_open = false;
+        self.composer
+            .update(cx, |input, cx| input.set_text(template.nl_seed.clone(), cx));
+        self.selected_network_id = Some(template.preferred_network_id.clone());
+        if let Some(source) = template.source.clone() {
+            self.mutate_rows(cx, |rows| {
+                rows.push(draft_row(
+                    rows.len(),
+                    template.module.clone(),
+                    source,
+                    Some(format!("template · {}", template.name)),
+                ));
+            });
+            self.load_abi_for_module(template.module.clone(), cx);
+        }
+        self.deploy_note = Some(
+            format!(
+                "Template `{}` — preferred network {}",
+                template.name, template.preferred_network_id
+            )
+            .into(),
+        );
+        cx.notify();
     }
 
     fn open_gate_dialog(&mut self, cx: &mut Context<Self>) {
@@ -1859,7 +1921,12 @@ impl StudioView {
             .selected_wallet_id
             .as_deref()
             .and_then(|id| self.wallets.iter().find(|w| w.id == id))
-            .is_some_and(|w| w.source == WalletSource::DevEnvKey);
+            .is_some_and(|w| {
+                matches!(
+                    w.source,
+                    WalletSource::DevEnvKey | WalletSource::WalletConnect
+                ) && (w.source != WalletSource::WalletConnect || !w.address.is_empty())
+            });
         let mut network_btn = button_dynamic(network_label, self.networks.is_empty(), &theme)
             .on_mouse_up(
                 gpui::MouseButton::Left,
@@ -1983,6 +2050,76 @@ impl StudioView {
                 )
             })
             .into_any_element()
+    }
+
+    fn render_template_picker(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let label = if self.templates.is_empty() {
+            "Templates".to_string()
+        } else {
+            format!("Templates ({})", self.templates.len())
+        };
+        let mut btn = button_dynamic(label, false, &theme).on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.template_menu_open = !this.template_menu_open;
+                this.lane_menu_open = false;
+                this.network_menu_open = false;
+                this.wallet_menu_open = false;
+                cx.notify();
+            }),
+        );
+        if self.template_menu_open {
+            let rows: Vec<StudioTemplate> = if self.templates.is_empty() {
+                vec![StudioTemplate {
+                    id: "rwa-share-registry".into(),
+                    name: "RWA Share Registry".into(),
+                    description: "Bundled offline".into(),
+                    module: SAMPLE_MODULE.into(),
+                    preferred_network_id: "xlayer-testnet".into(),
+                    nl_seed: String::new(),
+                    ctor_sig: None,
+                    ctor_hints: Vec::new(),
+                    tags: vec!["rwa".into()],
+                    design: None,
+                    source: None,
+                    abi_json: None,
+                }]
+            } else {
+                self.templates.clone()
+            };
+            let menu = div()
+                .w(px(320.0))
+                .max_h(px(280.0))
+                .children(rows.into_iter().enumerate().map(|(ix, tmpl)| {
+                    let id = tmpl.id.clone();
+                    let title = format!("{} · {}", tmpl.name, tmpl.preferred_network_id);
+                    popover::menu_row(&theme, false, format!("studio-tmpl-row-{ix}"))
+                        .id(("studio-tmpl-row", ix))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.apply_template_id(&id, cx);
+                            }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .child(SharedString::from(title))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(theme.text_muted)
+                                        .child(SharedString::from(tmpl.description.clone())),
+                                ),
+                        )
+                }))
+                .into_any_element();
+            btn = btn.child(popover::anchored_menu_above("studio-tmpl-menu", menu, None));
+        }
+        btn.into_any_element()
     }
 
     fn render_lane_picker(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -2141,10 +2278,7 @@ impl StudioView {
                                         gpui::MouseButton::Left,
                                         cx.listener(|this, _, _, cx| this.open_gate_dialog(cx)),
                                     ))
-                                    .child(button("Load sample", false, &theme).on_mouse_up(
-                                        gpui::MouseButton::Left,
-                                        cx.listener(|this, _, _, cx| this.load_sample(cx)),
-                                    )),
+                                    .child(self.render_template_picker(cx)),
                             )
                             .child(button("Submit", !can_submit, &theme).on_mouse_up(
                                 gpui::MouseButton::Left,

@@ -86,6 +86,7 @@ els.connect.addEventListener("click", () => {
 
   socket.addEventListener("open", () => {
     els.disconnect.disabled = false;
+    els.sendPrompt.disabled = false;
     setStatus(`Connected to ${launchId}`, "live");
   });
   socket.addEventListener("message", (ev) => {
@@ -110,9 +111,24 @@ els.connect.addEventListener("click", () => {
     socket = null;
     els.connect.disabled = false;
     els.disconnect.disabled = true;
+    els.sendPrompt.disabled = true;
     setStatus("Socket closed.", "err");
   });
   socket.addEventListener("error", () => setStatus("WebSocket error.", "err"));
+});
+
+els.sendPrompt.addEventListener("click", () => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    setStatus("Connect the viewer first.", "err");
+    return;
+  }
+  const nl = els.prompt.value.trim();
+  if (!nl) {
+    setStatus("Prompt is empty.", "err");
+    return;
+  }
+  socket.send(JSON.stringify({ type: "cmd.prompt", nl, lane: "codex" }));
+  setStatus("Prompt sent to local engine.", "live");
 });
 
 // ---- Phase 3.3 interact stub ----

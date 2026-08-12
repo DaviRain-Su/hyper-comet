@@ -165,14 +165,16 @@ mod tests {
     }
 
     #[test]
-    fn missing_file_yields_two_builtins() {
+    fn missing_file_yields_xlayer_first_builtins() {
         let dir = tempfile::tempdir().unwrap();
         let store = NetworkStore::new(dir.path());
         let loaded = store.load().unwrap();
-        assert_eq!(loaded.len(), 2);
+        assert!(loaded.len() >= 2);
         assert!(loaded.iter().all(|n| n.builtin));
         assert_eq!(loaded[0].id, "xlayer-testnet");
         assert_eq!(loaded[1].id, "xlayer-mainnet");
+        assert!(loaded.iter().any(|n| n.id == "ethereum-sepolia"));
+        assert!(loaded.iter().any(|n| n.id == "base-sepolia"));
     }
 
     #[test]
@@ -236,9 +238,10 @@ mod tests {
         )
         .unwrap();
         let loaded = store.load().unwrap();
-        assert_eq!(loaded.len(), 3);
+        // 4 builtins (X Layer test/main + Sepolia + Base Sepolia) + 1 custom
+        assert_eq!(loaded.len(), 5);
         assert_eq!(loaded[0].id, "xlayer-testnet");
         assert_eq!(loaded[1].id, "xlayer-mainnet");
-        assert_eq!(loaded[2].id, "my-net");
+        assert!(loaded.iter().any(|n| n.id == "my-net"));
     }
 }

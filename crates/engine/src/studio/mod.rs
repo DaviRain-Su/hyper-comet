@@ -13,6 +13,7 @@ pub mod networks;
 pub mod preview;
 pub mod relay;
 pub mod store;
+pub mod templates;
 pub mod walletconnect;
 pub mod wallets;
 
@@ -27,5 +28,6 @@ pub use networks::{NetworkError, NetworkStore};
 pub use preview::StudioPreview;
 pub use relay::{RelayCommand, RelayCommandKind, StudioRelay};
 pub use store::{StoreError, StudioStore};
+pub use templates::{TemplateError, TemplateStore};
 pub use walletconnect::{WalletConnectBridge, resolve_project_id, wait_contract_address};
 pub use wallets::{WalletError, WalletStore};

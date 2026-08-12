@@ -60,8 +60,9 @@ use comet_proto::{
     RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
     StudioDeployRequest, StudioDraftRequest, StudioGateRequest, StudioLaunchRunRequest,
     StudioLaunchesResponse, StudioPreviewStartRequest, StudioPreviewStatus,
-    StudioPutLaunchesRequest, ToolCall, UpsertNetworkRequest, UpsertWalletRequest,
-    WalletConnectStartRequest, WalletConnectStartResponse, WalletsResponse,
+    StudioPutLaunchesRequest, StudioTemplateRequest, StudioTemplatesResponse, ToolCall,
+    UpsertNetworkRequest, UpsertWalletRequest, WalletConnectStartRequest,
+    WalletConnectStartResponse, WalletsResponse,
 };
 use comet_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
@@ -74,8 +75,8 @@ use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
 use crate::studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, WalletConnectBridge, WalletStore,
-    resolve_project_id,
+    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, TemplateStore,
+    WalletConnectBridge, WalletStore, resolve_project_id,
 };
 use crate::terminals::Terminals;
 use crate::uploads::Uploads;
@@ -401,6 +402,7 @@ pub struct EngineRpc {
     studio_preview: StudioPreview,
     wallet_connect: WalletConnectBridge,
     studio_relay: StudioRelay,
+    template_store: TemplateStore,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -430,6 +432,7 @@ impl EngineRpc {
         studio_preview: StudioPreview,
         wallet_connect: WalletConnectBridge,
         studio_relay: StudioRelay,
+        template_store: TemplateStore,
     ) -> Self {
         Self {
             sessions,
@@ -453,6 +456,7 @@ impl EngineRpc {
             studio_preview,
             wallet_connect,
             studio_relay,
+            template_store,
             auth: None,
             links: None,
             updater: None,
@@ -860,6 +864,8 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_PREVIEW_STATUS
             | methods::STUDIO_WC_START
             | methods::STUDIO_WC_STOP
+            | methods::STUDIO_TEMPLATES
+            | methods::STUDIO_TEMPLATE
     )
 }
 
@@ -1459,6 +1465,21 @@ impl RpcService for EngineRpc {
             methods::STUDIO_WC_STOP => {
                 self.wallet_connect.stop().await;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
+            }
+            methods::STUDIO_TEMPLATES => {
+                let templates = self
+                    .template_store
+                    .list()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&StudioTemplatesResponse { templates })
+            }
+            methods::STUDIO_TEMPLATE => {
+                let p: StudioTemplateRequest = parse_params(params)?;
+                let template = self
+                    .template_store
+                    .get(&p.id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&template)
             }
             methods::STUDIO_GATE => {
                 let p: StudioGateRequest = parse_params(params)?;

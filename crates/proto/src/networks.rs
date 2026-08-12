@@ -45,7 +45,8 @@ pub struct RemoveNetworkRequest {
     pub id: String,
 }
 
-/// X Layer testnet (chain 1952) + mainnet (chain 196).
+/// Built-in EVM presets. **X Layer first** (product priority); other testnets
+/// are available for multi-EVM work without changing the default story.
 pub fn builtin_networks() -> Vec<EvmNetwork> {
     vec![
         EvmNetwork {
@@ -66,5 +67,28 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
             currency_symbol: "OKB".into(),
             builtin: true,
         },
+        EvmNetwork {
+            id: "ethereum-sepolia".into(),
+            name: "Ethereum Sepolia".into(),
+            chain_id: 11155111,
+            rpc_url: "https://ethereum-sepolia-rpc.publicnode.com".into(),
+            explorer_url: Some("https://sepolia.etherscan.io".into()),
+            currency_symbol: "ETH".into(),
+            builtin: true,
+        },
+        EvmNetwork {
+            id: "base-sepolia".into(),
+            name: "Base Sepolia".into(),
+            chain_id: 84532,
+            rpc_url: "https://sepolia.base.org".into(),
+            explorer_url: Some("https://sepolia.basescan.org".into()),
+            currency_symbol: "ETH".into(),
+            builtin: true,
+        },
     ]
+}
+
+/// Default network id for new Studio sessions / templates without an override.
+pub fn default_network_id() -> &'static str {
+    "xlayer-testnet"
 }

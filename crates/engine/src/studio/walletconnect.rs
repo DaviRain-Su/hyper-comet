@@ -309,7 +309,7 @@ btn.addEventListener('click', async () => {{
     provider = await EthereumProvider.init({{
       projectId: PROJECT_ID,
       showQrModal: true,
-      chains: [1952, 196, 1],
+      chains: [1952, 196, 11155111, 84532, 1],
       optionalChains: [8453, 42161, 10, 137],
       methods: ['eth_sendTransaction', 'eth_signTransaction', 'personal_sign', 'eth_signTypedData'],
       events: ['chainChanged', 'accountsChanged'],

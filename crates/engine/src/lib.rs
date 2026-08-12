@@ -46,7 +46,8 @@ pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
 pub use studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, WalletConnectBridge, WalletStore,
+    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, TemplateStore,
+    WalletConnectBridge, WalletStore,
 };
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
@@ -186,6 +187,7 @@ pub struct EngineCore {
     pub studio_preview: StudioPreview,
     pub wallet_connect: WalletConnectBridge,
     pub studio_relay: StudioRelay,
+    pub template_store: TemplateStore,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -312,6 +314,7 @@ impl EngineCore {
         let studio_interact = StudioInteract::new(inbox_root, wallet_connect.clone());
         let studio_preview = StudioPreview::new();
         let studio_relay = StudioRelay::new();
+        let template_store = TemplateStore::new(Vec::<PathBuf>::new());
         Ok(Self {
             sessions,
             doc_host,
@@ -333,6 +336,7 @@ impl EngineCore {
             studio_preview,
             wallet_connect,
             studio_relay,
+            template_store,
             uploads,
             agent_accounts,
             device_id,
@@ -494,6 +498,7 @@ impl EngineCore {
             self.studio_preview.clone(),
             self.wallet_connect.clone(),
             self.studio_relay.clone(),
+            self.template_store.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {

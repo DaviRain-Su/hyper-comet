@@ -139,6 +139,8 @@ pub mod methods {
     pub const STUDIO_PREVIEW_STATUS: &str = "StudioPreviewStatus";
     pub const STUDIO_WC_START: &str = "StudioWalletConnectStart";
     pub const STUDIO_WC_STOP: &str = "StudioWalletConnectStop";
+    pub const STUDIO_TEMPLATES: &str = "StudioTemplates";
+    pub const STUDIO_TEMPLATE: &str = "StudioTemplate";
 }
 
 #[derive(Debug, thiserror::Error)]

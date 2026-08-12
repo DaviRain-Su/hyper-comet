@@ -1,0 +1,13 @@
+{
+  "id": "rwa-share-registry",
+  "name": "RWA Share Registry",
+  "description": "Onchain share registry with allowlist, per-tx cap, and rolling window cap. First ProofShip vertical — X Layer first.",
+  "module": "RwaShareRegistry",
+  "preferredNetworkId": "xlayer-testnet",
+  "nlSeed": "Build an RWA share registry: owner-gated issuance up to totalSupply, allowlist-gated transfers, per-transaction cap, and a rolling block-window spending cap.",
+  "ctorSig": "constructor(uint64,uint64,uint64)",
+  "ctorHints": ["totalSupply", "maxPerTx", "windowCap"],
+  "tags": ["rwa", "evm", "xlayer"],
+  "design": "proofship-dapp",
+  "sourceFile": "program.lean"
+}
