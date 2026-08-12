@@ -1,3 +1,5 @@
 [toolchain]
-channel = "stable"
+# >= 1.95: the pinned gpui rev uses std::hint::cold_path (stabilized in 1.95);
+# on 1.94 stable the comet-ui build fails with E0658.
+channel = "1.95.0"
 components = ["rustfmt", "clippy"]
