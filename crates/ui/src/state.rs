@@ -627,7 +627,9 @@ impl AppState {
     pub fn pending_send_started(&self, chat_id: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
         self.pending_sends
             .get(chat_id)
-            .filter(|p| now.signed_duration_since(p.started).num_milliseconds() <= PENDING_SEND_TTL_MS)
+            .filter(|p| {
+                now.signed_duration_since(p.started).num_milliseconds() <= PENDING_SEND_TTL_MS
+            })
             .map(|p| p.started)
     }
 
@@ -755,7 +757,9 @@ impl AppState {
     /// call sites (user request), never words in the tag.
     pub fn space_device_tag(&self, space: &Space, now: DateTime<Utc>) -> (String, bool) {
         let offline = !self.device_online(&space.device_id, now);
-        let device = self.device_name(&space.device_id).unwrap_or("Unknown device");
+        let device = self
+            .device_name(&space.device_id)
+            .unwrap_or("Unknown device");
         (format!("@ {device}"), offline)
     }
 

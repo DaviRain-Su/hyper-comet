@@ -6,7 +6,9 @@ use comet_doc::schema::SessionDoc;
 use loro::LoroDoc;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: rebuild_whale <snapshot.bin>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: rebuild_whale <snapshot.bin>");
     let bytes = std::fs::read(&path).expect("read snapshot");
     let doc = LoroDoc::new();
     doc.import(&bytes).expect("import snapshot");

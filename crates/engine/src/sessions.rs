@@ -442,7 +442,13 @@ impl SessionsEngine {
         let target = lock(&self.inner.runs)
             .get(chat_id)
             .filter(|h| h.steerable)
-            .map(|h| (h.run_id.clone(), h.steer_tx.clone(), h.routed_steers.clone()));
+            .map(|h| {
+                (
+                    h.run_id.clone(),
+                    h.steer_tx.clone(),
+                    h.routed_steers.clone(),
+                )
+            });
         let Some((run_id, steer_tx, ledger)) = target else {
             return Ok(SteerOutcome::NotSteerable);
         };

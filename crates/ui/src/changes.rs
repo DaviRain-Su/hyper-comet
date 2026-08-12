@@ -917,7 +917,10 @@ impl Changes {
             }
             let result = engine
                 .client()
-                .call(methods::GET_CHECKOUT_DIFF, serde_json::Value::Object(params))
+                .call(
+                    methods::GET_CHECKOUT_DIFF,
+                    serde_json::Value::Object(params),
+                )
                 .await;
             this.update(cx, |changes, cx| {
                 if changes.scoped_inflight.as_deref() != Some(key.as_str()) {
@@ -994,9 +997,7 @@ impl Changes {
                 .await;
             this.update(cx, |changes, cx| {
                 // Late results for a superseded diff are re-checked by key.
-                let current = changes
-                    .active_diff(cx)
-                    .map(|d| changes.parse_key(&d));
+                let current = changes.active_diff(cx).map(|d| changes.parse_key(&d));
                 if current.as_deref() != Some(key.as_str()) {
                     return;
                 }
@@ -1509,11 +1510,8 @@ impl Changes {
                 // The 2px row gap every other menu carries — rows straight on
                 // the card abutted, adjacent washes read as one slab (user
                 // report).
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .children(DiffScope::ALL.into_iter().enumerate().map(|(ix, scope)| {
+                div().flex().flex_col().gap(px(2.0)).children(
+                    DiffScope::ALL.into_iter().enumerate().map(|(ix, scope)| {
                         popover::menu_row(
                             theme,
                             scope == current,
@@ -1524,23 +1522,16 @@ impl Changes {
                             this.set_scope(scope, cx);
                             this.close_scope_menu(cx);
                         }))
-                        .child(
-                            div()
-                                .flex_1()
-                                .child(SharedString::from(scope.label())),
-                        )
-                    })),
+                        .child(div().flex_1().child(SharedString::from(scope.label())))
+                    }),
+                ),
             )
             .into_any_element()
     }
 
     /// `{branch} → {base ⌄}` — which ref the branch scope compares against
     /// (t3code's ref strip), inlined into the pane header. Branch scope only.
-    fn render_ref_selector(
-        &mut self,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    fn render_ref_selector(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.scope != DiffScope::Branch {
             return None;
         }
@@ -1550,10 +1541,7 @@ impl Changes {
             .selected_chat_row()
             .and_then(|chat| chat.branch.clone())
             .unwrap_or_else(|| "HEAD".to_string());
-        let base = self
-            .base_ref
-            .clone()
-            .unwrap_or_else(|| "…".to_string());
+        let base = self.base_ref.clone().unwrap_or_else(|| "…".to_string());
         let trigger = div()
             .id("changes-ref-trigger")
             .h(px(22.0))
@@ -1712,9 +1700,9 @@ impl Changes {
         popover::popover_card(theme)
             .w(px(240.0))
             .track_focus(&focus)
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
-                this.ref_menu_key(event, cx)
-            }))
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| this.ref_menu_key(event, cx)),
+            )
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_ref_menu(cx)))
             .flex()
             .flex_col()
@@ -2082,7 +2070,7 @@ impl Render for Changes {
                     .text_color(theme.text_faint)
                     .child(SharedString::from(clean_message(scope, base.as_deref())))
                     .into_any_element(),
-                    DiffPhase::List => {
+                DiffPhase::List => {
                     if self.parsed.is_some() {
                         div()
                             .flex_1()
@@ -2406,9 +2394,8 @@ rename to new_name.rs
 
     #[test]
     fn base_ref_defaults_to_repo_default_then_main() {
-        let branches = |names: &[&str]| -> Vec<String> {
-            names.iter().map(|n| n.to_string()).collect()
-        };
+        let branches =
+            |names: &[&str]| -> Vec<String> { names.iter().map(|n| n.to_string()).collect() };
         // Engine order puts the repo default first — take it when it isn't
         // the checked-out branch itself.
         let b = branches(&["main", "feature"]);

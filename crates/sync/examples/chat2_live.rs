@@ -11,8 +11,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
-use comet_sync::chat_client::{ChatClient, ChatDocSink, CheckpointFetcher};
 use comet_sync::SyncError;
+use comet_sync::chat_client::{ChatClient, ChatDocSink, CheckpointFetcher};
 use futures::future::BoxFuture;
 use loro::{ExportMode, LoroDoc, VersionVector};
 

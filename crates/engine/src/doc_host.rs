@@ -770,20 +770,22 @@ impl DocHost {
                 // pending buffer the join drains — nothing composed during
                 // (or before) the dial is lost to the room.
                 let weak_push = Arc::downgrade(&handle);
-                let sub = doc.doc().subscribe_local_update(Box::new(move |bytes: &Vec<u8>| {
-                    if let Some(handle) = weak_push.upgrade() {
-                        // The buffer push happens WHILE HOLDING the client
-                        // lock (verify pass: releasing it between the None
-                        // check and the push let the join's store+drain
-                        // slip between, orphaning the update forever).
-                        let client_guard = lock(&handle.chat2);
-                        match &*client_guard {
-                            Some(client) => client.enqueue_update(bytes.clone()),
-                            None => lock(&handle.chat2_pending_local).push(bytes.clone()),
+                let sub = doc
+                    .doc()
+                    .subscribe_local_update(Box::new(move |bytes: &Vec<u8>| {
+                        if let Some(handle) = weak_push.upgrade() {
+                            // The buffer push happens WHILE HOLDING the client
+                            // lock (verify pass: releasing it between the None
+                            // check and the push let the join's store+drain
+                            // slip between, orphaning the update forever).
+                            let client_guard = lock(&handle.chat2);
+                            match &*client_guard {
+                                Some(client) => client.enqueue_update(bytes.clone()),
+                                None => lock(&handle.chat2_pending_local).push(bytes.clone()),
+                            }
                         }
-                    }
-                    true
-                }));
+                        true
+                    }));
                 *lock(&handle.chat2_local_sub) = Some(sub);
                 // Re-queue survives the adopt: our own pending commands
                 // become fresh entries in the new lineage (the
@@ -934,7 +936,11 @@ impl DocHost {
         let weak = Arc::downgrade(handle);
         let host = self.clone();
         tokio::spawn(async move {
-            let sink = Arc::new(crate::chat2_host::EngineChatSink::new(&doc, store, chat.clone()));
+            let sink = Arc::new(crate::chat2_host::EngineChatSink::new(
+                &doc,
+                store,
+                chat.clone(),
+            ));
             // The sink holds only a Weak doc ref (a strong one made every
             // chat2 handle read as perma-pinned — LRU eviction dead); this
             // task's own strong ref dies when the join resolves.
@@ -1037,8 +1043,12 @@ impl DocHost {
                                             host.spawn_chat2_checkpoint(&handle, "push-rejected");
                                         }
                                         Ok(_) => {}
-                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                                        Err(tokio::sync::broadcast::error::RecvError::Lagged(
+                                            _,
+                                        )) => {}
+                                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                            return;
+                                        }
                                     }
                                 }
                             });
@@ -1244,12 +1254,7 @@ impl DocHost {
         }
         self.inner
             .store
-            .save_snapshot_with_cursor(
-                chat_id,
-                &snapshot,
-                0,
-                crate::chat2_host::CHAT2_DOC_EPOCH,
-            )
+            .save_snapshot_with_cursor(chat_id, &snapshot, 0, crate::chat2_host::CHAT2_DOC_EPOCH)
             .map_err(|e| e.to_string())?;
         // Registry flip LAST — the cutover signal every device dials by.
         let flipped = self
@@ -1328,7 +1333,12 @@ impl DocHost {
 
     async fn salvage_chat_transcript(&self, chat_id: &str) -> Result<(), String> {
         let handle = self.open(chat_id).map_err(|e| e.to_string())?;
-        if !handle.doc().read_entries().map_err(|e| e.to_string())?.is_empty() {
+        if !handle
+            .doc()
+            .read_entries()
+            .map_err(|e| e.to_string())?
+            .is_empty()
+        {
             return Ok(()); // transcript present — nothing lost
         }
         // Fat source 1: the M3 adopt's rollback copy on disk.
@@ -1357,11 +1367,19 @@ impl DocHost {
         }
         // Re-check emptiness at the last instant: a run that started during
         // the room fetch must not get history interleaved under it.
-        if !handle.doc().read_entries().map_err(|e| e.to_string())?.is_empty() {
+        if !handle
+            .doc()
+            .read_entries()
+            .map_err(|e| e.to_string())?
+            .is_empty()
+        {
             return Err("doc gained entries mid-salvage; aborted".into());
         }
         for entry in &entries {
-            handle.doc().push_message(entry).map_err(|e| e.to_string())?;
+            handle
+                .doc()
+                .push_message(entry)
+                .map_err(|e| e.to_string())?;
         }
         tracing::info!(chat = %chat_id, entries = entries.len(),
             "transcript salvaged into chat2 lineage");
@@ -1424,17 +1442,17 @@ impl DocHost {
         };
         let chat_id = handle.chat_id.clone();
         // Tail publish: cheap, every quiesce tick.
-        if let Ok(tail) = comet_doc::materialize_tail(
-            &handle.doc,
-            now_ms(),
-            comet_doc::TAIL_MESSAGE_COUNT,
-        ) && let Ok(body) = serde_json::to_vec(&tail)
+        if let Ok(tail) =
+            comet_doc::materialize_tail(&handle.doc, now_ms(), comet_doc::TAIL_MESSAGE_COUNT)
+            && let Ok(body) = serde_json::to_vec(&tail)
         {
             let http = self.inner.http.clone();
             let edge_tail = edge.clone();
             let chat = chat_id.clone();
             tokio::spawn(async move {
-                let Some(bearer) = edge_tail.bearer().await else { return };
+                let Some(bearer) = edge_tail.bearer().await else {
+                    return;
+                };
                 let url = format!(
                     "{}/chat2/{}/tail",
                     edge_tail.url.trim_end_matches('/'),
@@ -1848,7 +1866,9 @@ impl DocHost {
         let valid = blob_ref.split_once('/').is_some_and(|(chat, part)| {
             !chat.is_empty()
                 && chat.len() <= 128
-                && chat.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                && chat
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
                 && !part.is_empty()
                 && part.len() <= 200
                 && part
