@@ -1,5 +1,14 @@
 # comet-native — Architecture
 
+> **ProofShip note (2026-08):** this document describes the **app foundation**
+> (engine, gpui UI, sync, harnesses), written when the codebase was the
+> "comet-native" rewrite. The product built on top of it is **ProofShip** — a
+> web3 contract dev/deploy app with the ProofForge machine gate as its kernel.
+> For the product layer see `proofship/README.md` (vision + platform pieces),
+> `docs/proofship-studio.md` (Launch Studio implementation spec), and
+> `docs/product-plan.md` (roadmap). Everything below still holds for the
+> foundation.
+
 A ground-up native rewrite of [comet](../comet) — a multi-device controller for coding agents
 (Claude Code / Codex) — in Rust, with a gpui UI. Fresh app; no backwards compatibility required.
 

@@ -9,7 +9,7 @@
 | 要求 | 状态 | 证据/动作 |
 |---|---|---|
 | 产品包含 AI 元素 | ✅ | 7 个 code agent lanes(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode)经统一 ACP 层起草合约;`crates/harness` + `crates/engine/src/studio/draft.rs` |
-| 部署于 X Layer(赛期测试网) | 🔄 待执行 | `proofship/scripts/deploy-xlayer-testnet.sh`(gate→cast create,env 持钥);需要 funded 测试网 key(水龙头在比赛页有链接) |
+| 部署于 X Layer(赛期测试网) | 🔄 待执行 | `proofship/scripts/deploy-xlayer-testnet.sh`(gate→`cast send --create`,env 持钥);需要 funded 测试网 key(水龙头在比赛页有链接) |
 | 后续主网上线 | ⏳ 承诺 | 同一脚本换 RPC/chainId 即可;README 路线声明 |
 | 独立 X 账号 + 持续运营 | ⏳ 用户动作 | 建号;首发帖文案见 `launch-copy.md` |
 | 官方 X 账号发帖 @XLayerOfficial | ⏳ 用户动作 | `launch-copy.md` 的 X 主帖(EN 主推 + 中文) |
@@ -19,7 +19,8 @@
 
 `video-script-90s.md` 分镜:NL 需求 → agent 起草 ProgramV1 → 机器门禁
 check→build→inspect(真实 digest)→ **修复环**(故意触发 PF-* 诊断,agent 自动修复)
-→ 一键部署 X Layer testnet → 浏览器查合约 →(加分)dapp 交互 issue/transfer。
+→ 一键部署 X Layer testnet → 浏览器查合约。
+(dapp 交互 issue/transfer 当前不可演——合约交互台是 product-plan Phase 2.4,不入镜。)
 
 核心叙事:**"AI drafts the contract. The gate decides if it ships."**
 AI 写得快,门禁决定它能不能上链——fail closed,不过门禁没有制品、没有部署。
@@ -35,7 +36,7 @@ AI 写得快,门禁决定它能不能上链——fail closed,不过门禁没有�
 
 ## 材料清单(docs/competition/)
 
-- `launch-copy.md` — X 主帖(EN/CN)+ 提交表单文案(原黑客松材料,已对齐 @XLayerOfficial 要求)
+- `launch-copy.md` — X 主帖(EN/CN)+ 提交表单文案(已按现产品重写:桌面 app + ACP lanes;合约地址/链接部署后回填)
 - `video-script-90s.md` — 90s 视频分镜与口播(纪律:只说 machine-checked gate,不说 formal verification)
 
 ## 诚实边界(评审问答预案)

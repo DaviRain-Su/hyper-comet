@@ -3,8 +3,9 @@
 > **AI drafts the contract. The gate decides if it ships.**
 > 面向 web3 开发者的产品开发部署 app：任何合约产品，从自然语言到机器门禁到上链。
 
-ProofShip 的本体是一个**本地优先的桌面 app**(gpui 原生 UI + Rust 引擎，见仓库根
-`ARCHITECTURE.md`)，内嵌 **ProofForge 机器门禁**作为合约开发/部署内核：
+ProofShip 的本体是一个**本地优先的桌面 app**(gpui 原生 UI + Rust 引擎；基座架构
+见仓库根 `ARCHITECTURE.md`，Studio 产品层见 `docs/proofship-studio.md`)，
+内嵌 **ProofForge 机器门禁**作为合约开发/部署内核：
 AI agent 起草 ProgramV1 源 → `check → build → inspect` 门禁（不过门禁就没有制品、
 没有部署）→ 部署到目标链（首发 X Layer)。后续提供 **web app**（托管前端 +
 Cloudflare relay 旁观/驱动本机引擎）与纯云端 agent 形态。
