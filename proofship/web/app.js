@@ -3,6 +3,8 @@ const els = {
   launch: document.getElementById("launch"),
   connect: document.getElementById("connect"),
   disconnect: document.getElementById("disconnect"),
+  prompt: document.getElementById("prompt"),
+  sendPrompt: document.getElementById("send-prompt"),
   status: document.getElementById("status"),
   snapshot: document.getElementById("snapshot"),
   events: document.getElementById("events"),
@@ -57,6 +59,7 @@ function disconnect() {
   }
   els.connect.disabled = false;
   els.disconnect.disabled = true;
+  els.sendPrompt.disabled = true;
   setStatus("Disconnected — without a local engine this page is read-only.");
 }
 

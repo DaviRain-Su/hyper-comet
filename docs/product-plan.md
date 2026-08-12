@@ -48,7 +48,7 @@
 | 项 | 内容 | 依赖/验证 |
 |---|---|---|
 | 2.1 网络设置 | settings 新增 Networks 页:X Layer testnet(1952)/mainnet(196)预设 + 自定义 EVM 网络(name/chainId/RPC/explorer/币符号);存 `networks.json`(本地,非同步) | 复用 settings 页模式;单测:预设+自定义往返 |
-| 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | Connect bridge ✅(本机 HTML + `PROOFSHIP_WC_PROJECT_ID`);**会话签名发交易仍待接**(部署暂用 DevEnvKey) |
+| 2.2 钱包连接 | settings Wallets 页 + 部署时选择签名者。**多账户地址簿**(label + address + 来源),与 agent-accounts 的 slot 模式同构:多条记录、部署时指定其一;来源三类:**WalletConnect(Reown)**会话(桌面 QR/deeplink,主路径)/ 观察地址(只读)/ dev env-key 引用(文档明示仅测试网)。**私钥永不落盘、永不进 app 存储**;WC 会话仅存内存 | Connect + **会话签名** ✅(本机 bridge keep-alive + pending `eth_sendTransaction`;`PROOFSHIP_WC_PROJECT_ID`);部署/交互可走 WC |
 | 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | 引擎持 cast/或直接 JSON-RPC(评估后选);e2e:anvil 本地链部署回归 |
 | 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志/交易历史(v1 可链外查 explorer) | schema 单测用回归样本 ABI;桌面面板手测 |
 | 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | launch store 扩字段,向后兼容 |
@@ -64,8 +64,6 @@
 | 3.4 部署(web) | 引擎仍是唯一部署执行者(key 不过 relay;安全纪律不变) |
 
 **进度(2026-08-12):** 3.1 静态壳已落在 `proofship/web/`(relay 旁观 + ABI eth_call stub)。3.2 engine→relay Rust WS 客户端已接(`PROOFSHIP_RELAY`);web prompt 先记 note,完整 StudioLaunchRun 入队下一刀。3.4 待做。
-
-| 2.2 钱包连接 | … | Connect + **会话签名** ✅(bridge 页 keep-alive + pending eth_sendTransaction);部署/交互可走 WC |
 
 ### Phase 4 — 平台账户与云(多用户)
 

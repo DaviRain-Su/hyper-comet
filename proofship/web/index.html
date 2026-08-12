@@ -32,6 +32,13 @@
         <button id="connect" type="button">Connect viewer</button>
         <button id="disconnect" type="button" class="ghost" disabled>Disconnect</button>
       </div>
+      <label class="field">
+        Prompt to local engine
+        <textarea id="prompt" rows="3" placeholder="describe the contract…" spellcheck="true"></textarea>
+      </label>
+      <div class="row">
+        <button id="send-prompt" type="button" class="ghost" disabled>Send prompt</button>
+      </div>
       <p id="status" class="status">Disconnected — without a local engine this page is read-only.</p>
     </section>
 

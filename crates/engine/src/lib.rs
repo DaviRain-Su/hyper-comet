@@ -80,6 +80,70 @@ pub(crate) fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+fn parse_relay_harness(lane: Option<&str>) -> HarnessId {
+    let raw = lane.unwrap_or("codex").trim();
+    let quoted = format!("\"{raw}\"");
+    serde_json::from_str(&quoted).unwrap_or(HarnessId::Codex)
+}
+
+fn mirror_launch_event(relay: &StudioRelay, event: &comet_proto::StudioLaunchRunEvent) {
+    match event {
+        comet_proto::StudioLaunchRunEvent::Draft { event, .. } => {
+            if let comet_proto::StudioDraftEvent::Done {
+                ok: true,
+                module,
+                source,
+                lane,
+                ..
+            } = event
+            {
+                relay.publish(
+                    "draft.ready",
+                    serde_json::json!({
+                        "lane": lane,
+                        "module": module,
+                        "source": source,
+                    }),
+                );
+            }
+        }
+        comet_proto::StudioLaunchRunEvent::Gate { event, .. } => match event {
+            comet_proto::StudioGateEvent::Started { .. } => {
+                relay.publish("gate.start", serde_json::json!({}));
+            }
+            comet_proto::StudioGateEvent::Done { ok, digest, .. } => {
+                relay.publish(
+                    "gate.done",
+                    serde_json::json!({
+                        "ok": ok,
+                        "digests": digest,
+                    }),
+                );
+            }
+            _ => {}
+        },
+        comet_proto::StudioLaunchRunEvent::Done {
+            ok,
+            artifacts,
+            digest,
+            exhausted,
+            ..
+        } => {
+            if *ok {
+                relay.publish(
+                    "artifact.sealed",
+                    serde_json::json!({
+                        "outputSetDigest": digest.output_set_digest,
+                        "files": artifacts,
+                    }),
+                );
+            } else if *exhausted {
+                relay.note("repair exhausted");
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     /// Data directory (default `~/.comet-native`, dev `~/.comet-native-dev`).
@@ -379,17 +443,25 @@ impl EngineCore {
         ONCE.call_once(|| {
             if let Some(mut cmds) = self.studio_relay.start_from_env() {
                 let relay = self.studio_relay.clone();
+                let launch = self.studio_launch.clone();
                 tokio::spawn(async move {
                     while let Some(cmd) = cmds.recv().await {
                         match cmd.kind {
                             crate::studio::RelayCommandKind::Prompt => {
-                                relay.note(&format!(
-                                    "web prompt received (run from desktop Studio to execute): {}",
-                                    cmd.nl.unwrap_or_default()
-                                ));
+                                let nl = cmd.nl.unwrap_or_default();
+                                let harness = parse_relay_harness(cmd.lane.as_deref());
+                                relay.publish(
+                                    "session.open",
+                                    serde_json::json!({ "nl": nl, "harness": harness }),
+                                );
+                                use futures::StreamExt;
+                                let mut stream = launch.launch_run(nl, harness);
+                                while let Some(event) = stream.next().await {
+                                    mirror_launch_event(&relay, &event);
+                                }
                             }
                             crate::studio::RelayCommandKind::Cancel => {
-                                relay.note("web cancel received");
+                                relay.note("web cancel received (active run cancel not yet wired)");
                             }
                         }
                     }
