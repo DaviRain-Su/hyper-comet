@@ -11,9 +11,12 @@ import { DurableObject } from "cloudflare:workers";
 import {
   PLATFORM_DEPLOY_REFUSAL,
   authorizeEngine,
+  authorizeShare,
+  authorizeViewer,
   eventStatePatch,
   isRecord,
   parseViewerCommand,
+  redactSharePayload,
   resolveExecutor,
   shouldRefusePlatformDeploy,
   type CommandMessage,
@@ -26,8 +29,11 @@ import {
 export {
   PLATFORM_DEPLOY_REFUSAL,
   authorizeEngine,
+  authorizeShare,
+  authorizeViewer,
   eventStatePatch,
   parseViewerCommand,
+  redactSharePayload,
   resolveExecutor,
   shouldRefusePlatformDeploy,
 } from "./contract";
@@ -102,18 +108,6 @@ function extractRoomId(pathname: string, prefix: string): string | null {
 
 function isUpgrade(request: Request): boolean {
   return request.headers.get("Upgrade")?.toLowerCase() === "websocket";
-}
-
-function authorizeViewer(env: Env, url: URL): boolean {
-  if (!env.VIEWER_TOKEN) return true;
-  return url.searchParams.get("viewerToken") === env.VIEWER_TOKEN;
-}
-
-function authorizeShare(env: Env, url: URL): boolean {
-  if (env.SHARE_TOKEN) {
-    return url.searchParams.get("token") === env.SHARE_TOKEN;
-  }
-  return authorizeViewer(env, url);
 }
 
 function parseEngineEvent(raw: unknown): EngineEventMessage | null {
@@ -244,35 +238,7 @@ export class SessionRoom extends DurableObject<Env> {
     }
 
     if (request.method === "GET" && url.pathname === "/share") {
-      const gate =
-        this.state.gate === "running"
-          ? { status: "running" }
-          : this.state.gate ?? null;
-      return json({
-        readonly: true,
-        sessionId: this.state.sessionId ?? this.sessionId,
-        share: {
-          gate,
-          artifact: this.state.artifact ?? null,
-          deployment: this.state.deployment ?? null,
-          transcript: this.state.transcript ?? [],
-          notes: this.state.notes ?? [],
-        },
-        tail: this.events
-          .filter((e) =>
-            [
-              "session.user",
-              "session.agent",
-              "session.tool",
-              "session.done",
-              "gate.done",
-              "artifact.sealed",
-              "deploy.done",
-              "note",
-            ].includes(e.kind),
-          )
-          .slice(-SNAPSHOT_TAIL),
-      });
+      return json(redactSharePayload(this.state, this.events, this.sessionId, SNAPSHOT_TAIL));
     }
 
     if (request.method === "GET" && url.pathname === "/ws") {

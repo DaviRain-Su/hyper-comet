@@ -47,6 +47,7 @@ UserExecutor.
 | Script | What |
 |---|---|
 | `npm start` | `tsx src/index.ts` |
+| `npm test` | vitest — extract / module / deploy-refusal / CLI order (no relay) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run build` | emit `dist/` |
 | `npm run start:dist` | `node dist/index.js` |

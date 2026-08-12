@@ -34,10 +34,34 @@ if (params.get("relay")) els.relay.value = params.get("relay");
 if (params.get("session") || params.get("launch")) {
   els.session.value = params.get("session") || params.get("launch");
 }
-if (params.get("viewerToken")) els.viewerToken.value = params.get("viewerToken");
+const initialToken =
+  params.get("shareToken") || params.get("token") || params.get("viewerToken");
+if (initialToken) els.viewerToken.value = initialToken;
 if (params.get("executor") === "platform") {
   const radio = document.querySelector('input[name="executor"][value="platform"]');
   if (radio) radio.checked = true;
+}
+
+const isShareMode =
+  params.get("share") === "1" ||
+  params.get("share") === "true" ||
+  Boolean(params.get("shareToken")) ||
+  (Boolean(params.get("token")) && !params.get("viewerToken"));
+
+if (isShareMode) {
+  document.body.classList.add("share-mode");
+  const badge = document.getElementById("share-badge");
+  if (badge) badge.style.display = "inline-block";
+  const tag = document.getElementById("top-tag");
+  if (tag) {
+    tag.textContent =
+      "Read-only shared snapshot — observe transcript, gate, artifact, and deployment.";
+  }
+  const tokenLabel = document.getElementById("token-label");
+  if (tokenLabel) tokenLabel.textContent = "Share / Viewer token";
+  els.connect.textContent = "Fetch share";
+  els.executorStatus.textContent = "Read-only share mode — writer WebSocket disabled.";
+  setStatus("Read-only share mode — click Fetch share to load snapshot.");
 }
 
 let socket = null;
@@ -199,6 +223,90 @@ function sendCommand(payload) {
   return true;
 }
 
+async function fetchShare() {
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const sessionId = els.session.value.trim();
+  const token = els.viewerToken.value.trim();
+  if (!base || !sessionId) {
+    setStatus("Relay base URL and session id are required.", "err");
+    return;
+  }
+
+  setStatus("Fetching shared snapshot…");
+  els.connect.disabled = true;
+
+  try {
+    const url = new URL(`${base}/api/share/${encodeURIComponent(sessionId)}`);
+    if (token) {
+      url.searchParams.set("token", token);
+      url.searchParams.set("viewerToken", token);
+    }
+    const res = await fetch(url.toString());
+    els.connect.disabled = false;
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        setStatus("Unauthorized — invalid share token.", "err");
+      } else if (res.status === 404) {
+        setStatus(`Session room "${sessionId}" not found.`, "err");
+      } else {
+        setStatus(`Relay returned status ${res.status}.`, "err");
+      }
+      return;
+    }
+
+    const data = await res.json();
+    if (!data || typeof data !== "object") {
+      setStatus("Invalid share response from relay.", "err");
+      return;
+    }
+
+    const share = data.share ?? {};
+    renderSnapshot({
+      readonly: true,
+      sessionId: data.sessionId ?? sessionId,
+      gate: share.gate ?? null,
+      artifact: share.artifact ?? null,
+      deployment: share.deployment ?? null,
+      notes: share.notes ?? [],
+    });
+
+    renderTail(data.tail ?? []);
+    renderTranscriptFromShare(share.transcript ?? []);
+
+    const isEmpty =
+      (!share.transcript || share.transcript.length === 0) &&
+      !share.gate &&
+      !share.artifact &&
+      !share.deployment &&
+      (!data.tail || data.tail.length === 0);
+
+    if (isEmpty) {
+      setStatus(`Connected to relay — empty room for session ${sessionId}.`, "live");
+    } else {
+      setStatus(`Loaded shared snapshot for session ${sessionId}.`, "live");
+    }
+  } catch (err) {
+    els.connect.disabled = false;
+    setStatus(`Offline relay — could not fetch share: ${err.message || err}`, "err");
+  }
+}
+
+function renderTranscriptFromShare(transcript) {
+  els.transcript.innerHTML = "";
+  if (!Array.isArray(transcript) || transcript.length === 0) {
+    const emptyDiv = document.createElement("div");
+    emptyDiv.className = "status";
+    emptyDiv.textContent = "(Empty transcript)";
+    els.transcript.appendChild(emptyDiv);
+    return;
+  }
+  for (const row of transcript) {
+    els.transcript.appendChild(transcriptLine(row.kind ?? "event", row.payload ?? row));
+  }
+  els.transcript.scrollTop = els.transcript.scrollHeight;
+}
+
 els.disconnect.addEventListener("click", disconnect);
 
 for (const radio of document.querySelectorAll('input[name="executor"]')) {
@@ -206,6 +314,10 @@ for (const radio of document.querySelectorAll('input[name="executor"]')) {
 }
 
 els.connect.addEventListener("click", () => {
+  if (isShareMode) {
+    fetchShare();
+    return;
+  }
   const base = els.relay.value.trim().replace(/\/$/, "");
   const sessionId = els.session.value.trim();
   const viewerToken = els.viewerToken.value.trim();
@@ -534,3 +646,7 @@ pfMcp.copy.addEventListener("click", async () => {
     pfMcp.status.className = "status err";
   }
 });
+
+if (isShareMode && els.relay.value.trim() && els.session.value.trim()) {
+  fetchShare();
+}

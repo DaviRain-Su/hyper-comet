@@ -31,6 +31,26 @@ pub struct DeploymentsResponse {
     pub deployments: Vec<DeploymentRecord>,
 }
 
+/// A ProgramV1 source the Sessions Preview pane can gate-and-deploy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioCandidate {
+    pub module: String,
+    pub source: String,
+    /// Filesystem path or `launch:{id}` for store-backed drafts.
+    pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    #[serde(default)]
+    pub certified: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudioCandidatesResponse {
+    pub candidates: Vec<StudioCandidate>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StudioDeployRequest {

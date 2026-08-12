@@ -72,7 +72,7 @@ Returns `{ state, tail, queueDepth }`. Snapshot includes `transcript`,
 GET /api/share/:sessionId?token=…
 ```
 
-Auth: `SHARE_TOKEN` when set; otherwise same as viewer (`VIEWER_TOKEN`).
+Auth: Query parameter `token` matched against `SHARE_TOKEN` when set (the web client also passes `viewerToken` as a fallback). If `SHARE_TOKEN` is unset, falls back to `VIEWER_TOKEN` (`viewerToken` or `token`). When neither is set, local spike requests are accepted.
 Response is redacted — gate / artifact / deployment / transcript only; no
 command queue and no write WebSocket. Full SIWE + permissioned share links
 remain Phase 4.

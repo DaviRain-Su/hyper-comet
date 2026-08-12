@@ -13,6 +13,28 @@
   --sans: "Avenir Next", "Segoe UI", sans-serif;
 }
 
+body.share-mode #executor-fieldset,
+body.share-mode #composer,
+body.share-mode #deploy-panel,
+body.share-mode #cancel,
+body.share-mode #disconnect {
+  display: none !important;
+}
+
+.share-badge {
+  font-size: 0.4em;
+  vertical-align: middle;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  margin-left: 10px;
+  font-family: var(--sans);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 * { box-sizing: border-box; }
 body {
   margin: 0;

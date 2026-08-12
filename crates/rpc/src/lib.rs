@@ -131,6 +131,7 @@ pub mod methods {
     pub const STUDIO_UPSERT_WALLET: &str = "StudioUpsertWallet";
     pub const STUDIO_REMOVE_WALLET: &str = "StudioRemoveWallet";
     pub const STUDIO_DEPLOYMENTS: &str = "StudioDeployments";
+    pub const STUDIO_CANDIDATES: &str = "StudioCandidates";
     pub const STUDIO_DEPLOY: &str = "StudioDeploy";
     pub const STUDIO_ABI: &str = "StudioAbi";
     pub const STUDIO_CALL: &str = "StudioCall";

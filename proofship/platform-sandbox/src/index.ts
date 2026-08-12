@@ -19,9 +19,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { access, constants } from "node:fs/promises";
 import WebSocket from "ws";
+import { extractSource, type ExtractedSource } from "./extract.js";
+import { cliCandidatePaths, refuseDeploy } from "./gate.js";
 
 const MAX_TEXT = 4096;
-const MAX_SOURCE = 64 * 1024;
 const GATE_TIMEOUT_MS = 240_000;
 const BUFFER_CAP = 200;
 
@@ -47,11 +48,6 @@ type DeployCommand = CommandBase & {
 };
 
 type RelayCommand = PromptCommand | CancelCommand | SteerCommand | DeployCommand;
-
-interface ExtractedSource {
-  module: string;
-  source: string;
-}
 
 function env(name: string): string | undefined {
   const v = process.env[name];
@@ -110,43 +106,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validModule(module: string): boolean {
-  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(module);
-}
-
-function looksLikeProgramV1(source: string): boolean {
-  const trimmed = source.trim();
-  return (
-    trimmed.startsWith("import ProofForgeV2") ||
-    /\bimport\s+ProofForgeV2\b/u.test(trimmed)
-  );
-}
-
-/** Pull ProgramV1 from a lean fence or bare source block; infer module. */
-function extractSource(nl: string): ExtractedSource | null {
-  const fence =
-    /```(?:lean|lean4)?\s*\n([\s\S]*?)```/iu.exec(nl) ??
-    /```\s*\n(import\s+ProofForgeV2[\s\S]*?)```/iu.exec(nl);
-
-  let source: string | null = fence?.[1]?.trim() ?? null;
-  if (!source && looksLikeProgramV1(nl)) {
-    // Whole prompt is source (or source-dominant).
-    const start = nl.search(/import\s+ProofForgeV2/u);
-    if (start >= 0) source = nl.slice(start).trim();
-  }
-  if (!source || !looksLikeProgramV1(source)) return null;
-  if (source.length > MAX_SOURCE) return null;
-
-  const programMatch = /\bprogram\s+([A-Za-z][A-Za-z0-9_]*)\s+where\b/u.exec(source);
-  const hintMatch =
-    /(?:--module|--\s*module|module\s*[:=])\s*([A-Za-z][A-Za-z0-9_]*)/iu.exec(nl) ??
-    /(?:^|\n)\s*Module\s*[:=]\s*([A-Za-z][A-Za-z0-9_]*)/iu.exec(nl);
-
-  const module = programMatch?.[1] ?? hintMatch?.[1] ?? null;
-  if (!module || !validModule(module)) return null;
-  return { module, source };
-}
-
 async function pathExists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK);
@@ -157,30 +116,15 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 async function resolveCli(): Promise<string | null> {
-  const explicit = env("PROOF_FORGE_CLI") ?? env("PF_CLI");
-  if (explicit && (await pathExists(explicit))) return explicit;
-
-  const pathEnv = process.env.PATH ?? "";
-  for (const dir of pathEnv.split(":")) {
-    if (!dir) continue;
-    const candidate = join(dir, "proof-forge-next");
+  const candidates = cliCandidatePaths({
+    proofForgeCli: env("PROOF_FORGE_CLI"),
+    pfCli: env("PF_CLI"),
+    pathEnv: process.env.PATH ?? "",
+    proofForgeRoot: env("PROOF_FORGE_ROOT"),
+    cwd: process.cwd(),
+  });
+  for (const candidate of candidates) {
     if (await pathExists(candidate)) return candidate;
-  }
-
-  const forgeRoot = env("PROOF_FORGE_ROOT");
-  if (forgeRoot) {
-    const lake = join(forgeRoot, ".lake/build/bin/proof-forge-next");
-    if (await pathExists(lake)) return lake;
-  }
-
-  // Walk up from cwd for vendored toolchain.
-  let dir = process.cwd();
-  for (let i = 0; i < 6; i++) {
-    const vendored = join(dir, "proofship/toolchain/bin/proof-forge-next");
-    if (await pathExists(vendored)) return vendored;
-    const parent = join(dir, "..");
-    if (parent === dir) break;
-    dir = parent;
   }
   return null;
 }
@@ -517,12 +461,7 @@ class PlatformExecutor {
   }
 
   private handleDeploy(cmd: DeployCommand): void {
-    this.publish("executor.refused", {
-      reason: "platform_executor_cannot_hold_deploy_keys",
-      hint: "Connect a user desktop/VPS executor and deploy there (wallet or DevEnvKey). Keys never live on platform.",
-      networkId: cmd.networkId,
-      module: cmd.module,
-    });
+    this.publish("executor.refused", refuseDeploy(cmd));
   }
 
   private async handlePrompt(cmd: PromptCommand): Promise<void> {

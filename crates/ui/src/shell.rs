@@ -200,6 +200,14 @@ pub enum Route {
     Settings(SettingsSection),
 }
 
+/// Mode for the right pane: Changes (git diff) or Preview (Studio preview / ABI mirror).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum RightPaneMode {
+    #[default]
+    Changes,
+    Preview,
+}
+
 /// Per-chat panel open flags (comet parity: `sessionPanels` — the terminal and
 /// changes panels open *per session*, in memory only; heights and every other
 /// persisted setting stay global). New/unknown chats default to closed.
@@ -207,6 +215,7 @@ pub enum Route {
 pub struct ChatPanels {
     pub terminal_open: bool,
     pub changes_open: bool,
+    pub right_pane_mode: RightPaneMode,
 }
 
 /// The session-scoped panel map. Keys are chat ids; the new-chat canvas uses
@@ -233,6 +242,12 @@ impl SessionPanels {
         let entry = self.map.entry(key.to_string()).or_default();
         entry.changes_open = !entry.changes_open;
         entry.changes_open
+    }
+
+    /// Set the right pane mode for `key`.
+    pub fn set_right_pane_mode(&mut self, key: &str, mode: RightPaneMode) {
+        let entry = self.map.entry(key.to_string()).or_default();
+        entry.right_pane_mode = mode;
     }
 }
 
@@ -959,8 +974,16 @@ impl Shell {
                 panel.update(cx, |panel, cx| panel.set_open(panels.terminal_open, cx));
             }
             if panels.changes_open {
-                let changes = self.changes_pane(cx);
-                changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                match self.right_pane_mode(cx) {
+                    RightPaneMode::Preview => {
+                        let preview = self.studio_preview_pane(cx);
+                        preview.update(cx, |pane, cx| pane.refresh(cx));
+                    }
+                    RightPaneMode::Changes => {
+                        let changes = self.changes_pane(cx);
+                        changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                    }
+                }
             }
         }
         match state.read(cx).connection {
@@ -1021,12 +1044,43 @@ impl Shell {
         }
     }
 
+    pub(super) fn right_pane_mode(&self, cx: &App) -> RightPaneMode {
+        let key = self.panel_key(cx);
+        let mode = self.panels.get(&key).right_pane_mode;
+        if !self.space_git_detected(cx) {
+            RightPaneMode::Preview
+        } else {
+            mode
+        }
+    }
+
+    pub(super) fn set_right_pane_mode(&mut self, mode: RightPaneMode, cx: &mut Context<Self>) {
+        let key = self.panel_key(cx);
+        self.panels.set_right_pane_mode(&key, mode);
+        if self.right_pane_open(cx) {
+            match mode {
+                RightPaneMode::Preview => {
+                    let preview = self.studio_preview_pane(cx);
+                    preview.update(cx, |pane, cx| pane.refresh(cx));
+                }
+                RightPaneMode::Changes => {
+                    let changes = self.changes_pane(cx);
+                    changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                }
+            }
+        }
+        cx.notify();
+    }
+
     fn right_pane_open(&self, cx: &App) -> bool {
         let flag = self.panels.get(&self.panel_key(cx)).changes_open;
         if matches!(self.route, Route::Studio) {
             flag
         } else {
-            flag && self.space_git_detected(cx)
+            match self.right_pane_mode(cx) {
+                RightPaneMode::Changes => flag && self.space_git_detected(cx),
+                RightPaneMode::Preview => flag,
+            }
         }
     }
 
@@ -1058,10 +1112,6 @@ impl Shell {
     }
 
     fn toggle_right_pane(&mut self, cx: &mut Context<Self>) {
-        // Chat: no git → no Changes. Studio: Preview is always available.
-        if !matches!(self.route, Route::Studio) && !self.space_git_detected(cx) {
-            return;
-        }
         let from = self.right_target(cx);
         let key = self.panel_key(cx);
         let open = self.panels.toggle_changes(&key);
@@ -1072,14 +1122,15 @@ impl Shell {
         }
         self.right_tween = Some(WidthTween::new(from, self.right_target(cx)));
         if open {
-            if matches!(self.route, Route::Studio) {
-                let preview = self.studio_preview_pane(cx);
-                preview.update(cx, |pane, cx| pane.refresh(cx));
-            } else {
-                // Lazy: the Changes entity (and its WatchCheckoutDiffs) exists only
-                // once the pane has been opened.
-                let changes = self.changes_pane(cx);
-                changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+            match self.right_pane_mode(cx) {
+                RightPaneMode::Preview => {
+                    let preview = self.studio_preview_pane(cx);
+                    preview.update(cx, |pane, cx| pane.refresh(cx));
+                }
+                RightPaneMode::Changes => {
+                    let changes = self.changes_pane(cx);
+                    changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                }
             }
         }
         cx.notify();
@@ -3566,18 +3617,21 @@ impl Shell {
         }
     }
 
-    /// Right pane — Chat: Changes / Studio: Preview. Hidden by default.
+    /// Right pane — Chat: Changes / Preview. Hidden by default.
     fn render_right_pane(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
         let bg = theme.bg;
         let content: AnyElement = if self.right_pane_open(cx) {
-            if matches!(self.route, Route::Studio) {
-                self.studio_preview_pane(cx).into_any_element()
-            } else {
-                let changes = self.changes_pane(cx);
-                // Idempotent — also covers a persisted-open pane on boot.
-                changes.update(cx, |changes, cx| changes.ensure_watch(cx));
-                changes.into_any_element()
+            match self.right_pane_mode(cx) {
+                RightPaneMode::Preview => {
+                    self.studio_preview_pane(cx).into_any_element()
+                }
+                RightPaneMode::Changes => {
+                    let changes = self.changes_pane(cx);
+                    // Idempotent — also covers a persisted-open pane on boot.
+                    changes.update(cx, |changes, cx| changes.ensure_watch(cx));
+                    changes.into_any_element()
+                }
             }
         } else {
             gpui::Empty.into_any_element()
@@ -4624,10 +4678,20 @@ mod tests {
             panels.get("a"),
             ChatPanels {
                 terminal_open: true,
-                changes_open: true
+                changes_open: true,
+                right_pane_mode: RightPaneMode::Changes,
             }
         );
         assert_eq!(panels.get("b"), ChatPanels::default());
+    }
+
+    #[test]
+    fn session_panels_right_pane_mode_is_chat_scoped() {
+        let mut panels = SessionPanels::default();
+        assert_eq!(panels.get("a").right_pane_mode, RightPaneMode::Changes);
+        panels.set_right_pane_mode("a", RightPaneMode::Preview);
+        assert_eq!(panels.get("a").right_pane_mode, RightPaneMode::Preview);
+        assert_eq!(panels.get("b").right_pane_mode, RightPaneMode::Changes);
     }
 
     // ---- sidebar resort FLIP diff (§1.6) ----

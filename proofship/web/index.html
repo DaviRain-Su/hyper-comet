@@ -8,8 +8,8 @@
 </head>
 <body>
   <header class="top">
-    <div class="brand">ProofShip</div>
-    <p class="tag">Sessions on the web — observe transcript, send prompts. Code and keys stay on the executor.</p>
+    <div class="brand">ProofShip <span id="share-badge" class="share-badge" style="display:none">Read-Only Share</span></div>
+    <p id="top-tag" class="tag">Sessions on the web — observe transcript, send prompts. Code and keys stay on the executor.</p>
   </header>
 
   <main class="layout">
@@ -29,10 +29,10 @@
         <input id="session" type="text" placeholder="session uuid" spellcheck="false"/>
       </label>
       <label class="field">
-        Viewer token <span class="hint">(optional)</span>
+        <span id="token-label">Viewer token</span> <span class="hint">(optional)</span>
         <input id="viewer-token" type="password" placeholder="when VIEWER_TOKEN is set" spellcheck="false" autocomplete="off"/>
       </label>
-      <fieldset class="executor">
+      <fieldset id="executor-fieldset" class="executor">
         <legend>Executor</legend>
         <label class="radio"><input type="radio" name="executor" value="user" checked/> My desktop / VPS</label>
         <label class="radio"><input type="radio" name="executor" value="platform"/> Platform (Sandbox)</label>
@@ -49,7 +49,7 @@
     <section class="panel session-panel">
       <h2>Transcript</h2>
       <div id="transcript" class="transcript" aria-live="polite"></div>
-      <div class="composer">
+      <div id="composer" class="composer">
         <label class="field">
           Prompt
           <textarea id="prompt" rows="3" placeholder="describe the contract…" spellcheck="true"></textarea>
@@ -61,7 +61,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section id="deploy-panel" class="panel">
       <h2>Deploy (UserExecutor only)</h2>
       <p class="lede">
         Sends <code>cmd.deploy</code> to your desktop/VPS. Platform refuses keyed deploy.

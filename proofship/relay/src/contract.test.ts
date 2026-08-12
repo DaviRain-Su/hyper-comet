@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   PLATFORM_DEPLOY_REFUSAL,
   authorizeEngine,
+  authorizeShare,
+  authorizeViewer,
   eventStatePatch,
   parseViewerCommand,
+  redactSharePayload,
   resolveExecutor,
   shouldRefusePlatformDeploy,
   type SessionState,
+  type StoredEvent,
 } from "./contract";
 
 describe("parseViewerCommand", () => {
@@ -162,6 +166,88 @@ describe("authorizeEngine", () => {
     expect(
       authorizeEngine({ ENGINE_TOKEN: "eng" }, new URL("https://x/?token=nope")),
     ).toEqual({ ok: false });
+  });
+});
+
+describe("authorizeViewer", () => {
+  it("accepts any viewer when VIEWER_TOKEN is unset", () => {
+    expect(authorizeViewer({}, new URL("https://x/"))).toBe(true);
+  });
+
+  it("requires matching viewerToken or token query param when VIEWER_TOKEN is set", () => {
+    const env = { VIEWER_TOKEN: "v123" };
+    expect(authorizeViewer(env, new URL("https://x/?viewerToken=v123"))).toBe(true);
+    expect(authorizeViewer(env, new URL("https://x/?token=v123"))).toBe(true);
+    expect(authorizeViewer(env, new URL("https://x/?viewerToken=wrong"))).toBe(false);
+    expect(authorizeViewer(env, new URL("https://x/"))).toBe(false);
+  });
+});
+
+describe("authorizeShare", () => {
+  it("when SHARE_TOKEN is set, only matching token query passes (accepting viewerToken fallback)", () => {
+    const env = { SHARE_TOKEN: "s123" };
+    expect(authorizeShare(env, new URL("https://x/?token=s123"))).toBe(true);
+    expect(authorizeShare(env, new URL("https://x/?viewerToken=s123"))).toBe(true);
+    expect(authorizeShare(env, new URL("https://x/?token=wrong"))).toBe(false);
+    expect(authorizeShare(env, new URL("https://x/"))).toBe(false);
+  });
+
+  it("when SHARE_TOKEN is unset and VIEWER_TOKEN is set, accepts viewer token", () => {
+    const env = { VIEWER_TOKEN: "v123" };
+    expect(authorizeShare(env, new URL("https://x/?token=v123"))).toBe(true);
+    expect(authorizeShare(env, new URL("https://x/?viewerToken=v123"))).toBe(true);
+    expect(authorizeShare(env, new URL("https://x/?token=wrong"))).toBe(false);
+    expect(authorizeShare(env, new URL("https://x/"))).toBe(false);
+  });
+
+  it("when both SHARE_TOKEN and VIEWER_TOKEN are unset, accepts any local spike request", () => {
+    expect(authorizeShare({}, new URL("https://x/"))).toBe(true);
+    expect(authorizeShare({}, new URL("https://x/?token=anything"))).toBe(true);
+  });
+
+  it("rejects wrong tokens", () => {
+    const envWithShare = { SHARE_TOKEN: "secret-share" };
+    expect(authorizeShare(envWithShare, new URL("https://x/?token=bad"))).toBe(false);
+
+    const envWithViewer = { VIEWER_TOKEN: "secret-viewer" };
+    expect(authorizeShare(envWithViewer, new URL("https://x/?token=bad"))).toBe(false);
+  });
+});
+
+describe("redactSharePayload", () => {
+  it("redacts state and filters allowed event kinds for tail", () => {
+    const state: SessionState = {
+      sessionId: "sess-100",
+      gate: "running",
+      artifact: { digest: "0x123" },
+      deployment: { address: "0xabc" },
+      transcript: [{ kind: "session.user", payload: { text: "hello" } }],
+      notes: [{ text: "note1" }],
+    };
+
+    const events: StoredEvent[] = [
+      { seq: 1, ts: "t1", kind: "session.open", payload: {} },
+      { seq: 2, ts: "t2", kind: "session.user", payload: { text: "hello" } },
+      { seq: 3, ts: "t3", kind: "executor.online", payload: {} },
+      { seq: 4, ts: "t4", kind: "gate.done", payload: { ok: true } },
+    ];
+
+    const payload = redactSharePayload(state, events, "sess-fallback");
+    expect(payload).toEqual({
+      readonly: true,
+      sessionId: "sess-100",
+      share: {
+        gate: { status: "running" },
+        artifact: { digest: "0x123" },
+        deployment: { address: "0xabc" },
+        transcript: [{ kind: "session.user", payload: { text: "hello" } }],
+        notes: [{ text: "note1" }],
+      },
+      tail: [
+        { seq: 2, ts: "t2", kind: "session.user", payload: { text: "hello" } },
+        { seq: 4, ts: "t4", kind: "gate.done", payload: { ok: true } },
+      ],
+    });
   });
 });
 

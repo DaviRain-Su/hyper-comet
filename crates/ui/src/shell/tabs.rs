@@ -122,7 +122,7 @@ impl Shell {
         // the pane itself would sit under the drag region and never see a
         // click. Closed, it is just the stable open/close toggle. Hidden on
         // the new-session canvas (user request) — nothing to diff yet.
-        let takeover = git && !on_canvas && self.right_pane_open(cx) && self.right_pane_expanded;
+        let takeover = !on_canvas && self.right_pane_open(cx) && self.right_pane_expanded;
         // In takeover the title hides and the strip owns the whole band, so
         // the row's left inset pulls back to the sidebar seam — the title
         // inset would push the scope dropdown off the pane's own left gutter
@@ -144,7 +144,7 @@ impl Shell {
         } else {
             content_left
         };
-        let trailing: Option<gpui::AnyElement> = if !git || on_canvas {
+        let trailing: Option<gpui::AnyElement> = if on_canvas {
             None
         } else if self.right_pane_open(cx) {
             let right_now = self.eval_tween(self.right_tween, self.right_target(cx));
@@ -153,9 +153,51 @@ impl Shell {
             // wider than what's left after it overflows and clips at the right
             // edge (flex_none never shrinks) — cap to the available width.
             let avail = self.viewport_width - row_left - pr;
-            let controls = self
-                .changes_pane(cx)
-                .update(cx, |changes, cx| changes.render_header_controls(cx));
+            let current_mode = self.right_pane_mode(cx);
+            let changes_controls = if current_mode == RightPaneMode::Changes {
+                Some(
+                    self.changes_pane(cx)
+                        .update(cx, |changes, cx| changes.render_header_controls(cx)),
+                )
+            } else {
+                None
+            };
+
+            let has_controls = changes_controls.is_some();
+            let changes_chip = right_pane_tab_chip(
+                "right-pane-tab-changes",
+                "Changes",
+                current_mode == RightPaneMode::Changes,
+                !git,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.set_right_pane_mode(RightPaneMode::Changes, cx);
+                }),
+            );
+
+            let preview_chip = right_pane_tab_chip(
+                "right-pane-tab-preview",
+                "Preview",
+                current_mode == RightPaneMode::Preview,
+                false,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.set_right_pane_mode(RightPaneMode::Preview, cx);
+                }),
+            );
+
+            let mode_tabs = div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(2.0))
+                .p(px(2.0))
+                .rounded(px(6.0))
+                .bg(crate::theme::wash(0.04))
+                .child(changes_chip)
+                .child(preview_chip);
+
             Some(
                 div()
                     .flex_none()
@@ -173,16 +215,18 @@ impl Shell {
                     // gutter, so the scope label sits flush over the stats
                     // strip below.
                     .pl(px(8.0))
-                    // Clipped: a long base-ref name must truncate inside the
-                    // controls, never paint under the buttons to the right.
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .overflow_hidden()
-                            .child(controls),
-                    )
+                    .child(mode_tabs)
+                    .when_some(changes_controls, |el, controls| {
+                        el.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .h_full()
+                                .overflow_hidden()
+                                .child(controls),
+                        )
+                    })
+                    .when(!has_controls, |el| el.child(div().flex_1()))
                     .child(header_icon_button(
                         "expand-changes",
                         icons::EXPAND_ARROWS,
@@ -274,6 +318,75 @@ impl Shell {
         // separation; the glass gutter shows between.
         let bar = div().h(px(Theme::TITLEBAR_HEIGHT)).flex_none().child(inner);
         self.titlebar_drag_region("chat-titlebar", bar, cx)
+            .into_any_element()
+    }
+}
+
+fn right_pane_tab_chip(
+    id: &'static str,
+    label: &'static str,
+    active: bool,
+    disabled: bool,
+    theme: &Theme,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let fade_key = format!("right-pane-tab-{id}");
+    let (bg, text_color, fw) = if active {
+        (
+            crate::theme::wash(0.12),
+            theme.text,
+            gpui::FontWeight::MEDIUM,
+        )
+    } else if disabled {
+        (
+            crate::theme::wash(0.0),
+            theme.text_muted.opacity(0.4),
+            gpui::FontWeight::NORMAL,
+        )
+    } else {
+        (
+            crate::theme::wash(0.0),
+            theme.text_muted,
+            gpui::FontWeight::NORMAL,
+        )
+    };
+
+    let el = div()
+        .id(id)
+        .h(px(22.0))
+        .px(px(8.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.0))
+        .bg(bg)
+        .child(
+            div()
+                .text_size(px(11.5))
+                .font_weight(fw)
+                .text_color(text_color)
+                .child(SharedString::from(label)),
+        );
+
+    if disabled {
+        el.into_any_element()
+    } else {
+        el.cursor_pointer()
+            .bg(motion::hover_blend(
+                &fade_key,
+                bg,
+                crate::theme::wash(0.10),
+            ))
+            .on_hover(motion::hover_listener(fade_key))
+            .occlude()
+            .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+                window.prevent_default()
+            })
+            .on_click(move |event, window, cx| {
+                cx.stop_propagation();
+                on_click(event, window, cx)
+            })
             .into_any_element()
     }
 }

@@ -58,8 +58,9 @@ use comet_doc::{MessagePart, SessionCommandPayload};
 use comet_proto::{
     ChatConfig, HarnessId, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
     RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
-    StudioDeployRequest, StudioDraftRequest, StudioGateRequest, StudioLaunchRunRequest,
-    StudioLaunchesResponse, StudioLogsRequest, StudioPreviewStartRequest, StudioPreviewStatus,
+    StudioCandidatesResponse, StudioDeployRequest, StudioDraftRequest, StudioGateRequest,
+    StudioLaunchRunRequest, StudioLaunchesResponse, StudioLogsRequest, StudioPreviewStartRequest,
+    StudioPreviewStatus,
     StudioPutLaunchesRequest, StudioTemplateRequest, StudioTemplatesResponse, ToolCall,
     UpsertNetworkRequest, UpsertWalletRequest, WalletConnectStartRequest,
     WalletConnectStartResponse, WalletsResponse,
@@ -856,6 +857,7 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_UPSERT_WALLET
             | methods::STUDIO_REMOVE_WALLET
             | methods::STUDIO_DEPLOYMENTS
+            | methods::STUDIO_CANDIDATES
             | methods::STUDIO_DEPLOY
             | methods::STUDIO_ABI
             | methods::STUDIO_CALL
@@ -1346,6 +1348,18 @@ impl RpcService for EngineRpc {
                     .load()
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&comet_proto::DeploymentsResponse { deployments })
+            }
+            methods::STUDIO_CANDIDATES => {
+                let launches = self
+                    .studio_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                let mut roots = Vec::new();
+                if let Some(root) = self.studio_gate.project_root() {
+                    roots.push(root);
+                }
+                let candidates = crate::studio::discover_candidates(&roots, &launches);
+                RpcReply::value(&StudioCandidatesResponse { candidates })
             }
             methods::STUDIO_DEPLOY => {
                 let p: StudioDeployRequest = parse_params(params)?;

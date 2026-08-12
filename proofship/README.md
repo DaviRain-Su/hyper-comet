@@ -89,6 +89,7 @@ CLI 四级解析:`PF_CLI` → PATH → `PROOF_FORGE_ROOT/.lake/build/bin` →
 ## 路线
 
 - ✅ 本地 GUI app 基座（多设备同步、多 agent harness、终端/diff 面板）
-- ✅ Launch Studio 原生面板（NL → agent 起草 → 门禁；失败时 PF-* 诊断回灌修复，最多 4 轮；通过后展示制品）
+- ✅ Sessions Agent 对话与机器门禁（NL → agent 起草 → pf_check/pf_build 门禁；失败时 PF-* 诊断回灌修复；通过后展示制品与部署）
+- ✅ Preview & Interact 界面（Phase 2.4 引擎 preview ABI 镜像 + 测试网合约交互台）
 - ⏳ web app(Cloudflare 托管前端 + relay,`relay/` 为 seam)
 - ⏳ 纯云端 agent 形态（pi/其他 lane 的托管执行）

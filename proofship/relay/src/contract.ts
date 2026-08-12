@@ -86,6 +86,12 @@ export interface EngineAuthEnv {
   DEVICE_TOKENS?: string;
 }
 
+/** Subset of Worker env used for viewer and share token checks. */
+export interface ViewerAuthEnv {
+  VIEWER_TOKEN?: string;
+  SHARE_TOKEN?: string;
+}
+
 export const MAX_NOTES = 40;
 export const MAX_TRANSCRIPT = 100;
 
@@ -131,6 +137,69 @@ export function authorizeEngine(
     return { ok: true, deviceId };
   }
   return { ok: false };
+}
+
+export function authorizeViewer(env: ViewerAuthEnv, url: URL): boolean {
+  if (!env.VIEWER_TOKEN) return true;
+  const token = url.searchParams.get("viewerToken") ?? url.searchParams.get("token");
+  return token === env.VIEWER_TOKEN;
+}
+
+export function authorizeShare(env: ViewerAuthEnv, url: URL): boolean {
+  if (env.SHARE_TOKEN) {
+    const token = url.searchParams.get("token") ?? url.searchParams.get("viewerToken");
+    return token === env.SHARE_TOKEN;
+  }
+  return authorizeViewer(env, url);
+}
+
+export interface SharePayload {
+  readonly: true;
+  sessionId: string;
+  share: {
+    gate: unknown;
+    artifact: unknown;
+    deployment: unknown;
+    transcript: unknown[];
+    notes: unknown[];
+  };
+  tail: StoredEvent[];
+}
+
+export const SHARE_ALLOWED_EVENT_KINDS = [
+  "session.user",
+  "session.agent",
+  "session.tool",
+  "session.done",
+  "gate.done",
+  "artifact.sealed",
+  "deploy.done",
+  "note",
+] as const;
+
+export function redactSharePayload(
+  state: SessionState,
+  events: StoredEvent[] = [],
+  sessionIdFallback = "",
+  tailLimit = 80,
+): SharePayload {
+  const gate = state.gate === "running" ? { status: "running" } : state.gate ?? null;
+  const tail = events
+    .filter((e) => (SHARE_ALLOWED_EVENT_KINDS as readonly string[]).includes(e.kind))
+    .slice(-tailLimit);
+
+  return {
+    readonly: true,
+    sessionId: state.sessionId ?? sessionIdFallback,
+    share: {
+      gate,
+      artifact: state.artifact ?? null,
+      deployment: state.deployment ?? null,
+      transcript: Array.isArray(state.transcript) ? state.transcript : [],
+      notes: Array.isArray(state.notes) ? state.notes : [],
+    },
+    tail,
+  };
 }
 
 export function parseViewerCommand(raw: unknown): CommandMessage | null {

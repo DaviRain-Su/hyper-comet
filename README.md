@@ -22,7 +22,8 @@ between the draft and the chain:
 
 - **Agent drafting, your lane** — one ACP (Agent Client Protocol) layer drives
   whichever agent CLI you already use: Claude Code, Codex, Grok Build, Hermes,
-  Pi, Cursor, OpenCode (`crates/harness`).
+  Pi, Cursor, OpenCode (`crates/harness`). In **Sessions**, the agent is automatically
+  injected with the ProofForge skill and stdio MCP (`pf_check` / `pf_build` / `pf_artifacts`).
 - **The gate is the authority** — semantic checks with `PF-*` diagnostics that
   feed back into the agent as a bounded repair loop, then EVM build and an
   exact-disk-closure inspect with content digests. Failing drafts produce
@@ -54,8 +55,7 @@ PF_XLAYER_CONFIRM=yes PF_XLAYER_PRIVATE_KEY_ENV=PF_XLAYER_KEY \
   'constructor(uint64,uint64,uint64)' 1000000 50000 100000
 ```
 
-The desktop app (Rust + gpui): `cargo run -p comet` — sidebar **Studio** view
-runs NL → agent draft → gate live; see `docs/proofship-studio.md`.
+The desktop app (Rust + gpui): `cargo run -p comet` — sidebar **Sessions** runs NL → agent draft with ProofForge skill + MCP (`pf_check` / `pf_build` / `pf_artifacts`) → machine gate; engine services power gate/deploy/preview; see `docs/proofship-studio.md`.
 
 ## Repository map
 

@@ -117,6 +117,11 @@ impl StudioGate {
         Ok(())
     }
 
+    /// Staging project root (`inbox_root` or `<repo>/proofship/inbox`).
+    pub fn project_root(&self) -> Option<PathBuf> {
+        self.resolve().ok().map(|resolved| resolved.project_root)
+    }
+
     pub fn status(&self) -> StudioStatusResponse {
         match self.resolve() {
             Ok(resolved) => StudioStatusResponse {
