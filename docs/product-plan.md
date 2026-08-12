@@ -54,7 +54,7 @@
 | 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
 | 2.6 Studio Preview | 右侧栏在 Studio 路由下切到 **Preview**(不再只是 git Changes):ABI→自包含 dapp HTML,引擎本机 HTTP 预览;`Open in browser` + 应用内 gpui 镜像。对标 Codex 的 app preview。WebView 内嵌为后续切片 | ✅ HTTP Preview;WebView 后置 |
 
-**本地进度(2026-08-12):** Phase 2 主路径已齐。剩余本地 polish:Preview WebView 内嵌、交互台链上事件日志、第二个模板、多链 deploy lane。Web/账户(Phase 3–4)后置。
+**本地进度(2026-08-12):** Phase 2 主路径已齐。模板含 RWA + Time-Lock Payout;`ci-gate-example.sh` 覆盖 gate-report CI 断言。剩余 polish:Preview WebView 真内嵌、交互台链上事件日志、多链 deploy lane。Web/账户(Phase 3–4)后置。
 
 ### Phase 3 — web app(Cloudflare 托管)
 
@@ -81,10 +81,10 @@
 
 | 项 | 内容 |
 |---|---|
-| 5.1 模板体系 | 数据驱动 vertical 模板(首个:RWA 份额登记) ✅ `proofship/templates/` + `StudioTemplates` RPC;设计令牌借 Open Design 的 DESIGN.md 思路(非 Vue 运行时);模板市场后置 |
+| 5.1 模板体系 | 数据驱动 vertical 模板(RWA 份额登记 + Time-Lock Payout) ✅ `proofship/templates/` + `StudioTemplates` RPC;设计令牌借 Open Design 的 DESIGN.md 思路(非 Vue 运行时);模板市场后置 |
 | 5.2 proof badge | 把门禁**已包含**的同文件 theorem certification 暴露为可见"certified"徽章 ✅(gate card + `digest.certified` + `gate-report.json`;诚实边界不变) |
 | 5.3 多链 lanes | solana(sbpf 已 vendor)/aleo(leo 已 vendor)/noir(nargo 已 vendor)/near/ton(wat2wasm 已 vendor)/cosmwasm,按 ProofForge 目标逐个接 |
-| 5.4 CI | `gate.sh` 徽章/gate-report 嵌入 README(`gate-report.json` 已落地);CI 集成示例待补 |
+| 5.4 CI | `gate.sh` + `ci-gate-example.sh` 断言 `gate-report.json` ✅;README badge 示例已补 |
 
 ## 3. 不变量(任何阶段不破坏)
 

@@ -146,29 +146,60 @@ fn load_dir(root: &Path) -> Result<Vec<StudioTemplate>, TemplateError> {
     Ok(out)
 }
 
-/// Always-available golden template (works even if cwd has no `proofship/templates`).
+/// Always-available golden templates (works even if cwd has no `proofship/templates`).
 fn bundled_templates() -> Vec<StudioTemplate> {
-    vec![StudioTemplate {
-        id: "rwa-share-registry".into(),
-        name: "RWA Share Registry".into(),
-        description: "Onchain share registry with allowlist, per-tx cap, and rolling window cap. X Layer first."
-            .into(),
-        module: "RwaShareRegistry".into(),
-        preferred_network_id: "xlayer-testnet".into(),
-        nl_seed: "Build an RWA share registry: owner-gated issuance up to totalSupply, allowlist-gated transfers, per-transaction cap, and a rolling block-window spending cap.".into(),
-        ctor_sig: Some("constructor(uint64,uint64,uint64)".into()),
-        ctor_hints: vec![
-            "totalSupply".into(),
-            "maxPerTx".into(),
-            "windowCap".into(),
-        ],
-        tags: vec!["rwa".into(), "evm".into(), "xlayer".into()],
-        design: Some("proofship-dapp".into()),
-        source: Some(include_str!("../../../../proofship/templates/rwa-share-registry/program.lean").into()),
-        abi_json: Some(
-            include_str!("../../../../proofship/templates/rwa-share-registry/abi.json").into(),
-        ),
-    }]
+    vec![
+        StudioTemplate {
+            id: "rwa-share-registry".into(),
+            name: "RWA Share Registry".into(),
+            description: "Onchain share registry with allowlist, per-tx cap, and rolling window cap. X Layer first."
+                .into(),
+            module: "RwaShareRegistry".into(),
+            preferred_network_id: "xlayer-testnet".into(),
+            nl_seed: "Build an RWA share registry: owner-gated issuance up to totalSupply, allowlist-gated transfers, per-transaction cap, and a rolling block-window spending cap.".into(),
+            ctor_sig: Some("constructor(uint64,uint64,uint64)".into()),
+            ctor_hints: vec![
+                "totalSupply".into(),
+                "maxPerTx".into(),
+                "windowCap".into(),
+            ],
+            tags: vec!["rwa".into(), "evm".into(), "xlayer".into()],
+            design: Some("proofship-dapp".into()),
+            source: Some(
+                include_str!("../../../../proofship/templates/rwa-share-registry/program.lean")
+                    .into(),
+            ),
+            abi_json: Some(
+                include_str!("../../../../proofship/templates/rwa-share-registry/abi.json").into(),
+            ),
+        },
+        StudioTemplate {
+            id: "time-lock-payout".into(),
+            name: "Time-Lock Payout".into(),
+            description:
+                "Owner-configured beneficiary claim after a block-height unlock. X Layer first."
+                    .into(),
+            module: "TimeLockPayout".into(),
+            preferred_network_id: "xlayer-testnet".into(),
+            nl_seed: "Build a time-lock payout: owner sets unlock block height and amount, can assign a beneficiary, and only that beneficiary may claim once the unlock height is reached.".into(),
+            ctor_sig: Some("constructor(uint64,uint64)".into()),
+            ctor_hints: vec!["unlockHeight".into(), "amount".into()],
+            tags: vec![
+                "payout".into(),
+                "timelock".into(),
+                "evm".into(),
+                "xlayer".into(),
+            ],
+            design: Some("proofship-dapp".into()),
+            source: Some(
+                include_str!("../../../../proofship/templates/time-lock-payout/program.lean")
+                    .into(),
+            ),
+            abi_json: Some(
+                include_str!("../../../../proofship/templates/time-lock-payout/abi.json").into(),
+            ),
+        },
+    ]
 }
 
 #[cfg(test)]
@@ -184,5 +215,17 @@ mod tests {
         assert_eq!(rwa.preferred_network_id, "xlayer-testnet");
         assert!(rwa.source.as_ref().unwrap().contains("import ProofForgeV2"));
         assert!(rwa.abi_json.as_ref().unwrap().contains("totalSupply"));
+    }
+
+    #[test]
+    fn bundled_timelock_is_second_vertical() {
+        let store = TemplateStore::new(Vec::<PathBuf>::new());
+        let tmpl = store.get("time-lock-payout").unwrap();
+        assert_eq!(tmpl.module, "TimeLockPayout");
+        assert_eq!(tmpl.preferred_network_id, "xlayer-testnet");
+        assert!(tmpl.source.as_ref().unwrap().contains("program TimeLockPayout"));
+        assert!(tmpl.abi_json.as_ref().unwrap().contains("setBeneficiary"));
+        let list = store.list().unwrap();
+        assert!(list.iter().any(|t| t.id == "time-lock-payout"));
     }
 }

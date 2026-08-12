@@ -226,7 +226,7 @@ impl Render for StudioPreviewPane {
                             .text_size(px(11.0))
                             .text_color(theme.text_muted)
                             .child(SharedString::from(
-                                "ABI → local dapp page (like Codex app preview). Open in browser for the live HTML UI.",
+                                "ABI → local dapp (DESIGN.md tokens). Select a deployment to start; Open renders the live page in your browser (WebView embed later).",
                             )),
                     ),
             )
@@ -291,7 +291,7 @@ impl Render for StudioPreviewPane {
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.selected = Some(dep.clone());
-                                        cx.notify();
+                                        this.start_preview(cx);
                                     }))
                                     .child(
                                         div()
@@ -309,6 +309,7 @@ impl Render for StudioPreviewPane {
                             })),
                     )
                     .when(!url.is_empty(), |el| {
+                        let url = url.clone();
                         el.child(
                             div()
                                 .flex()
@@ -388,6 +389,13 @@ impl Render for StudioPreviewPane {
                                                 .gap(px(8.0))
                                                 .child(
                                                     div()
+                                                        .text_size(px(18.0))
+                                                        .font_weight(gpui::FontWeight::MEDIUM)
+                                                        .text_color(theme.text)
+                                                        .child("ProofShip"),
+                                                )
+                                                .child(
+                                                    div()
                                                         .text_size(px(14.0))
                                                         .font_weight(gpui::FontWeight::MEDIUM)
                                                         .text_color(theme.text)
@@ -400,19 +408,70 @@ impl Render for StudioPreviewPane {
                                                 )
                                                 .child(
                                                     div()
+                                                        .font_family("Geist Mono")
+                                                        .text_size(px(11.0))
+                                                        .text_color(theme.text_dim)
+                                                        .child(SharedString::from(
+                                                            self.selected
+                                                                .as_ref()
+                                                                .map(|d| truncate_addr(&d.address))
+                                                                .unwrap_or_default(),
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
                                                         .text_size(px(12.0))
                                                         .text_color(theme.text_muted)
                                                         .child(
-                                                            "Click Open to render the full ABI-driven frontend in your browser. In-app WebView comes next.",
+                                                            "Live HTML is served on localhost. Open in browser for the full ABI form UI; in-app WebView is next.",
                                                         ),
                                                 )
                                                 .child(
-                                                    action_chip("Open in browser", &theme).on_click(
-                                                        cx.listener(|this, _, _, cx| {
-                                                            this.open_browser(cx)
-                                                        }),
-                                                    ),
+                                                    div()
+                                                        .flex()
+                                                        .gap(px(8.0))
+                                                        .child(
+                                                            action_chip("Open in browser", &theme)
+                                                                .on_click(cx.listener(
+                                                                    |this, _, _, cx| {
+                                                                        this.open_browser(cx)
+                                                                    },
+                                                                )),
+                                                        )
+                                                        .child(
+                                                            action_chip("Restart", &theme).on_click(
+                                                                cx.listener(|this, _, _, cx| {
+                                                                    this.start_preview(cx)
+                                                                }),
+                                                            ),
+                                                        ),
                                                 ),
+                                        ),
+                                ),
+                        )
+                    })
+                    .when(url.is_empty() && self.selected.is_some(), |el| {
+                        el.child(
+                            div()
+                                .rounded(px(10.0))
+                                .border_1()
+                                .border_color(theme.border)
+                                .p(px(16.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.0))
+                                .child(
+                                    div()
+                                        .text_size(px(13.0))
+                                        .text_color(theme.text)
+                                        .child("Preview idle"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(12.0))
+                                        .text_color(theme.text_muted)
+                                        .child(
+                                            "Click Start (or re-select a deployment) to serve the local dapp HTML.",
                                         ),
                                 ),
                         )
@@ -423,7 +482,7 @@ impl Render for StudioPreviewPane {
                                 .text_size(px(12.0))
                                 .text_color(theme.text_muted)
                                 .child(
-                                    "No deployments yet. Pass the gate, deploy, then Start preview here.",
+                                    "No deployments yet. Pass the gate, deploy, then select a deployment here.",
                                 ),
                         )
                     }),

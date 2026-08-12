@@ -29,6 +29,8 @@ proofship/
   scripts/
     install-toolchain.sh   ← 一键就绪门禁工具链（bin + olean 闭包 + 锁定链工具）
     gate.sh                ← 通用门禁:任意 .lean → check/build/inspect(开发/调试用)
+    ci-gate-example.sh     ← CI 示例:gate + 断言 gate-report.json(certified)
+  templates/               ← Studio 数据驱动模板(RWA / Time-Lock;X Layer first)
   bridge/server.mjs        ← 本机门禁+agent lanes 的 HTTP 桥(web 版引擎链路参考)
   relay/                   ← Cloudflare Worker + DO:web 端旁观/下命令给本机引擎(web 版用)
   toolchain/               ← (gitignored) vendored proof-forge-next + oleans + solc 等
@@ -42,8 +44,18 @@ proofship/scripts/install-toolchain.sh   # 就绪 toolchain/(默认从 proof_for
 
 # 跑通门禁（用 engine 测试夹具作候选源）:
 proofship/scripts/gate.sh crates/engine/tests/fixtures/rwa_share_registry.lean RwaShareRegistry
+
+# CI 形态(断言制品旁 gate-report.json ok+certified):
+proofship/scripts/ci-gate-example.sh
 ```
 
+README / PR 可用的 badge 思路(由 `ci-gate-example.sh` 打印):
+
+```markdown
+![gate](https://img.shields.io/badge/gate-passing-3fb950)
+```
+
+诚实边界:badge 表示**工程级**门禁通过,不是 full formal verification。
 Rust 原生门禁（app 内嵌路径，与脚本同一 CLI/环境解析）:
 
 ```bash
