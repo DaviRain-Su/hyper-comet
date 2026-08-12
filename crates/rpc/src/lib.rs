@@ -122,6 +122,18 @@ pub mod methods {
     pub const STUDIO_LAUNCH_RUN: &str = "StudioLaunchRun";
     pub const STUDIO_LAUNCHES: &str = "StudioLaunches";
     pub const STUDIO_PUT_LAUNCHES: &str = "StudioPutLaunches";
+    pub const STUDIO_NETWORKS: &str = "StudioNetworks";
+    pub const STUDIO_PUT_NETWORKS: &str = "StudioPutNetworks";
+    pub const STUDIO_UPSERT_NETWORK: &str = "StudioUpsertNetwork";
+    pub const STUDIO_REMOVE_NETWORK: &str = "StudioRemoveNetwork";
+    pub const STUDIO_WALLETS: &str = "StudioWallets";
+    pub const STUDIO_PUT_WALLETS: &str = "StudioPutWallets";
+    pub const STUDIO_UPSERT_WALLET: &str = "StudioUpsertWallet";
+    pub const STUDIO_REMOVE_WALLET: &str = "StudioRemoveWallet";
+    pub const STUDIO_DEPLOYMENTS: &str = "StudioDeployments";
+    pub const STUDIO_DEPLOY: &str = "StudioDeploy";
+    pub const STUDIO_ABI: &str = "StudioAbi";
+    pub const STUDIO_CALL: &str = "StudioCall";
 }
 
 #[derive(Debug, thiserror::Error)]

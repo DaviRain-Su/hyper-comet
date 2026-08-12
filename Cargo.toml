@@ -9,6 +9,7 @@ members = [
     "crates/rpc",
     "crates/update",
     "crates/ui",
+    "crates/abi",
     "apps/comet",
 ]
 
@@ -27,6 +28,7 @@ comet-engine = { path = "crates/engine" }
 comet-rpc = { path = "crates/rpc" }
 comet-update = { path = "crates/update" }
 comet-ui = { path = "crates/ui" }
+comet-abi = { path = "crates/abi" }
 
 # CRDT
 loro = "1.13"

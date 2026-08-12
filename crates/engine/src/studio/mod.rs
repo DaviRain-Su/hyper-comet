@@ -4,12 +4,22 @@
 //! runner that mirrors `proofship/bridge/server.mjs` and a local JSON launch
 //! store. Agent drafting (harness lanes) and repair loops are layered on top.
 
+pub mod deploy;
 pub mod draft;
 pub mod gate;
+pub mod interact;
 mod launch_run;
+pub mod networks;
 pub mod store;
+pub mod wallets;
 
+pub use deploy::{
+    DeployStore, DeployStoreError, StudioDeployer, artifact_bin_path, preflight, record_from_done,
+};
 pub use draft::{DraftError, DraftRunner};
 pub use gate::{GateConfig, GateError, StudioGate, StudioPaths};
+pub use interact::StudioInteract;
 pub use launch_run::StudioLaunchRunner;
+pub use networks::{NetworkError, NetworkStore};
 pub use store::{StoreError, StudioStore};
+pub use wallets::{WalletError, WalletStore};

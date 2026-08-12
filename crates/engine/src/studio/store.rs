@@ -77,6 +77,9 @@ mod tests {
                 fields: None,
                 program: None,
                 source: None,
+                project_id: None,
+                project_name: None,
+                project_path: None,
             })
             .collect();
         let saved = store.save(&launches).unwrap();
@@ -86,5 +89,23 @@ mod tests {
         assert_eq!(loaded[0].id, "id-0");
         assert_eq!(loaded[19].id, "id-19");
         assert!(store.path().exists());
+    }
+
+    #[test]
+    fn old_launch_json_without_project_fields_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = StudioStore::new(dir.path());
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        std::fs::write(
+            store.path(),
+            r#"[{"id":"a","title":"t","createdAt":"2026-08-12T00:00:00Z","msgs":[]}]"#,
+        )
+        .unwrap();
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].id, "a");
+        assert!(loaded[0].project_id.is_none());
+        assert!(loaded[0].project_name.is_none());
+        assert!(loaded[0].project_path.is_none());
     }
 }

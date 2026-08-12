@@ -7,6 +7,7 @@ use gpui::{
     Subscription, Task, Window, div, list, prelude::*, px,
 };
 
+use comet_abi::{AbiFormFn, AbiFormSchema, schema_from_abi_json};
 use comet_engine::registry::HarnessDescriptor;
 use comet_proto::HarnessId;
 use comet_proto::studio::{
@@ -15,6 +16,11 @@ use comet_proto::studio::{
     StudioGateStage, StudioGateState, StudioLaunch, StudioLaunchRunEvent, StudioLaunchRunRequest,
     StudioLaunchesResponse, StudioNoteMsg, StudioPutLaunchesRequest, StudioStatusResponse,
     StudioUserMsg,
+};
+use comet_proto::{
+    DeploymentRecord, DeploymentsResponse, EvmNetwork, NetworksResponse, StudioAbiRequest,
+    StudioAbiResponse, StudioCallKind, StudioCallRequest, StudioCallResponse, StudioDeployEvent,
+    StudioDeployRequest, WalletAccount, WalletSource, WalletsResponse,
 };
 use comet_rpc::methods;
 
@@ -27,6 +33,7 @@ use crate::pickers::{harness_brand_icon, visible_harnesses};
 use crate::popover::{self, Loadable};
 use crate::settings::composer::ComposerDefaults;
 use crate::state::AppState;
+use crate::studio_projects::group_launches;
 use crate::theme::Theme;
 
 const SAMPLE_SOURCE: &str = include_str!("../../engine/tests/fixtures/rwa_share_registry.lean");
@@ -276,6 +283,10 @@ pub fn launch_from_rows(existing: Option<&StudioLaunch>, rows: &[StudioRow]) -> 
         launch.fields = Some(fields);
         launch.source = Some(source);
     }
+    if launch.project_id.is_none() {
+        launch.project_id = Some("default".into());
+        launch.project_name = Some("Studio".into());
+    }
     launch
 }
 
@@ -431,6 +442,17 @@ fn truncate_middle(value: &str, keep: usize) -> String {
     format!("{start}…{end}")
 }
 
+fn guess_field(fields: &BTreeMap<String, String>, name: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    fields.iter().find_map(|(key, value)| {
+        (key.to_ascii_lowercase() == lower
+            || (lower == "supply" && key.eq_ignore_ascii_case("totalSupply"))
+            || (lower == "pertx" && key.eq_ignore_ascii_case("maxPerTx"))
+            || (lower == "window" && key.eq_ignore_ascii_case("windowCap")))
+        .then(|| value.clone())
+    })
+}
+
 struct GateSourceDialog {
     module: Entity<ComposerInput>,
     source: Entity<ComposerInput>,
@@ -439,10 +461,17 @@ struct GateSourceDialog {
     _source_events: Subscription,
 }
 
+struct CtorField {
+    name: String,
+    sol_type: String,
+    input: Entity<ComposerInput>,
+}
+
 pub struct StudioView {
     state: Entity<AppState>,
     rows: Vec<StudioRow>,
     launch: Option<StudioLaunch>,
+    launches: Vec<StudioLaunch>,
     list: ListState,
     composer: Entity<ComposerInput>,
     gate_dialog: Option<GateSourceDialog>,
@@ -457,6 +486,23 @@ pub struct StudioView {
     gate_task: Option<Task<()>>,
     load_task: Option<Task<()>>,
     save_task: Option<Task<()>>,
+    networks: Vec<EvmNetwork>,
+    wallets: Vec<WalletAccount>,
+    selected_network_id: Option<String>,
+    selected_wallet_id: Option<String>,
+    network_menu_open: bool,
+    wallet_menu_open: bool,
+    deploy_task: Option<Task<()>>,
+    deploy_note: Option<SharedString>,
+    abi_schema: Option<AbiFormSchema>,
+    ctor_fields: Vec<CtorField>,
+    deployments: Vec<DeploymentRecord>,
+    active_address: Option<String>,
+    interact_fn: Option<AbiFormFn>,
+    interact_args: Vec<Entity<ComposerInput>>,
+    interact_output: Option<SharedString>,
+    interact_task: Option<Task<()>>,
+    fn_menu_open: bool,
     _input_events: Subscription,
     _observe: Subscription,
 }
@@ -474,6 +520,7 @@ impl StudioView {
             state,
             rows: Vec::new(),
             launch: None,
+            launches: Vec::new(),
             list: ListState::new(0, ListAlignment::Bottom, px(320.0)),
             composer,
             gate_dialog: None,
@@ -488,6 +535,23 @@ impl StudioView {
             gate_task: None,
             load_task: None,
             save_task: None,
+            networks: Vec::new(),
+            wallets: Vec::new(),
+            selected_network_id: None,
+            selected_wallet_id: None,
+            network_menu_open: false,
+            wallet_menu_open: false,
+            deploy_task: None,
+            deploy_note: None,
+            abi_schema: None,
+            ctor_fields: Vec::new(),
+            deployments: Vec::new(),
+            active_address: None,
+            interact_fn: None,
+            interact_args: Vec::new(),
+            interact_output: None,
+            interact_task: None,
+            fn_menu_open: false,
             _input_events: input_events,
             _observe: observe,
         };
@@ -518,6 +582,18 @@ impl StudioView {
                 .client()
                 .call(methods::STUDIO_LAUNCHES, serde_json::json!({}))
                 .await;
+            let networks = engine
+                .client()
+                .call(methods::STUDIO_NETWORKS, serde_json::json!({}))
+                .await;
+            let wallets = engine
+                .client()
+                .call(methods::STUDIO_WALLETS, serde_json::json!({}))
+                .await;
+            let deployments = engine
+                .client()
+                .call(methods::STUDIO_DEPLOYMENTS, serde_json::json!({}))
+                .await;
             this.update(cx, |view, cx| {
                 match status {
                     Ok(value) => match serde_json::from_value::<StudioStatusResponse>(value) {
@@ -534,15 +610,70 @@ impl StudioView {
                             launches
                                 .launches
                                 .sort_by_key(|launch| launch.created_at_datetime());
-                            if let Some(launch) = launches.launches.pop() {
+                            view.launches = launches.launches;
+                            if let Some(launch) = view.launches.last().cloned() {
                                 view.rows = rows_from_launch(&launch);
-                                view.launch = Some(launch);
+                                view.launch = Some(launch.clone());
                                 view.sync_list();
+                                if let Some(program) = launch.program.clone() {
+                                    view.load_abi_for_module(program, cx);
+                                }
                             }
                         }
                         Err(err) => view.error = Some(format!("Studio launches: {err}").into()),
                     },
                     Err(err) => view.error = Some(format!("Studio launches: {err}").into()),
+                }
+                match networks {
+                    Ok(value) => {
+                        if let Ok(resp) = serde_json::from_value::<NetworksResponse>(value) {
+                            if view.selected_network_id.is_none() {
+                                view.selected_network_id = resp
+                                    .networks
+                                    .iter()
+                                    .find(|n| n.id == "xlayer-testnet")
+                                    .map(|n| n.id.clone())
+                                    .or_else(|| resp.networks.first().map(|n| n.id.clone()));
+                            }
+                            view.networks = resp.networks;
+                        }
+                    }
+                    Err(err) => view.error = Some(format!("Studio networks: {err}").into()),
+                }
+                match wallets {
+                    Ok(value) => {
+                        if let Ok(resp) = serde_json::from_value::<WalletsResponse>(value) {
+                            if view.selected_wallet_id.is_none() {
+                                view.selected_wallet_id = resp
+                                    .wallets
+                                    .iter()
+                                    .find(|w| w.source == WalletSource::DevEnvKey)
+                                    .map(|w| w.id.clone())
+                                    .or_else(|| resp.wallets.first().map(|w| w.id.clone()));
+                            }
+                            view.wallets = resp.wallets;
+                        }
+                    }
+                    Err(err) => view.error = Some(format!("Studio wallets: {err}").into()),
+                }
+                match deployments {
+                    Ok(value) => {
+                        if let Ok(resp) = serde_json::from_value::<DeploymentsResponse>(value) {
+                            view.deployments = resp.deployments;
+                            if view.active_address.is_none() {
+                                let launch_id = view.launch.as_ref().map(|l| l.id.as_str());
+                                view.active_address = view
+                                    .deployments
+                                    .iter()
+                                    .find(|d| d.launch_id.as_deref() == launch_id)
+                                    .map(|d| d.address.clone())
+                                    .or_else(|| {
+                                        view.deployments.first().map(|d| d.address.clone())
+                                    });
+                            }
+                        }
+                    }
+                    Err(err) => view.error = Some(format!("Studio deployments: {err}").into()),
                 }
                 cx.notify();
             })
@@ -619,12 +750,20 @@ impl StudioView {
         let Some(engine) = self.engine(cx) else {
             return;
         };
-        let launch = launch_from_rows(self.launch.as_ref(), &self.rows);
-        self.launch = Some(launch.clone());
+        let current = launch_from_rows(self.launch.as_ref(), &self.rows);
+        if let Some(ix) = self.launches.iter().position(|l| l.id == current.id) {
+            self.launches.remove(ix);
+        }
+        self.launches.push(current.clone());
+        if self.launches.len() > 20 {
+            let keep = self.launches.split_off(self.launches.len() - 20);
+            self.launches = keep;
+        }
+        self.launch = Some(current);
+        let mut launches = self.launches.clone();
+        launches.reverse();
         self.save_task = Some(cx.spawn(async move |this, cx| {
-            let params = match serde_json::to_value(StudioPutLaunchesRequest {
-                launches: vec![launch.clone()],
-            }) {
+            let params = match serde_json::to_value(StudioPutLaunchesRequest { launches }) {
                 Ok(params) => params,
                 Err(err) => {
                     this.update(cx, |view, cx| {
@@ -642,15 +781,8 @@ impl StudioView {
             this.update(cx, |view, cx| {
                 match result {
                     Ok(value) => {
-                        if let Ok(mut launches) =
-                            serde_json::from_value::<StudioLaunchesResponse>(value)
-                        {
-                            launches
-                                .launches
-                                .sort_by_key(|launch| launch.created_at_datetime());
-                            if let Some(saved) = launches.launches.pop() {
-                                view.launch = Some(saved);
-                            }
+                        if let Ok(resp) = serde_json::from_value::<StudioLaunchesResponse>(value) {
+                            view.launches = resp.launches;
                         }
                     }
                     Err(err) => view.error = Some(format!("Studio save: {err}").into()),
@@ -880,13 +1012,366 @@ impl StudioView {
         }));
     }
 
+    fn start_deploy(&mut self, cx: &mut Context<Self>) {
+        let Some((module, source)) = self.latest_draft() else {
+            self.deploy_note = Some("No gated source to deploy".into());
+            cx.notify();
+            return;
+        };
+        let Some(network_id) = self.selected_network_id.clone() else {
+            self.deploy_note = Some("Pick a network in Settings → Networks".into());
+            cx.notify();
+            return;
+        };
+        let Some(wallet_id) = self.selected_wallet_id.clone() else {
+            self.deploy_note = Some("Add a testnet env-key wallet in Settings → Wallets".into());
+            cx.notify();
+            return;
+        };
+        if self.deploy_task.is_some() {
+            self.deploy_note = Some("A deploy is already running".into());
+            cx.notify();
+            return;
+        }
+        let needs_ctor = self
+            .abi_schema
+            .as_ref()
+            .and_then(|schema| schema.constructor.as_ref())
+            .is_some_and(|ctor| !ctor.inputs.is_empty());
+        if needs_ctor && self.ctor_fields.is_empty() {
+            self.deploy_note =
+                Some("Constructor ABI not loaded yet — wait for the gate artifacts".into());
+            cx.notify();
+            return;
+        }
+        let (ctor_sig, ctor_args) = self.ctor_payload(cx);
+        if !self.ctor_fields.is_empty() && ctor_args.iter().any(|a| a.trim().is_empty()) {
+            self.deploy_note = Some("Fill every constructor argument before deploying".into());
+            cx.notify();
+            return;
+        }
+        let Some(engine) = self.engine(cx) else {
+            self.deploy_note = Some("Engine not connected".into());
+            cx.notify();
+            return;
+        };
+        let params = match serde_json::to_value(StudioDeployRequest {
+            module,
+            source,
+            network_id,
+            wallet_id,
+            ctor_sig,
+            ctor_args,
+            launch_id: self.launch.as_ref().map(|l| l.id.clone()),
+        }) {
+            Ok(params) => params,
+            Err(err) => {
+                self.deploy_note = Some(format!("Studio deploy: {err}").into());
+                cx.notify();
+                return;
+            }
+        };
+        self.deploy_note = Some("Deploying…".into());
+        cx.notify();
+        self.deploy_task = Some(cx.spawn(async move |this, cx| {
+            let stream = engine
+                .client()
+                .subscribe(methods::STUDIO_DEPLOY, params)
+                .await;
+            match stream {
+                Ok(mut rx) => {
+                    while let Some(value) = rx.recv().await {
+                        match serde_json::from_value::<StudioDeployEvent>(value) {
+                            Ok(event) => {
+                                this.update(cx, |view, cx| {
+                                    view.apply_deploy_event(event, cx);
+                                })
+                                .ok();
+                            }
+                            Err(err) => {
+                                this.update(cx, |view, cx| {
+                                    view.deploy_note =
+                                        Some(format!("Studio deploy event: {err}").into());
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        }
+                    }
+                }
+                Err(err) => {
+                    this.update(cx, |view, cx| {
+                        view.deploy_note = Some(format!("Deploy failed: {err}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                }
+            }
+        }));
+    }
+
+    fn apply_deploy_event(&mut self, event: StudioDeployEvent, cx: &mut Context<Self>) {
+        match &event {
+            StudioDeployEvent::Started { network_id } => {
+                self.deploy_note = Some(format!("Deploying to {network_id}…").into());
+            }
+            StudioDeployEvent::Gate { ok, output } => {
+                self.deploy_note = Some(if *ok {
+                    format!("Gate passed {output}").into()
+                } else {
+                    format!("Gate refused deploy: {output}").into()
+                });
+            }
+            StudioDeployEvent::Sending { rpc_url } => {
+                self.deploy_note = Some(format!("Sending via {rpc_url}").into());
+            }
+            StudioDeployEvent::Done { ok, record, error } => {
+                if *ok {
+                    if let Some(record) = record {
+                        self.active_address = Some(record.address.clone());
+                        if !self.deployments.iter().any(|d| d.id == record.id) {
+                            self.deployments.insert(0, record.clone());
+                        }
+                        self.deploy_note = Some(
+                            format!(
+                                "Deployed {}  tx {}",
+                                record.address,
+                                truncate_middle(&record.tx_hash, 10)
+                            )
+                            .into(),
+                        );
+                    } else {
+                        self.deploy_note = Some("Deployed".into());
+                    }
+                } else {
+                    self.deploy_note = Some(
+                        error
+                            .clone()
+                            .unwrap_or_else(|| "Deploy failed".into())
+                            .into(),
+                    );
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn ctor_payload(&self, cx: &Context<Self>) -> (String, Vec<String>) {
+        let Some(ctor) = self
+            .abi_schema
+            .as_ref()
+            .and_then(|schema| schema.constructor.as_ref())
+        else {
+            return ("-".into(), Vec::new());
+        };
+        if ctor.inputs.is_empty() {
+            return ("-".into(), Vec::new());
+        }
+        let args = self
+            .ctor_fields
+            .iter()
+            .map(|field| field.input.read(cx).text().trim().to_string())
+            .collect();
+        (ctor.signature(), args)
+    }
+
+    fn load_abi_for_module(&mut self, module: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.engine(cx) else {
+            return;
+        };
+        let params = match serde_json::to_value(StudioAbiRequest { module }) {
+            Ok(params) => params,
+            Err(_) => return,
+        };
+        self.interact_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine.client().call(methods::STUDIO_ABI, params).await;
+            this.update(cx, |view, cx| {
+                if let Ok(value) = result
+                    && let Ok(resp) = serde_json::from_value::<StudioAbiResponse>(value)
+                    && let Ok(schema) = schema_from_abi_json(&resp.abi_json)
+                {
+                    view.apply_abi_schema(schema, cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    fn apply_abi_schema(&mut self, schema: AbiFormSchema, cx: &mut Context<Self>) {
+        self.ctor_fields.clear();
+        if let Some(ctor) = &schema.constructor {
+            let draft_fields = self.launch.as_ref().and_then(|l| l.fields.clone());
+            for param in &ctor.inputs {
+                let input = cx.new(|cx| {
+                    ComposerInput::new(format!("{} ({})", param.name, param.sol_type), cx)
+                });
+                if let Some(value) = draft_fields.as_ref().and_then(|fields| {
+                    fields
+                        .get(&param.name)
+                        .cloned()
+                        .or_else(|| guess_field(fields, &param.name))
+                }) {
+                    input.update(cx, |input, cx| input.set_text(value, cx));
+                }
+                self.ctor_fields.push(CtorField {
+                    name: param.name.clone(),
+                    sol_type: param.sol_type.clone(),
+                    input,
+                });
+            }
+        }
+        if self.interact_fn.is_none() {
+            let first = schema
+                .views
+                .first()
+                .cloned()
+                .or_else(|| schema.entries.first().cloned());
+            if let Some(func) = first {
+                self.select_interact_fn(func, cx);
+            }
+        }
+        self.abi_schema = Some(schema);
+    }
+
+    fn select_interact_fn(&mut self, func: AbiFormFn, cx: &mut Context<Self>) {
+        self.interact_args = func
+            .inputs
+            .iter()
+            .map(|param| {
+                cx.new(|cx| ComposerInput::new(format!("{} ({})", param.name, param.sol_type), cx))
+            })
+            .collect();
+        self.interact_fn = Some(func);
+        self.fn_menu_open = false;
+    }
+
+    fn new_launch(&mut self, cx: &mut Context<Self>) {
+        if self.launch.is_some() {
+            self.persist(cx);
+        }
+        let launch = StudioLaunch::new_now();
+        self.rows.clear();
+        self.sync_list();
+        self.launch = Some(launch.clone());
+        self.launches.push(launch);
+        self.abi_schema = None;
+        self.ctor_fields.clear();
+        self.active_address = None;
+        self.interact_fn = None;
+        self.interact_args.clear();
+        self.interact_output = None;
+        cx.notify();
+    }
+
+    fn select_launch(&mut self, id: String, cx: &mut Context<Self>) {
+        self.persist(cx);
+        let Some(launch) = self.launches.iter().find(|l| l.id == id).cloned() else {
+            return;
+        };
+        self.rows = rows_from_launch(&launch);
+        self.sync_list();
+        self.launch = Some(launch.clone());
+        self.active_address = self
+            .deployments
+            .iter()
+            .find(|d| d.launch_id.as_deref() == Some(launch.id.as_str()))
+            .map(|d| d.address.clone());
+        if let Some(program) = launch.program.clone() {
+            self.load_abi_for_module(program, cx);
+        }
+        cx.notify();
+    }
+
+    fn start_call(&mut self, kind: StudioCallKind, cx: &mut Context<Self>) {
+        let Some(func) = self.interact_fn.clone() else {
+            self.interact_output = Some("Pick a function".into());
+            cx.notify();
+            return;
+        };
+        let Some(address) = self.active_address.clone() else {
+            self.interact_output = Some("Deploy first".into());
+            cx.notify();
+            return;
+        };
+        let Some(network_id) = self.selected_network_id.clone() else {
+            self.interact_output = Some("Pick a network".into());
+            cx.notify();
+            return;
+        };
+        let args: Vec<String> = self
+            .interact_args
+            .iter()
+            .map(|input| input.read(cx).text().trim().to_string())
+            .collect();
+        if args.iter().any(|a| a.is_empty()) && !self.interact_args.is_empty() {
+            self.interact_output = Some("Fill every argument".into());
+            cx.notify();
+            return;
+        }
+        let wallet_id = self.selected_wallet_id.clone();
+        if kind == StudioCallKind::Send && wallet_id.is_none() {
+            self.interact_output = Some("Pick a DevEnvKey wallet to send".into());
+            cx.notify();
+            return;
+        }
+        let Some(engine) = self.engine(cx) else {
+            return;
+        };
+        let params = match serde_json::to_value(StudioCallRequest {
+            network_id,
+            address,
+            signature: func.signature(),
+            args,
+            kind,
+            wallet_id,
+        }) {
+            Ok(params) => params,
+            Err(err) => {
+                self.interact_output = Some(format!("{err}").into());
+                cx.notify();
+                return;
+            }
+        };
+        self.interact_output = Some("Calling…".into());
+        cx.notify();
+        self.interact_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine.client().call(methods::STUDIO_CALL, params).await;
+            this.update(cx, |view, cx| {
+                view.interact_output = Some(match result {
+                    Ok(value) => match serde_json::from_value::<StudioCallResponse>(value) {
+                        Ok(resp) => {
+                            if resp.ok {
+                                if let Some(tx) = resp.tx_hash {
+                                    format!("{}\ntx {tx}", resp.output).into()
+                                } else {
+                                    resp.output.into()
+                                }
+                            } else {
+                                resp.output.into()
+                            }
+                        }
+                        Err(err) => format!("{err}").into(),
+                    },
+                    Err(err) => format!("{err}").into(),
+                });
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     fn apply_gate_event(&mut self, row_id: &str, event: StudioGateEvent, cx: &mut Context<Self>) {
+        let passed = matches!(event, StudioGateEvent::Done { ok: true, .. });
         if let Some(StudioRow {
             kind: StudioRowKind::Gate(card),
             ..
         }) = self.rows.iter_mut().find(|row| row.id == row_id)
         {
             reduce_gate_event(card, event);
+        }
+        if passed && let Some(module) = self.latest_draft().map(|(program, _)| program) {
+            self.load_abi_for_module(module, cx);
         }
         self.persist(cx);
         cx.notify();
@@ -1144,6 +1629,7 @@ impl StudioView {
             ))
             .when(card_state.state == StudioGateState::Pass, |el| {
                 el.child(self.render_artifacts(card_state, cx))
+                    .child(self.render_deploy_strip(cx))
             })
             .when(card_state.state == StudioGateState::Fail, |el| {
                 el.child(
@@ -1246,6 +1732,150 @@ impl StudioView {
                     )
                 },
             )
+            .into_any_element()
+    }
+
+    fn render_deploy_strip(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let network_label = self
+            .selected_network_id
+            .as_deref()
+            .and_then(|id| self.networks.iter().find(|n| n.id == id))
+            .map(|n| n.name.clone())
+            .unwrap_or_else(|| "Network".into());
+        let wallet_label = self
+            .selected_wallet_id
+            .as_deref()
+            .and_then(|id| self.wallets.iter().find(|w| w.id == id))
+            .map(|w| w.label.clone())
+            .unwrap_or_else(|| "Wallet".into());
+        let can_sign = self
+            .selected_wallet_id
+            .as_deref()
+            .and_then(|id| self.wallets.iter().find(|w| w.id == id))
+            .is_some_and(|w| w.source == WalletSource::DevEnvKey);
+        let mut network_btn = button_dynamic(network_label, self.networks.is_empty(), &theme)
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.network_menu_open = !this.network_menu_open;
+                    this.wallet_menu_open = false;
+                    cx.notify();
+                }),
+            );
+        if self.network_menu_open {
+            let menu = div()
+                .w(px(240.0))
+                .children(self.networks.iter().enumerate().map(|(ix, network)| {
+                    let id = network.id.clone();
+                    let active = self.selected_network_id.as_deref() == Some(network.id.as_str());
+                    popover::menu_row(&theme, active, format!("studio-net-row-{ix}"))
+                        .id(("studio-net-row", ix))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.selected_network_id = Some(id.clone());
+                                this.network_menu_open = false;
+                                cx.notify();
+                            }),
+                        )
+                        .child(SharedString::from(format!(
+                            "{} ({})",
+                            network.name, network.chain_id
+                        )))
+                }))
+                .into_any_element();
+            network_btn =
+                network_btn.child(popover::anchored_menu_above("studio-net-menu", menu, None));
+        }
+        let mut wallet_btn = button_dynamic(wallet_label, self.wallets.is_empty(), &theme)
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.wallet_menu_open = !this.wallet_menu_open;
+                    this.network_menu_open = false;
+                    cx.notify();
+                }),
+            );
+        if self.wallet_menu_open {
+            let menu = div()
+                .w(px(240.0))
+                .children(self.wallets.iter().enumerate().map(|(ix, wallet)| {
+                    let id = wallet.id.clone();
+                    let active = self.selected_wallet_id.as_deref() == Some(wallet.id.as_str());
+                    popover::menu_row(&theme, active, format!("studio-wal-row-{ix}"))
+                        .id(("studio-wal-row", ix))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.selected_wallet_id = Some(id.clone());
+                                this.wallet_menu_open = false;
+                                cx.notify();
+                            }),
+                        )
+                        .child(SharedString::from(wallet.label.clone()))
+                }))
+                .into_any_element();
+            wallet_btn =
+                wallet_btn.child(popover::anchored_menu_above("studio-wal-menu", menu, None));
+        }
+        div()
+            .mt(px(12.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .children(self.ctor_fields.iter().map(|field| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_muted)
+                            .child(SharedString::from(format!(
+                                "{} ({})",
+                                field.name, field.sol_type
+                            ))),
+                    )
+                    .child(field.input.clone())
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(network_btn)
+                    .child(wallet_btn)
+                    .child(
+                        button("Deploy", !can_sign || self.deploy_task.is_some(), &theme)
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    if can_sign && this.deploy_task.is_none() {
+                                        this.start_deploy(cx);
+                                    }
+                                }),
+                            ),
+                    ),
+            )
+            .when(self.wallets.is_empty(), |el| {
+                el.child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme.text_muted)
+                        .child("Add a testnet env-key wallet in Settings → Wallets to deploy."),
+                )
+            })
+            .when_some(self.deploy_note.as_ref(), |el, note| {
+                el.child(
+                    div()
+                        .font_family(theme.font_mono.clone())
+                        .text_size(px(11.0))
+                        .text_color(theme.text_dim)
+                        .child(note.clone()),
+                )
+            })
             .into_any_element()
     }
 
@@ -1419,6 +2049,212 @@ impl StudioView {
             .into_any_element()
     }
 
+    fn render_launch_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let current_id = self.launch.as_ref().map(|l| l.id.as_str());
+        let groups = group_launches(&self.launches);
+        div()
+            .w(px(220.0))
+            .h_full()
+            .flex_none()
+            .border_r_1()
+            .border_color(theme.border)
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px(px(12.0))
+                    .py(px(10.0))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("Projects"),
+                    )
+                    .child(button("New", false, &theme).on_mouse_up(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.new_launch(cx)),
+                    )),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .px(px(8.0))
+                    .pb(px(12.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.0))
+                    .children(groups.into_iter().map(|(name, launches)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .child(
+                                div()
+                                    .px(px(6.0))
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_muted)
+                                    .child(SharedString::from(name)),
+                            )
+                            .children(launches.into_iter().enumerate().map(|(_ix, launch)| {
+                                let id = launch.id.clone();
+                                let active = current_id == Some(launch.id.as_str());
+                                div()
+                                    .id(SharedString::from(format!("studio-launch-{}", launch.id)))
+                                    .rounded(px(8.0))
+                                    .px(px(8.0))
+                                    .py(px(6.0))
+                                    .when(active, |el| el.bg(theme.element_hover))
+                                    .text_size(px(12.0))
+                                    .text_color(theme.text)
+                                    .child(SharedString::from(launch.title.clone()))
+                                    .on_mouse_up(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(move |this, _, _, cx| {
+                                            this.select_launch(id.clone(), cx);
+                                        }),
+                                    )
+                            }))
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_interact_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let address = self.active_address.as_ref()?;
+        let schema = self.abi_schema.as_ref()?;
+        let theme = Theme::of(cx).clone();
+        let fn_label = self
+            .interact_fn
+            .as_ref()
+            .map(|f| f.signature())
+            .unwrap_or_else(|| "Function".into());
+        let is_view = self
+            .interact_fn
+            .as_ref()
+            .is_some_and(|f| f.state_mutability == "view" || f.state_mutability == "pure");
+        let mut fn_btn = button_dynamic(fn_label, false, &theme).on_mouse_up(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _, _, cx| {
+                this.fn_menu_open = !this.fn_menu_open;
+                cx.notify();
+            }),
+        );
+        if self.fn_menu_open {
+            let mut rows: Vec<AbiFormFn> = schema.views.clone();
+            rows.extend(schema.entries.clone());
+            let menu = div()
+                .w(px(280.0))
+                .max_h(px(280.0))
+                .children(rows.into_iter().enumerate().map(|(ix, func)| {
+                    let active = self
+                        .interact_fn
+                        .as_ref()
+                        .is_some_and(|current| current.signature() == func.signature());
+                    let label = format!(
+                        "{} {}",
+                        if func.state_mutability == "view" || func.state_mutability == "pure" {
+                            "view"
+                        } else {
+                            "send"
+                        },
+                        func.signature()
+                    );
+                    popover::menu_row(&theme, active, format!("studio-fn-row-{ix}"))
+                        .id(("studio-fn-row", ix))
+                        .on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.select_interact_fn(func.clone(), cx);
+                                cx.notify();
+                            }),
+                        )
+                        .child(SharedString::from(label))
+                }))
+                .into_any_element();
+            fn_btn = fn_btn.child(popover::anchored_menu_above("studio-fn-menu", menu, None));
+        }
+        Some(
+            div()
+                .border_t_1()
+                .border_color(theme.border)
+                .px(px(12.0))
+                .py(px(10.0))
+                .flex()
+                .flex_col()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(theme.text)
+                                .child("Contract"),
+                        )
+                        .child(
+                            div()
+                                .font_family(theme.font_mono.clone())
+                                .text_size(px(11.0))
+                                .text_color(theme.text_dim)
+                                .child(SharedString::from(truncate_middle(address, 8))),
+                        ),
+                )
+                .child(fn_btn)
+                .children(
+                    self.interact_args
+                        .iter()
+                        .cloned()
+                        .map(|input| div().h(px(36.0)).child(input)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.0))
+                        .child(button("Call", !is_view, &theme).on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                let view_fn = this.interact_fn.as_ref().is_some_and(|f| {
+                                    f.state_mutability == "view" || f.state_mutability == "pure"
+                                });
+                                if view_fn {
+                                    this.start_call(StudioCallKind::View, cx);
+                                }
+                            }),
+                        ))
+                        .child(button("Send", is_view, &theme).on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                let view_fn = this.interact_fn.as_ref().is_some_and(|f| {
+                                    f.state_mutability == "view" || f.state_mutability == "pure"
+                                });
+                                if !view_fn && this.interact_fn.is_some() {
+                                    this.start_call(StudioCallKind::Send, cx);
+                                }
+                            }),
+                        )),
+                )
+                .when_some(self.interact_output.as_ref(), |el, out| {
+                    el.child(
+                        div()
+                            .font_family(theme.font_mono.clone())
+                            .text_size(px(11.0))
+                            .text_color(theme.text_dim)
+                            .child(out.clone()),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_gate_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dialog = self.gate_dialog.as_ref()?;
         let theme = Theme::of(cx).clone();
@@ -1489,41 +2325,54 @@ impl Render for StudioView {
         let theme = Theme::of(cx).clone();
         let banner = self.render_status_banner(cx);
         let dialog = self.render_gate_dialog(cx);
+        let interact = self.render_interact_panel(cx);
+        let sidebar = self.render_launch_sidebar(cx);
+        let thread = if self.rows.is_empty() {
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(13.0))
+                .text_color(theme.text_muted)
+                .child("Describe a launch, load the sample, or paste a source to run the gate.")
+                .into_any_element()
+        } else {
+            list(self.list.clone(), cx.processor(Self::render_row))
+                .size_full()
+                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                .into_any_element()
+        };
         div()
             .id("studio-view")
             .relative()
             .size_full()
             .bg(theme.bg)
             .flex()
-            .flex_col()
+            .flex_row()
+            .child(sidebar)
             .child(
                 div()
-                    .pt(px(12.0))
-                    .px(px(24.0))
-                    .text_size(px(18.0))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(theme.text)
-                    .child("Launch Studio"),
-            )
-            .when_some(banner, |el, banner| el.child(banner))
-            .child(div().flex_1().min_h_0().child(if self.rows.is_empty() {
-                div()
-                    .size_full()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
                     .flex()
-                    .items_center()
-                    .justify_center()
-                    .text_size(px(13.0))
-                    .text_color(theme.text_muted)
-                    .child("Describe a launch, load the sample, or paste a source to run the gate.")
-                    .into_any_element()
-            } else {
-                list(self.list.clone(), cx.processor(Self::render_row))
-                    .size_full()
-                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                    .into_any_element()
-            }))
-            .child(self.render_composer(cx))
-            .when_some(dialog, |el, dialog| el.child(dialog))
+                    .flex_col()
+                    .child(
+                        div()
+                            .pt(px(12.0))
+                            .px(px(24.0))
+                            .text_size(px(18.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .text_color(theme.text)
+                            .child("Launch Studio"),
+                    )
+                    .when_some(banner, |el, banner| el.child(banner))
+                    .child(div().flex_1().min_h_0().child(thread))
+                    .when_some(interact, |el, panel| el.child(panel))
+                    .child(self.render_composer(cx))
+                    .when_some(dialog, |el, dialog| el.child(dialog)),
+            )
     }
 }
 
@@ -1819,6 +2668,9 @@ mod tests {
             fields: None,
             program: None,
             source: None,
+            project_id: None,
+            project_name: None,
+            project_path: None,
         };
         let rows = rows_from_launch(&launch);
         let StudioRowKind::Gate(card) = &rows[0].kind else {

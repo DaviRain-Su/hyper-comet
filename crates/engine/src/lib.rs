@@ -44,7 +44,10 @@ pub use rpc::EngineRpc;
 pub use run_journal::{JournalError, RunJournal};
 pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
-pub use studio::{DraftRunner, StudioGate, StudioLaunchRunner, StudioStore};
+pub use studio::{
+    DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
+    StudioLaunchRunner, StudioStore, WalletStore,
+};
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
 pub use uploads::{AttachmentChunk, Uploads};
@@ -111,6 +114,11 @@ pub struct EngineCore {
     pub studio_draft: DraftRunner,
     pub studio_launch: StudioLaunchRunner,
     pub studio_store: StudioStore,
+    pub network_store: NetworkStore,
+    pub wallet_store: WalletStore,
+    pub deploy_store: DeployStore,
+    pub studio_deploy: StudioDeployer,
+    pub studio_interact: StudioInteract,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -223,6 +231,12 @@ impl EngineCore {
         let studio_draft = DraftRunner::new(registry.clone(), studio_config);
         let studio_launch = StudioLaunchRunner::new(studio_draft.clone(), studio_gate.clone());
         let studio_store = StudioStore::new(data_dir);
+        let network_store = NetworkStore::new(data_dir);
+        let wallet_store = WalletStore::new(data_dir);
+        let deploy_store = DeployStore::new(data_dir);
+        let inbox_root = data_dir.join("studio").join("inbox");
+        let studio_deploy = StudioDeployer::new(studio_gate.clone(), inbox_root.clone());
+        let studio_interact = StudioInteract::new(inbox_root);
         Ok(Self {
             sessions,
             doc_host,
@@ -236,6 +250,11 @@ impl EngineCore {
             studio_draft,
             studio_launch,
             studio_store,
+            network_store,
+            wallet_store,
+            deploy_store,
+            studio_deploy,
+            studio_interact,
             uploads,
             agent_accounts,
             device_id,
@@ -354,6 +373,11 @@ impl EngineCore {
             self.studio_draft.clone(),
             self.studio_launch.clone(),
             self.studio_store.clone(),
+            self.network_store.clone(),
+            self.wallet_store.clone(),
+            self.deploy_store.clone(),
+            self.studio_deploy.clone(),
+            self.studio_interact.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {

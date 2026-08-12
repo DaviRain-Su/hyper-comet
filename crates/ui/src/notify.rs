@@ -137,8 +137,7 @@ mod delegate {
                 .expect("CometNotifyDelegate registered twice");
             decl.add_method(
                 sel!(userNotificationCenter:shouldPresentNotification:),
-                should_present
-                    as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> BOOL,
+                should_present as extern "C" fn(&Object, Sel, *mut Object, *mut Object) -> BOOL,
             );
             let class = decl.register();
             let instance: *mut Object = msg_send![class, new];

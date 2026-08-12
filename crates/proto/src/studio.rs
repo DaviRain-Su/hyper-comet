@@ -250,6 +250,13 @@ pub struct StudioLaunch {
     pub program: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    /// Optional project grouping (path + display name). Absent on pre-2.5 files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_path: Option<String>,
 }
 
 impl StudioLaunch {
@@ -263,6 +270,9 @@ impl StudioLaunch {
             fields: None,
             program: None,
             source: None,
+            project_id: None,
+            project_name: None,
+            project_path: None,
         }
     }
 

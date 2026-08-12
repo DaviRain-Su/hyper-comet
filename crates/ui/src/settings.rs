@@ -16,8 +16,10 @@ pub mod archived;
 pub mod composer;
 pub mod devices;
 pub mod harnesses;
+pub mod networks;
 pub mod notifications;
 pub mod shortcuts;
+pub mod wallets;
 pub mod widgets;
 
 /// Sidebar drag-resize bounds (px).

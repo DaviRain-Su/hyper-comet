@@ -1165,6 +1165,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "comet-abi"
+version = "0.1.47"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "comet-doc"
 version = "0.1.47"
 dependencies = [
@@ -1186,6 +1195,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "comet-abi",
  "comet-doc",
  "comet-harness",
  "comet-proto",
@@ -1290,6 +1300,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "comet-abi",
  "comet-doc",
  "comet-engine",
  "comet-proto",
