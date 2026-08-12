@@ -14,7 +14,7 @@ pub mod store;
 pub mod wallets;
 
 pub use deploy::{
-    DeployStore, DeployStoreError, StudioDeployer, artifact_bin_path, preflight, record_from_done,
+    DeployStore, DeployStoreError, StudioDeployer, artifact_bin_path, preflight,
 };
 pub use draft::{DraftError, DraftRunner};
 pub use gate::{GateConfig, GateError, StudioGate, StudioPaths};

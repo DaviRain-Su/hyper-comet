@@ -22,8 +22,17 @@ use uuid::Uuid;
 use crate::studio::gate::StudioGate;
 
 const MAX_DEPLOYMENTS: usize = 100;
-/// X Layer mainnet — DevEnvKey deploys are refused by product policy.
-const XLAYER_MAINNET_CHAIN_ID: u64 = 196;
+/// Known production / mainnet chain ids. DevEnvKey signing is testnet-only.
+const MAINNET_CHAIN_IDS: &[u64] = &[
+    1,     // Ethereum
+    10,    // Optimism
+    56,    // BNB Smart Chain
+    137,   // Polygon
+    196,   // X Layer
+    8453,  // Base
+    42161, // Arbitrum One
+    43114, // Avalanche C-Chain
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum DeployStoreError {
@@ -84,11 +93,16 @@ impl DeployStore {
 pub struct StudioDeployer {
     gate: StudioGate,
     inbox_root: PathBuf,
+    store: DeployStore,
 }
 
 impl StudioDeployer {
-    pub fn new(gate: StudioGate, inbox_root: PathBuf) -> Self {
-        Self { gate, inbox_root }
+    pub fn new(gate: StudioGate, inbox_root: PathBuf, store: DeployStore) -> Self {
+        Self {
+            gate,
+            inbox_root,
+            store,
+        }
     }
 
     pub fn deploy(
@@ -99,9 +113,10 @@ impl StudioDeployer {
     ) -> BoxStream<'static, StudioDeployEvent> {
         let gate = self.gate.clone();
         let inbox_root = self.inbox_root.clone();
+        let store = self.store.clone();
         let (tx, rx) = mpsc::channel(16);
         tokio::spawn(async move {
-            deploy_inner(req, network, wallet, gate, inbox_root, tx).await;
+            deploy_inner(req, network, wallet, gate, inbox_root, store, tx).await;
         });
         futures::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|item| (item, rx))
@@ -121,9 +136,10 @@ pub fn preflight(network: &EvmNetwork, wallet: &WalletAccount) -> Result<(), Str
         }
         WalletSource::DevEnvKey => {}
     }
-    if network.chain_id == XLAYER_MAINNET_CHAIN_ID {
+    if MAINNET_CHAIN_IDS.contains(&network.chain_id) {
         return Err(format!(
-            "DevEnvKey wallets cannot deploy to mainnet (chain id {XLAYER_MAINNET_CHAIN_ID}); use testnet only"
+            "DevEnvKey wallets cannot deploy to mainnet (chain id {}); use a testnet only",
+            network.chain_id
         ));
     }
     if wallet
@@ -136,18 +152,6 @@ pub fn preflight(network: &EvmNetwork, wallet: &WalletAccount) -> Result<(), Str
         return Err("DevEnvKey wallet missing env_key_name".into());
     }
     Ok(())
-}
-
-/// Extract a successful deployment record from a terminal event.
-pub fn record_from_done(event: &StudioDeployEvent) -> Option<&DeploymentRecord> {
-    match event {
-        StudioDeployEvent::Done {
-            ok: true,
-            record: Some(record),
-            ..
-        } => Some(record),
-        _ => None,
-    }
 }
 
 /// Gate output directory + `{module}.bin`, matching `gate.rs` / `deploy-xlayer-testnet.sh`.
@@ -164,6 +168,7 @@ async fn deploy_inner(
     wallet: WalletAccount,
     gate: StudioGate,
     inbox_root: PathBuf,
+    store: DeployStore,
     tx: mpsc::Sender<StudioDeployEvent>,
 ) {
     let network_id = req.network_id.clone();
@@ -313,6 +318,19 @@ async fn deploy_inner(
                 tx_hash,
                 ts: Utc::now().to_rfc3339(),
             };
+            // Persist before emitting Done so a client disconnect still keeps the record.
+            if let Err(err) = store.append(record.clone()) {
+                let _ = tx
+                    .send(StudioDeployEvent::Done {
+                        ok: false,
+                        record: None,
+                        error: Some(format!(
+                            "deployed on-chain but failed to persist record: {err}"
+                        )),
+                    })
+                    .await;
+                return;
+            }
             let _ = tx
                 .send(StudioDeployEvent::Done {
                     ok: true,
@@ -619,6 +637,22 @@ mod tests {
         let err = preflight(&xlayer_mainnet(), &dev_env_wallet()).unwrap_err();
         assert!(err.contains("mainnet"));
         assert!(err.contains("196"));
+    }
+
+    #[test]
+    fn preflight_rejects_ethereum_mainnet_dev_env_key() {
+        let eth = EvmNetwork {
+            id: "eth".into(),
+            name: "Ethereum".into(),
+            chain_id: 1,
+            rpc_url: "https://example.invalid".into(),
+            explorer_url: None,
+            currency_symbol: "ETH".into(),
+            builtin: false,
+        };
+        let err = preflight(&eth, &dev_env_wallet()).unwrap_err();
+        assert!(err.contains("mainnet"));
+        assert!(err.contains("1"));
     }
 
     #[test]

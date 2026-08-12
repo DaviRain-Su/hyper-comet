@@ -235,7 +235,8 @@ impl EngineCore {
         let wallet_store = WalletStore::new(data_dir);
         let deploy_store = DeployStore::new(data_dir);
         let inbox_root = data_dir.join("studio").join("inbox");
-        let studio_deploy = StudioDeployer::new(studio_gate.clone(), inbox_root.clone());
+        let studio_deploy =
+            StudioDeployer::new(studio_gate.clone(), inbox_root.clone(), deploy_store.clone());
         let studio_interact = StudioInteract::new(inbox_root);
         Ok(Self {
             sessions,

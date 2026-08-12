@@ -442,6 +442,25 @@ fn truncate_middle(value: &str, keep: usize) -> String {
     format!("{start}…{end}")
 }
 
+fn slug_project_id(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "studio".into()
+    } else {
+        slug.chars().take(48).collect()
+    }
+}
+
 fn guess_field(fields: &BTreeMap<String, String>, name: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     fields.iter().find_map(|(key, value)| {
@@ -503,6 +522,8 @@ pub struct StudioView {
     interact_output: Option<SharedString>,
     interact_task: Option<Task<()>>,
     fn_menu_open: bool,
+    project_input: Entity<ComposerInput>,
+    _project_events: Subscription,
     _input_events: Subscription,
     _observe: Subscription,
 }
@@ -513,6 +534,13 @@ impl StudioView {
         let input_events = cx.subscribe(&composer, |this: &mut Self, _, event, cx| {
             if matches!(event, ComposerInputEvent::Submitted) {
                 this.submit_nl(cx);
+            }
+        });
+        let project_input = cx.new(|cx| ComposerInput::new("Project name", cx));
+        project_input.update(cx, |input, cx| input.set_text("Studio", cx));
+        let project_events = cx.subscribe(&project_input, |this: &mut Self, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Submitted) {
+                this.commit_project_name(cx);
             }
         });
         let observe = cx.observe(&state, |_, _, cx| cx.notify());
@@ -552,6 +580,8 @@ impl StudioView {
             interact_output: None,
             interact_task: None,
             fn_menu_open: false,
+            project_input,
+            _project_events: project_events,
             _input_events: input_events,
             _observe: observe,
         };
@@ -615,6 +645,7 @@ impl StudioView {
                                 view.rows = rows_from_launch(&launch);
                                 view.launch = Some(launch.clone());
                                 view.sync_list();
+                                view.sync_project_input(cx);
                                 if let Some(program) = launch.program.clone() {
                                     view.load_abi_for_module(program, cx);
                                 }
@@ -1246,11 +1277,68 @@ impl StudioView {
         self.fn_menu_open = false;
     }
 
+    fn sync_project_input(&mut self, cx: &mut Context<Self>) {
+        let name = self
+            .launch
+            .as_ref()
+            .and_then(|l| l.project_name.clone())
+            .unwrap_or_else(|| "Studio".into());
+        self.project_input
+            .update(cx, |input, cx| input.set_text(name, cx));
+    }
+
+    fn commit_project_name(&mut self, cx: &mut Context<Self>) {
+        let name = self.project_input.read(cx).text().trim().to_string();
+        let name = if name.is_empty() {
+            "Studio".into()
+        } else {
+            name
+        };
+        if let Some(launch) = self.launch.as_mut() {
+            launch.project_name = Some(name.clone());
+            launch.project_id = Some(slug_project_id(&name));
+        }
+        self.persist(cx);
+        cx.notify();
+    }
+
+    fn launch_deployments(&self) -> Vec<&DeploymentRecord> {
+        let launch_id = self.launch.as_ref().map(|l| l.id.as_str());
+        self.deployments
+            .iter()
+            .filter(|d| match (launch_id, d.launch_id.as_deref()) {
+                (Some(id), Some(lid)) => id == lid,
+                (Some(_), None) => false,
+                (None, _) => true,
+            })
+            .collect()
+    }
+
+    fn explorer_url_for(&self, address: &str) -> Option<String> {
+        let network = self
+            .selected_network_id
+            .as_deref()
+            .and_then(|id| self.networks.iter().find(|n| n.id == id))?;
+        let base = network.explorer_url.as_deref()?.trim_end_matches('/');
+        if base.is_empty() {
+            return None;
+        }
+        Some(format!("{base}/address/{address}"))
+    }
+
     fn new_launch(&mut self, cx: &mut Context<Self>) {
         if self.launch.is_some() {
             self.persist(cx);
         }
-        let launch = StudioLaunch::new_now();
+        let mut launch = StudioLaunch::new_now();
+        let name = self.project_input.read(cx).text().trim().to_string();
+        let name = if name.is_empty() {
+            "Studio".into()
+        } else {
+            name
+        };
+        launch.project_name = Some(name.clone());
+        launch.project_id = Some(slug_project_id(&name));
         self.rows.clear();
         self.sync_list();
         self.launch = Some(launch.clone());
@@ -1261,6 +1349,7 @@ impl StudioView {
         self.interact_fn = None;
         self.interact_args.clear();
         self.interact_output = None;
+        self.sync_project_input(cx);
         cx.notify();
     }
 
@@ -1272,6 +1361,7 @@ impl StudioView {
         self.rows = rows_from_launch(&launch);
         self.sync_list();
         self.launch = Some(launch.clone());
+        self.sync_project_input(cx);
         self.active_address = self
             .deployments
             .iter()
@@ -1437,7 +1527,20 @@ impl StudioView {
                 window,
                 cx,
             ),
-            StudioRowKind::Gate(card) => self.render_gate(&row.id, &card, cx),
+            StudioRowKind::Gate(card) => {
+                let show_deploy = card.state == StudioGateState::Pass
+                    && self
+                        .rows
+                        .iter()
+                        .rposition(|row| {
+                            matches!(
+                                &row.kind,
+                                StudioRowKind::Gate(c) if c.state == StudioGateState::Pass
+                            )
+                        })
+                        == Some(ix);
+                self.render_gate(&row.id, &card, show_deploy, cx)
+            }
             StudioRowKind::Note { text } => self.render_note(&text, cx),
         }
     }
@@ -1594,6 +1697,7 @@ impl StudioView {
         &self,
         row_id: &str,
         card_state: &GateCard,
+        show_deploy: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = Theme::of(cx).clone();
@@ -1628,8 +1732,10 @@ impl StudioView {
                 }),
             ))
             .when(card_state.state == StudioGateState::Pass, |el| {
-                el.child(self.render_artifacts(card_state, cx))
-                    .child(self.render_deploy_strip(cx))
+                el.child(self.render_artifacts(card_state, cx)).when(
+                    show_deploy,
+                    |el| el.child(self.render_deploy_strip(cx)),
+                )
             })
             .when(card_state.state == StudioGateState::Fail, |el| {
                 el.child(
@@ -2082,6 +2188,19 @@ impl StudioView {
             )
             .child(
                 div()
+                    .px(px(12.0))
+                    .pb(px(8.0))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(theme.text_muted)
+                            .mb(px(4.0))
+                            .child("Project"),
+                    )
+                    .child(self.project_input.clone()),
+            )
+            .child(
+                div()
                     .flex_1()
                     .min_h_0()
                     .px(px(8.0))
@@ -2126,9 +2245,13 @@ impl StudioView {
     }
 
     fn render_interact_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let address = self.active_address.as_ref()?;
         let schema = self.abi_schema.as_ref()?;
+        let address = self.active_address.clone();
         let theme = Theme::of(cx).clone();
+        let deployments = self.launch_deployments();
+        if address.is_none() && deployments.is_empty() {
+            return None;
+        }
         let fn_label = self
             .interact_fn
             .as_ref()
@@ -2138,7 +2261,7 @@ impl StudioView {
             .interact_fn
             .as_ref()
             .is_some_and(|f| f.state_mutability == "view" || f.state_mutability == "pure");
-        let mut fn_btn = button_dynamic(fn_label, false, &theme).on_mouse_up(
+        let mut fn_btn = button_dynamic(fn_label, address.is_none(), &theme).on_mouse_up(
             gpui::MouseButton::Left,
             cx.listener(|this, _, _, cx| {
                 this.fn_menu_open = !this.fn_menu_open;
@@ -2179,6 +2302,9 @@ impl StudioView {
                 .into_any_element();
             fn_btn = fn_btn.child(popover::anchored_menu_above("studio-fn-menu", menu, None));
         }
+        let explorer = address
+            .as_deref()
+            .and_then(|addr| self.explorer_url_for(addr));
         Some(
             div()
                 .border_t_1()
@@ -2200,14 +2326,76 @@ impl StudioView {
                                 .text_color(theme.text)
                                 .child("Contract"),
                         )
-                        .child(
-                            div()
-                                .font_family(theme.font_mono.clone())
-                                .text_size(px(11.0))
-                                .text_color(theme.text_dim)
-                                .child(SharedString::from(truncate_middle(address, 8))),
-                        ),
+                        .when_some(address.as_deref(), |el, addr| {
+                            el.child(
+                                div()
+                                    .font_family(theme.font_mono.clone())
+                                    .text_size(px(11.0))
+                                    .text_color(theme.text_dim)
+                                    .child(SharedString::from(truncate_middle(addr, 8))),
+                            )
+                        }),
                 )
+                .when(!deployments.is_empty(), |el| {
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.0))
+                            .children(deployments.into_iter().take(5).enumerate().map(
+                                |(ix, dep)| {
+                                    let addr = dep.address.clone();
+                                    let active = address.as_deref() == Some(dep.address.as_str());
+                                    let explorer = self.explorer_url_for(&dep.address);
+                                    div()
+                                        .id(("studio-dep-row", ix))
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .rounded(px(8.0))
+                                        .px(px(8.0))
+                                        .py(px(4.0))
+                                        .when(active, |row| row.bg(theme.element_hover))
+                                        .child(
+                                            div()
+                                                .font_family(theme.font_mono.clone())
+                                                .text_size(px(11.0))
+                                                .text_color(theme.text)
+                                                .child(SharedString::from(truncate_middle(
+                                                    &dep.address, 8,
+                                                )))
+                                                .on_mouse_up(
+                                                    gpui::MouseButton::Left,
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        this.active_address = Some(addr.clone());
+                                                        cx.notify();
+                                                    }),
+                                                ),
+                                        )
+                                        .when_some(explorer, |row, url| {
+                                            row.child(
+                                                button("Explorer", false, &theme).on_mouse_up(
+                                                    gpui::MouseButton::Left,
+                                                    cx.listener(move |_, _, _, cx| {
+                                                        cx.open_url(&url);
+                                                    }),
+                                                ),
+                                            )
+                                        })
+                                },
+                            )),
+                    )
+                })
+                .when_some(explorer, |el, url| {
+                    el.child(
+                        button("Open explorer", address.is_none(), &theme).on_mouse_up(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |_, _, _, cx| {
+                                cx.open_url(&url);
+                            }),
+                        ),
+                    )
+                })
                 .child(fn_btn)
                 .children(
                     self.interact_args
@@ -2219,24 +2407,27 @@ impl StudioView {
                     div()
                         .flex()
                         .gap(px(8.0))
-                        .child(button("Call", !is_view, &theme).on_mouse_up(
+                        .child(button("Call", !is_view || address.is_none(), &theme).on_mouse_up(
                             gpui::MouseButton::Left,
                             cx.listener(|this, _, _, cx| {
                                 let view_fn = this.interact_fn.as_ref().is_some_and(|f| {
                                     f.state_mutability == "view" || f.state_mutability == "pure"
                                 });
-                                if view_fn {
+                                if view_fn && this.active_address.is_some() {
                                     this.start_call(StudioCallKind::View, cx);
                                 }
                             }),
                         ))
-                        .child(button("Send", is_view, &theme).on_mouse_up(
+                        .child(button("Send", is_view || address.is_none(), &theme).on_mouse_up(
                             gpui::MouseButton::Left,
                             cx.listener(|this, _, _, cx| {
                                 let view_fn = this.interact_fn.as_ref().is_some_and(|f| {
                                     f.state_mutability == "view" || f.state_mutability == "pure"
                                 });
-                                if !view_fn && this.interact_fn.is_some() {
+                                if !view_fn
+                                    && this.interact_fn.is_some()
+                                    && this.active_address.is_some()
+                                {
                                     this.start_call(StudioCallKind::Send, cx);
                                 }
                             }),

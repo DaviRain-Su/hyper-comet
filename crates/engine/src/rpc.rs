@@ -73,7 +73,7 @@ use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
 use crate::studio::{
     DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioStore, WalletStore, record_from_done,
+    StudioLaunchRunner, StudioStore, WalletStore,
 };
 use crate::terminals::Terminals;
 use crate::uploads::Uploads;
@@ -1259,17 +1259,9 @@ impl RpcService for EngineRpc {
                     .into_iter()
                     .find(|w| w.id == p.wallet_id)
                     .ok_or_else(|| RpcError::Failed(format!("unknown wallet {}", p.wallet_id)))?;
-                let store = self.deploy_store.clone();
                 let stream = self
                     .studio_deploy
                     .deploy(p, network, wallet)
-                    .inspect(move |event| {
-                        if let Some(record) = record_from_done(event)
-                            && let Err(err) = store.append(record.clone())
-                        {
-                            tracing::warn!(error = %err, "failed to persist deployment record");
-                        }
-                    })
                     .filter_map(|event| async move { serde_json::to_value(&event).ok() });
                 Ok(RpcReply::Stream(stream.boxed()))
             }
