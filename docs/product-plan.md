@@ -52,7 +52,7 @@
 | 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | ✅ |
 | 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志 `StudioLogs`(cast logs,近 10k 块) | ✅ |
 | 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
-| 2.6 Studio Preview | 右侧 Preview:ABI→HTML + 应用内 ABI 镜像 + **专用 WebView 窗口**(`apps/proofship-webview` wry,或 Chromium `--app`);Browser 兜底 | ✅ |
+| 2.6 Studio Preview | 右侧 Preview:ABI→HTML + 应用内 ABI 镜像 + **同一 `comet` 二进制**的 `preview-webview` 子命令开专用 WebView 窗口(Chromium `--app=` 兜底) | ✅ |
 
 **本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**。Preview=专用 WebView 窗口 + 应用内 ABI 镜像 + localhost HTML。多链 deploy lane 后置。Web/账户(Phase 3–4)后置。
 

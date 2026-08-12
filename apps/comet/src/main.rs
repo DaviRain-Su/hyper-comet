@@ -4,6 +4,7 @@
 
 mod auth_cli;
 mod daemon;
+mod preview_webview;
 mod update_cli;
 
 use clap::{Parser, Subcommand};
@@ -38,6 +39,11 @@ enum Command {
     Update {
         #[arg(long)]
         check: bool,
+    },
+    /// Open a dedicated Preview WebView window (same binary; Studio re-execs this).
+    PreviewWebview {
+        /// Local preview URL, e.g. http://127.0.0.1:PORT/
+        url: String,
     },
 }
 
@@ -87,6 +93,11 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // Preview WebView is a short-lived sibling process — skip heavy logging /
+    // engine setup and never start gpui.
+    if let Some(Command::PreviewWebview { url }) = &cli.command {
+        return preview_webview::run(url);
+    }
     // Long-running modes log at info, one-shot CLI commands at warn (RUST_LOG
     // overrides either).
     // loro's internal block-encode diagnostics log at info and flood
@@ -161,6 +172,9 @@ fn main() -> anyhow::Result<()> {
         Some(Command::Update { check }) => {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(update_cli::update(&edge_url_from_env(), check))
+        }
+        Some(Command::PreviewWebview { .. }) => {
+            unreachable!("preview-webview handled before logging setup")
         }
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Install => daemon::install(&engine_config_from_env().data_dir),

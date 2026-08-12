@@ -11,7 +11,6 @@ members = [
     "crates/ui",
     "crates/abi",
     "apps/comet",
-    "apps/proofship-webview",
 ]
 
 [workspace.package]

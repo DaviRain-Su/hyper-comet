@@ -1,10 +1,10 @@
 //! Dedicated Preview WebView window launcher.
 //!
 //! gpui cannot host an in-pane child WebView reliably (especially on Linux /
-//! Wayland). Instead we open a **managed app window**:
-//! 1. Prefer a bundled `proofship-webview` binary (wry) when present.
-//! 2. Else Chromium / Chrome / Brave `--app=<url>` (real WebView chrome-less window).
-//! 3. Else fall back to the system browser via `open_url`.
+//! Wayland). Studio opens a **sibling process of the same `comet` binary**:
+//! `comet preview-webview <url>`. No second product executable to ship.
+//!
+//! Fallback: Chromium / Chrome / Brave `--app=<url>` when wry/WebKit is missing.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -46,7 +46,28 @@ impl StudioWebView {
         }
         self.stop();
 
-        if let Some(bin) = resolve_proofship_webview() {
+        // Prefer re-exec of this app: `comet preview-webview <url>`.
+        if let Ok(exe) = std::env::current_exe() {
+            match Command::new(&exe)
+                .arg("preview-webview")
+                .arg(url)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => {
+                    *self.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+                    return Ok(WebViewBackend::CometSelf);
+                }
+                Err(err) => {
+                    tracing::warn!(error = %err, "comet preview-webview spawn failed");
+                }
+            }
+        }
+
+        // Explicit override still allowed for packaging experiments.
+        if let Some(bin) = resolve_explicit_webview() {
             let child = Command::new(&bin)
                 .arg(url)
                 .stdin(Stdio::null())
@@ -55,7 +76,7 @@ impl StudioWebView {
                 .spawn()
                 .map_err(|e| format!("spawn {}: {e}", bin.display()))?;
             *self.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
-            return Ok(WebViewBackend::ProofshipWry);
+            return Ok(WebViewBackend::ExplicitBinary);
         }
 
         if let Some(browser) = resolve_chromium_family() {
@@ -82,7 +103,7 @@ impl StudioWebView {
         }
 
         Err(
-            "No WebView backend found. Install Chromium/Chrome, or build apps/proofship-webview (wry)."
+            "No WebView backend found. Build comet with WebKitGTK (Linux: libwebkit2gtk-4.1-dev), or install Chromium."
                 .into(),
         )
     }
@@ -104,52 +125,30 @@ impl Drop for StudioWebView {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebViewBackend {
-    ProofshipWry,
+    /// `comet preview-webview` — same shipped binary.
+    CometSelf,
+    ExplicitBinary,
     ChromiumApp,
 }
 
 impl WebViewBackend {
     pub fn label(self) -> &'static str {
         match self {
-            Self::ProofshipWry => "proofship-webview",
+            Self::CometSelf => "comet preview-webview",
+            Self::ExplicitBinary => "PROOFSHIP_WEBVIEW",
             Self::ChromiumApp => "Chromium app window",
         }
     }
 }
 
-fn resolve_proofship_webview() -> Option<PathBuf> {
-    if let Ok(explicit) = std::env::var("PROOFSHIP_WEBVIEW") {
-        let p = PathBuf::from(explicit.trim());
-        if !p.as_os_str().is_empty() && is_executable(&p) {
-            return Some(p);
-        }
+fn resolve_explicit_webview() -> Option<PathBuf> {
+    let explicit = std::env::var("PROOFSHIP_WEBVIEW").ok()?;
+    let p = PathBuf::from(explicit.trim());
+    if !p.as_os_str().is_empty() && is_executable(&p) {
+        Some(p)
+    } else {
+        None
     }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        for name in ["proofship-webview", "comet-preview-webview"] {
-            let candidate = dir.join(name);
-            if is_executable(&candidate) {
-                return Some(candidate);
-            }
-        }
-        // Dev: `target/debug/comet` → sibling `proofship-webview`.
-        let candidate = dir.join("proofship-webview");
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    // Dev fallback: CARGO_TARGET_DIR / target/{debug,release}/proofship-webview
-    for profile in ["debug", "release"] {
-        let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .join(profile)
-            .join("proofship-webview");
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    which("proofship-webview")
 }
 
 fn resolve_chromium_family() -> Option<PathBuf> {
@@ -201,8 +200,8 @@ mod tests {
 
     #[test]
     fn backend_labels_are_stable() {
+        assert_eq!(WebViewBackend::CometSelf.label(), "comet preview-webview");
         assert_eq!(WebViewBackend::ChromiumApp.label(), "Chromium app window");
-        assert_eq!(WebViewBackend::ProofshipWry.label(), "proofship-webview");
     }
 
     #[test]

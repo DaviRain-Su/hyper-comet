@@ -1,13 +1,10 @@
-//! ProofShip Preview WebView — dedicated OS window via wry/WebKit.
+//! Dedicated Preview WebView window (`comet preview-webview <url>`).
 //!
-//! Usage:
-//!   proofship-webview http://127.0.0.1:PORT/
-//!
-//! Spawned by Studio Preview when available; falls back to Chromium `--app=`
-//! if this binary is missing.
+//! Same binary as the headed app — Studio re-execs itself so we do not ship a
+//! second product executable. gpui cannot host a reliable in-pane child
+//! WebView on Linux/Wayland, so this is a managed sibling OS window.
 
-use std::env;
-
+use anyhow::{Context, Result};
 use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -15,26 +12,21 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
-fn main() {
-    let url = env::args()
-        .nth(1)
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            eprintln!("usage: proofship-webview <url>");
-            std::process::exit(64);
-        });
+pub fn run(url: &str) -> Result<()> {
+    let url = url.trim();
+    anyhow::ensure!(!url.is_empty(), "url must not be empty");
 
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("ProofShip Preview")
         .with_inner_size(tao::dpi::LogicalSize::new(960.0, 780.0))
         .build(&event_loop)
-        .expect("create window");
+        .context("create preview window")?;
 
     let _webview = WebViewBuilder::new()
-        .with_url(&url)
+        .with_url(url)
         .build(&window)
-        .expect("create webview");
+        .context("create webview (need WebKitGTK on Linux: libwebkit2gtk-4.1)")?;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;

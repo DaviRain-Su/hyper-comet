@@ -82,8 +82,9 @@ NL input ──▶ draft via agent lane (harness ACP lanes)
 - No deploy endpoint, no private keys.
 - No relay/web viewer (web app phase).
 - Studio **Preview** (right pane): ABI → local HTML dapp on `127.0.0.1`; Start
-  opens a dedicated **WebView** window (`proofship-webview` via wry, or Chromium
-  `--app=`). In-pane ABI mirror for no-arg views; Browser button as fallback.
-  (gpui cannot host a reliable child WebView on Linux/Wayland.)
+  opens a dedicated WebView via **`comet preview-webview <url>`** (same binary
+  re-exec; wry/WebKit). Chromium `--app=` fallback; Browser button last resort.
+  In-pane ABI mirror for no-arg views. (gpui cannot host a reliable child
+  WebView on Linux/Wayland.)
 - No per-vertical templates in the engine (removed with the RWA vertical; a
   data-driven template system may return as its own feature).

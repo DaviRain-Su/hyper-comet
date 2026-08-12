@@ -38,9 +38,9 @@ proofship/
 Preview WebView (desktop):
 
 ```bash
-cargo build -p proofship-webview   # wry window; needs libwebkit2gtk-4.1-dev on Linux
-# Studio Preview → Start auto-opens it (or Chromium --app= if binary missing)
-# Override: PROOFSHIP_WEBVIEW=/path/to/proofship-webview
+# Same comet binary — Studio re-execs: comet preview-webview <url>
+# Linux build needs libwebkit2gtk-4.1-dev for the wry path.
+cargo run -p comet -- preview-webview http://127.0.0.1:PORT/
 ```
 
 ## 快速复现（本机门禁）
