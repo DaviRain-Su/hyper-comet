@@ -57,33 +57,25 @@ enum DaemonCommand {
     Status,
 }
 
-/// Production edge (Cloudflare Worker + Durable Objects on the zeron.sh zone).
-/// `COMET_EDGE_URL` overrides (local dev / self-hosting).
-const DEFAULT_EDGE_URL: &str = "https://edge.comet.zeron.sh";
-
-/// Production WorkOS AuthKit client id — public knowledge (it appears in every
-/// authorize URL), so baking it in is safe. Overridden by `COMET_WORKOS_CLIENT_ID`;
-/// set it to the empty string — or set a dev bearer via `COMET_EDGE_TOKEN` — to
-/// force dev-mode auth instead.
-const DEFAULT_WORKOS_CLIENT_ID: &str = "client_01KWD0EAKZKD50YCQJNYSRE4BY";
-
+/// ProofShip is local-first: no hosted edge is baked in. `COMET_EDGE_URL`
+/// points at a self-hosted edge deployment (sync); unset runs fully offline.
 fn edge_url_from_env() -> String {
     std::env::var("COMET_EDGE_URL")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_EDGE_URL.into())
+        .unwrap_or_default()
 }
 
-/// WorkOS client id resolution: explicit env wins (empty string = dev mode);
-/// otherwise a `COMET_EDGE_TOKEN` dev bearer keeps dev mode (smoke tests,
-/// local wrangler); otherwise the baked production client id — so a bare
-/// `comet headless` signs in against production with zero configuration.
+/// Auth is dev-mode (local identity, no sign-in) unless a WorkOS client id is
+/// explicitly configured via `COMET_WORKOS_CLIENT_ID` (empty string forces dev
+/// mode); a `COMET_EDGE_TOKEN` dev bearer also keeps dev mode (smoke tests,
+/// local wrangler). Production auth is opt-in, never the default.
 fn workos_client_id_from_env(edge_token: &Option<String>) -> Option<String> {
     match std::env::var("COMET_WORKOS_CLIENT_ID") {
         Ok(v) if v.trim().is_empty() => None,
         Ok(v) => Some(v),
         Err(_) if edge_token.is_some() => None,
-        Err(_) => Some(DEFAULT_WORKOS_CLIENT_ID.into()),
+        Err(_) => None,
     }
 }
 
@@ -220,8 +212,8 @@ fn engine_config_from_env() -> comet_engine::EngineConfig {
         // WorkOS mode: the signed-in session's org wins; COMET_ORG_ID (dev
         // default "dev-org") scopes the workspace room otherwise.
         org_id: std::env::var("COMET_ORG_ID").ok(),
-        // Real auth against production by default; see
-        // `workos_client_id_from_env` for the dev-mode escape hatches.
+        // Dev-mode auth by default (local identity, zero config);
+        // `COMET_WORKOS_CLIENT_ID` opts into real WorkOS sign-in.
         workos_client_id: workos_client_id_from_env(&edge_token),
         edge_token,
     }
@@ -374,8 +366,10 @@ fn open_log_file_in(dir: &std::path::Path, mode: &str) -> Option<std::fs::File> 
         let rc = unsafe { libc::flock(existing.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
         if rc != 0 {
             // A live process owns the canonical log — leave it alone.
-            return std::fs::File::create(dir.join(format!("comet-{mode}.{}.log", std::process::id())))
-                .ok();
+            return std::fs::File::create(
+                dir.join(format!("comet-{mode}.{}.log", std::process::id())),
+            )
+            .ok();
         }
         // No live writer: rotate, create fresh, and lock it as ours. (The
         // probe's flock dies with `existing`; a first-ever launch has nothing
@@ -420,7 +414,10 @@ mod log_file_tests {
         // After the owner exits, a fresh launch rotates normally.
         drop(first);
         let third = open_log_file_in(dir, "headed").expect("third log");
-        assert!(dir.join("comet-headed.log.old").is_file(), "rotation resumes");
+        assert!(
+            dir.join("comet-headed.log.old").is_file(),
+            "rotation resumes"
+        );
         drop(third);
     }
 }
@@ -429,7 +426,9 @@ mod log_file_tests {
 /// only exist when a second instance raced a live one for the canonical log.
 #[cfg(unix)]
 fn sweep_stale_pid_logs(dir: &std::path::Path, mode: &str) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     let prefix = format!("comet-{mode}.");
     let week = std::time::Duration::from_secs(7 * 24 * 60 * 60);
     for entry in entries.flatten() {

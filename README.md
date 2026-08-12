@@ -1,35 +1,80 @@
-# Comet
+# ProofShip
 
-Control your coding agents (Claude Code, Codex, Grok, Hermes, Pi) from any of
-your devices.
+**AI drafts the contract. The gate decides if it ships.**
 
-![Comet running a Claude Code session](docs/screenshot.png)
+ProofShip is a local-first desktop app for building and deploying Web3 products:
+you describe a contract in natural language, a coding agent of your choice
+drafts it as a [ProofForge](https://github.com/DaviRain-Su/proof_forge)
+ProgramV1 source, and a
+machine gate — `check → build → inspect` — decides whether anything ships.
+No gate pass, no artifacts, no deploy. First target chain: **X Layer**.
 
-Every device runs a small engine that keeps your sessions in sync: start an
-agent on one machine, follow and drive it from another. Install the engine as
-a daemon on an always-on machine (a VPS, a spare box) and your agents keep
-working after you close your laptop.
+> AI 起草合约,门禁决定它能不能上链。ProofShip 是一个本地优先的桌面 app:
+> 自然语言描述需求,你选择的 code agent 起草 ProofForge ProgramV1 源,
+> 机器门禁(check→build→inspect)决定产出与否——不过门禁,没有制品,没有部署。
+> 首发目标链:X Layer。
 
-## Install the daemon (Linux)
+## Why (AI × Web3)
+
+AI can draft a smart contract in a minute; nothing about that says the contract
+is allowed to ship. ProofShip's answer is a **machine-checked pre-deploy gate**
+between the draft and the chain:
+
+- **Agent drafting, your lane** — one ACP (Agent Client Protocol) layer drives
+  whichever agent CLI you already use: Claude Code, Codex, Grok Build, Hermes,
+  Pi, Cursor, OpenCode (`crates/harness`).
+- **The gate is the authority** — semantic checks with `PF-*` diagnostics that
+  feed back into the agent as a bounded repair loop, then EVM build and an
+  exact-disk-closure inspect with content digests. Failing drafts produce
+  **zero artifacts** (fail closed).
+- **One-command deploy** — gated artifacts deploy to **X Layer testnet**
+  (chainId 1952) via `proofship/scripts/deploy-xlayer-testnet.sh`; keys live
+  only in env vars, never in the app or the repo.
+- **Local-first, multi-device** — sessions/docs sync across your devices via
+  Loro CRDTs through Cloudflare Durable Objects; the engine runs headless on a
+  VPS or embedded in the app. Web app (Cloudflare-hosted front end +
+  `proofship/relay/`) is the next milestone.
+
+## Quick start
 
 ```bash
-curl -fsSL https://comet.zeron.sh/install.sh | sh
-comet login                          # sign in (paste a code, done)
-systemctl --user start comet-native
+# 1. Toolchain (vendored proof-forge-next + olean closure + locked chain tools)
+proofship/scripts/install-toolchain.sh
+
+# 2. Run the machine gate on the bundled regression sample
+proofship/scripts/gate.sh crates/engine/tests/fixtures/rwa_share_registry.lean RwaShareRegistry
+
+# 3. Deploy a gate-passing contract to X Layer testnet (your own funded key;
+#    never written to any file — see the script's discipline header)
+export PF_XLAYER_KEY=<hex>
+PF_XLAYER_CONFIRM=yes PF_XLAYER_PRIVATE_KEY_ENV=PF_XLAYER_KEY \
+  proofship/scripts/deploy-xlayer-testnet.sh \
+  crates/engine/tests/fixtures/rwa_share_registry.lean RwaShareRegistry \
+  'constructor(uint64,uint64,uint64)' 1000000 50000 100000
 ```
 
-No configuration needed. Day-to-day:
+The desktop app (Rust + gpui): `cargo run -p comet` — sidebar **Studio** view
+runs NL → agent draft → gate live; see `docs/proofship-studio.md`.
 
-```bash
-comet status      # signed in? engine running?
-comet update      # update to the latest release
-comet daemon start|stop|restart|status
+## Repository map
+
+```text
+apps/comet            the desktop binary (headed + headless engine daemon)
+crates/               proto · doc · sync · harness · engine · rpc · ui (gpui)
+proofship/            platform pieces: toolchain installer, gate + deploy
+                      scripts, local bridge reference, Cloudflare relay
+edge/                 TypeScript Worker + Durable Objects (sync edge)
+docs/                 architecture, studio spec, competition materials
 ```
 
-On macOS: build `comet` from source, then `comet daemon install` (launchd).
+## Honesty boundary
 
----
+The gate is **engineering-grade** machine verification (semantic checks +
+same-file theorem certification). We do **not** claim full formal verification,
+proven bytecode, or securities compliance. Deploy keys never touch the app or
+the repository.
 
-Developing or curious how it works? [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/zeronsh/comet) or check out [ARCHITECTURE.md](ARCHITECTURE.md).
+## Status
 
-Licensed under the [MIT License](LICENSE).
+Built for the **OKX Build X Series — AI Season** hackathon
+(submission materials: `docs/competition/`). Licensed under MIT.
