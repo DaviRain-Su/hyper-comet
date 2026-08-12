@@ -22,7 +22,7 @@
 1. **合约交互前端** —— ✅ 本地:Studio Contract 面板 + Preview HTML;`Open in browser`。Web 交互台后置(Phase 3.3)。
 2. **网络/钱包配置** —— ✅ Networks + Wallets + WC 会话签名;多 EVM 预设(X Layer 优先)。
 3. **平台多用户账户体系**(未来)—— 很多开发者各自注册/登录使用 ProofShip:自托管 edge + 登录(WorkOS 管线已内建;**SIWE 钱包登录**对 web3 用户更自然,二选一或并存)、D1 用户/组织表、每用户空间隔离、分享权限策略。注意分层:同步/组织模型从第一天就是多用户设计(workspace doc 按 org 授权、devices 注册表、WorkOS org 门禁,继承自基座);缺的是**托管平台侧**的账户层(relay README 的 R1+ 备注本来就列着:per-device tokens、accounts、sharing policy、D1、OAuth/SIWE)。
-4. **右侧前端预览**(类 Codex / 其它 code-agent app)—— ✅ Studio Preview + 本机 HTTP + **专用 WebView 窗口**(`proofship-webview` / Chromium `--app`);面板内 ABI 镜像。
+4. **右侧前端预览**(类 Codex / 其它 code-agent app)—— ✅ Studio Preview + 本机 HTTP + **系统浏览器打开**;面板内 ABI 镜像。真内嵌 dapp 留给 web app。
 
 补充(产品化必需):
 
@@ -52,9 +52,9 @@
 | 2.3 部署 lane 入 app | `StudioDeploy` RPC:包装 gate→(evm 链)签名发送→回执;**部署记录表** `deployments.json`(network/address/ctor/digest/tx/ts);Studio gate 通过卡出现 "Deploy" 按钮 | ✅ |
 | 2.4 合约交互台 | ABI→表单 schema(crate 级,纯 Rust,可测);gpui 面板:view 直接 eth_call 只读,entry 走 2.2 钱包;事件日志 `StudioLogs`(cast logs,近 10k 块) | ✅ |
 | 2.5 项目模型 v1 | launch 归集到 project(path + 名称);Studio 侧栏按项目分组;项目页=源+门禁历史+部署列表 | ✅ 侧栏分组 + 项目概览条 + `project_id` 部署归集 |
-| 2.6 Studio Preview | 右侧 Preview:ABI→HTML + 应用内 ABI 镜像 + **同一 `comet` 二进制**的 `preview-webview` 子命令开专用 WebView 窗口(Chromium `--app=` 兜底) | ✅ |
+| 2.6 Studio Preview | 右侧 Preview:ABI→localhost HTML + 应用内 ABI 镜像;Start **默认用主机浏览器打开**;真 WebView 内嵌留给 web app | ✅ |
 
-**本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**。Preview=专用 WebView 窗口 + 应用内 ABI 镜像 + localhost HTML。多链 deploy lane 后置。Web/账户(Phase 3–4)后置。
+**本地进度(2026-08-12):** Phase 2 主路径已齐;产品聚焦 **OKX X Layer**。Preview=系统浏览器 + 应用内 ABI 镜像。多链 deploy / 真内嵌 dapp 留给 web。Web/账户(Phase 3–4)后置。
 
 ### Phase 3 — web app(Cloudflare 托管)
 

@@ -31,17 +31,12 @@ proofship/
     gate.sh                ← 通用门禁:任意 .lean → check/build/inspect(开发/调试用)
     ci-gate-example.sh     ← CI 示例:gate + 断言 gate-report.json(certified)
   templates/               ← Studio 数据驱动模板(RWA / Time-Lock;X Layer first)
-  web/                     ← Phase 3 静态壳
+  web/                     ← Phase 3 静态壳(未来真内嵌 dapp UI)
   … (bridge/relay/toolchain/inbox) …
 ```
 
-Preview WebView (desktop):
-
-```bash
-# Same comet binary — Studio re-execs: comet preview-webview <url>
-# Linux build needs libwebkit2gtk-4.1-dev for the wry path.
-cargo run -p comet -- preview-webview http://127.0.0.1:PORT/
-```
+Studio Preview opens the host system browser for the localhost HTML dapp
+(no separate WebView binary / window on desktop).
 
 ## 快速复现（本机门禁）
 
