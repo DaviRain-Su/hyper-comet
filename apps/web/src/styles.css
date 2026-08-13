@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/geist-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/geist-mono-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@theme {
+  --color-bg: #06040a;
+  --color-raise: #0c0913;
+  --color-ink: #ece7f7;
+  --color-dim: #9c92b5;
+  --color-faint: #5d5178;
+  --color-line: #241c36;
+  --color-line-soft: #1a1428;
+  --color-purple: #8b5cf6;
+  --color-purple-hi: #b79df9;
+  --color-purple-deep: #5b34b8;
+  --font-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  html {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2140 transparent;
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-ink);
+    min-height: 100dvh;
+  }
+  ::selection {
+    background: var(--color-purple-deep);
+    color: #fff;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+.hero-ascii {
+  font-family: var(--font-mono);
+  font-size: 7.6px;
+  font-weight: 400;
+  line-height: 1.25;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0, "dlig" 0;
+  white-space: pre;
+  background: linear-gradient(165deg, #a986ff 0%, #8b5cf6 40%, #4b2b96 80%, #241548 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-mask-image: radial-gradient(85% 85% at 55% 45%, #000 55%, transparent 96%);
+  mask-image: radial-gradient(85% 85% at 55% 45%, #000 55%, transparent 96%);
+}
+
+.lamp-run {
+  animation: lamp-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes lamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
