@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "@/lib/auth/provider";
 import { I18nProvider } from "@/lib/i18n";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
+import { AppErrorComponent } from "@/lib/error-component";
 import appCss from "../styles.css?url";
 
 const APP_NAME = "ProofShip";
@@ -17,10 +18,11 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       {
         name: "description",
-        content: "AI drafts the contract. The gate decides if it ships.",
+        content:
+          "ProofShip — AI drafts the contract. The gate decides if it ships. Local-first Web3 studio powered by ProofForge.",
       },
       { name: "apple-mobile-web-app-title", content: APP_NAME },
-      { name: "theme-color", content: "#06040a" },
+      { name: "theme-color", content: "#041a42" },
       { name: "twitter:card", content: "summary_large_image" },
       { property: "og:title", content: APP_NAME },
       {
@@ -39,12 +41,18 @@ export const Route = createRootRoute({
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
       { rel: "stylesheet", href: appCss },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap",
+      },
       { rel: "manifest", href: "/__grok/manifest.webmanifest" },
       { rel: "apple-touch-icon", href: "/__grok/icon-180.png" },
+      { rel: "preload", as: "image", href: "/heroes/alpine-peaks.jpg" },
     ],
   }),
+  errorComponent: AppErrorComponent,
   component: () => (
-    <html lang="en" className="antialiased" suppressHydrationWarning>
+    <html lang="zh-CN" className="antialiased" suppressHydrationWarning>
       <head>
         <HeadContent />
       </head>
@@ -58,9 +66,9 @@ export const Route = createRootRoute({
               position="bottom-right"
               toastOptions={{
                 style: {
-                  background: "#0c0913",
-                  border: "1px solid #241c36",
-                  color: "#ece7f7",
+                  background: "#0c1220",
+                  border: "1px solid #ffffff1a",
+                  color: "#f4f6f8",
                 },
               }}
             />

@@ -4,24 +4,30 @@ import { cn } from "@/lib/cn";
 export function LocaleToggle({ className }: { className?: string }) {
   const { locale, setLocale } = useLocale();
   return (
-    <div className={cn("inline-flex items-center gap-1 text-[13px]", className)}>
+    <div
+      className={cn(
+        "inline-flex items-center gap-0.5 rounded-[var(--radius-md)] border border-border bg-bg p-0.5",
+        className,
+      )}
+      role="group"
+      aria-label="Language"
+    >
       <button
         type="button"
         onClick={() => setLocale("en")}
         className={cn(
-          "px-1.5 py-1 transition-colors",
-          locale === "en" ? "text-ink" : "text-faint hover:text-dim",
+          "rounded-md px-2 py-1 text-[12px] font-semibold tracking-wide transition-colors",
+          locale === "en" ? "bg-white/10 text-fg" : "text-fg-subtle hover:text-fg",
         )}
       >
         EN
       </button>
-      <span className="text-faint/50">/</span>
       <button
         type="button"
         onClick={() => setLocale("zh")}
         className={cn(
-          "px-1.5 py-1 transition-colors",
-          locale === "zh" ? "text-ink" : "text-faint hover:text-dim",
+          "rounded-md px-2 py-1 text-[12px] font-semibold tracking-wide transition-colors",
+          locale === "zh" ? "bg-white/10 text-fg" : "text-fg-subtle hover:text-fg",
         )}
       >
         中文

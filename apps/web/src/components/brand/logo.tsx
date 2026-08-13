@@ -5,7 +5,11 @@ export function Wordmark({ className, to = "/" }: { className?: string; to?: str
   return (
     <Link
       to={to}
-      className={cn("text-[16px] font-semibold tracking-tight text-ink", className)}
+      search={{}}
+      className={cn(
+        "font-display text-[1.45rem] italic leading-none tracking-tight text-fg",
+        className,
+      )}
       aria-label="ProofShip home"
     >
       ProofShip

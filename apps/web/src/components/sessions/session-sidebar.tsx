@@ -1,10 +1,11 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2 } from "lucide-react";
 import { Wordmark } from "@/components/brand/logo";
 import { LocaleToggle } from "@/components/brand/locale-toggle";
 import { AccountChip } from "@/components/nav/account-chip";
 import { pick, useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
+import { PROOFSHIP_RELEASES } from "@/lib/links";
 import type { SessionRow } from "@/lib/sessions";
 
 export function SessionSidebar({
@@ -24,7 +25,7 @@ export function SessionSidebar({
   const navigate = useNavigate();
 
   return (
-    <aside className="flex h-full min-h-0 w-full flex-col border-r border-line bg-raise">
+    <aside className="flex h-full min-h-0 w-full flex-col border-r border-border bg-surface">
       <div className="flex h-14 items-center justify-between px-4">
         <Wordmark />
         <LocaleToggle />
@@ -34,7 +35,7 @@ export function SessionSidebar({
           type="button"
           onClick={onNew}
           disabled={creating}
-          className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-line bg-bg text-[13px] font-medium text-ink hover:border-faint disabled:opacity-50"
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-[var(--radius-md)] bg-accent text-[13px] font-semibold text-accent-fg shadow-[var(--shadow-accent)] hover:bg-accent-hover disabled:opacity-50"
         >
           <Plus className="size-4" />
           {pick(locale, "New session", "新会话")}
@@ -42,7 +43,7 @@ export function SessionSidebar({
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         {sessions.length === 0 ? (
-          <p className="px-3 py-6 text-[13px] text-faint">
+          <p className="px-3 py-6 text-[13px] text-fg-subtle">
             {pick(locale, "No sessions yet.", "还没有会话。")}
           </p>
         ) : (
@@ -52,24 +53,27 @@ export function SessionSidebar({
                 <Link
                   to="/sessions/$sessionId"
                   params={{ sessionId: s.id }}
+                  search={{}}
                   className={cn(
-                    "block rounded-lg px-3 py-2.5 pr-9 text-[13px] leading-snug",
-                    activeId === s.id ? "bg-bg text-ink" : "text-dim hover:bg-bg/60 hover:text-ink",
+                    "block rounded-[var(--radius-md)] px-3 py-2.5 pr-9 text-[13px] leading-snug",
+                    activeId === s.id
+                      ? "bg-bg text-fg"
+                      : "text-fg-muted hover:bg-bg/60 hover:text-fg",
                   )}
                 >
                   <span className="flex items-start gap-2">
                     <span
                       className={cn(
                         "mt-1.5 size-1.5 shrink-0 rounded-full",
-                        s.status === "ready" && "bg-emerald-400",
+                        s.status === "ready" && "bg-success",
                         s.status === "failed" && "bg-red-400",
-                        s.status === "running" && "bg-purple-hi",
-                        s.status === "idle" && "bg-faint",
+                        s.status === "running" && "bg-accent",
+                        s.status === "idle" && "bg-fg-subtle",
                       )}
                     />
                     <span className="min-w-0">
                       <span className="line-clamp-2">{s.title}</span>
-                      <span className="mt-1 block font-mono text-[10px] uppercase tracking-wider text-faint">
+                      <span className="mt-1 block font-mono text-[10px] uppercase tracking-wider text-fg-subtle">
                         {s.status}
                       </span>
                     </span>
@@ -78,11 +82,11 @@ export function SessionSidebar({
                 <button
                   type="button"
                   aria-label={pick(locale, "Delete", "删除")}
-                  className="absolute right-2 top-2.5 hidden rounded p-1 text-faint hover:text-ink group-hover:block"
+                  className="absolute right-2 top-2.5 hidden rounded p-1 text-fg-subtle hover:text-fg group-hover:block"
                   onClick={(e) => {
                     e.preventDefault();
                     onDelete(s.id);
-                    if (activeId === s.id) void navigate({ to: "/sessions" });
+                    if (activeId === s.id) void navigate({ to: "/sessions", search: {} });
                   }}
                 >
                   <Trash2 className="size-3.5" />
@@ -92,8 +96,17 @@ export function SessionSidebar({
           </ul>
         )}
       </nav>
-      <div className="border-t border-line px-4 py-3">
-        <AccountChip />
+      <div className="space-y-3 border-t border-border px-3 py-3">
+        <a
+          href={PROOFSHIP_RELEASES}
+          className="flex h-10 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-border bg-bg text-[12.5px] font-medium text-fg hover:border-border-strong"
+        >
+          <Download className="size-3.5 text-accent" />
+          {pick(locale, "Download desktop", "下载桌面版")}
+        </a>
+        <div className="px-1">
+          <AccountChip />
+        </div>
       </div>
     </aside>
   );

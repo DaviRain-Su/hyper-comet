@@ -1,10 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft } from "lucide-react";
 import { GROK_PROVIDERS, authClient, authEnabled, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { pick, useLocale } from "@/lib/i18n";
-import { Wordmark } from "@/components/brand/logo";
-import { LocaleToggle } from "@/components/brand/locale-toggle";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -21,15 +20,15 @@ function goNext(navigate: ReturnType<typeof useNavigate>, next: string) {
   if (next.startsWith("/sessions/") && next !== "/sessions/") {
     const sessionId = next.slice("/sessions/".length).split("?")[0] ?? "";
     if (sessionId) {
-      void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+      void navigate({ to: "/sessions/$sessionId", params: { sessionId }, search: {} });
       return;
     }
   }
-  void navigate({ to: "/sessions" });
+  void navigate({ to: "/sessions", search: {} });
 }
 
 function Login() {
-  const { locale } = useLocale();
+  const { t } = useI18n();
   const { redirect } = Route.useSearch();
   const navigate = useNavigate();
   const { user, isPending } = useCurrentUserState();
@@ -71,97 +70,101 @@ function Login() {
   };
 
   return (
-    <main className="relative grid min-h-dvh place-items-center px-5 py-16">
-      <div className="absolute inset-x-0 top-0 flex h-16 items-center justify-between px-5 sm:px-8">
-        <Wordmark />
-        <LocaleToggle />
+    <div className="relative min-h-dvh overflow-hidden bg-bg text-fg">
+      <div className="absolute inset-0" aria-hidden="true">
+        <div className="absolute inset-0 bg-sky-deep" />
+        <img src="/heroes/dusk-ridges.jpg" alt="" className="h-full w-full object-cover opacity-40" />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: "linear-gradient(180deg, rgba(5,8,15,0.55) 0%, rgba(5,8,15,0.85) 100%)",
+          }}
+        />
       </div>
-      <div className="w-full max-w-[400px]">
-        <p className="text-[11px] font-semibold tracking-[0.14em] text-purple-hi">ProofShip</p>
-        <h1 className="mt-3 text-[28px] font-semibold tracking-[-0.03em]">
-          {pick(locale, "Sign in to Sessions", "登录进入 Sessions")}
-        </h1>
-        <p className="mt-2 text-[14px] leading-relaxed text-dim">
-          {pick(
-            locale,
-            "This identifies you. It never sends a deploy key.",
-            "只用来识别你。不会交出部署密钥。",
-          )}
-        </p>
+      <div className="film-grain opacity-20" aria-hidden="true" />
 
-        {authEnabled ? (
-          <div className="mt-8 space-y-2.5">
-            {GROK_PROVIDERS.map((p) => (
-              <button
-                key={p.providerId}
-                type="button"
-                onClick={() => signIn(p.providerId, { callbackURL: next })}
-                className="flex h-11 w-full items-center justify-center rounded-lg border border-line bg-raise text-[14px] font-medium text-ink hover:border-faint"
-              >
-                {pick(locale, `Continue with ${p.label}`, `使用 ${p.label} 继续`)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-8 text-sm text-dim">{pick(locale, "Sign-in is disabled.", "登录已关闭。")}</p>
-        )}
-
-        <div className="my-7 flex items-center gap-3 text-[12px] text-faint">
-          <span className="h-px flex-1 bg-line" />
-          {pick(locale, "or email", "或使用邮箱")}
-          <span className="h-px flex-1 bg-line" />
-        </div>
-
-        <form className="space-y-3" onSubmit={(e) => void onEmail(e)}>
-          {mode === "up" && (
-            <Input
-              placeholder={pick(locale, "Name", "名字")}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoComplete="name"
-            />
-          )}
-          <Input
-            type="email"
-            required
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-          />
-          <Input
-            type="password"
-            required
-            minLength={8}
-            placeholder={pick(locale, "Password", "密码")}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === "up" ? "new-password" : "current-password"}
-          />
-          {error && <p className="text-[13px] text-red-300">{error}</p>}
-          <Button type="submit" className="h-11 w-full" disabled={busy}>
-            {mode === "up"
-              ? pick(locale, "Create account", "创建账户")
-              : pick(locale, "Sign in with email", "邮箱登录")}
-          </Button>
-        </form>
-
-        <button
-          type="button"
-          className="mt-4 text-[13px] text-dim hover:text-ink"
-          onClick={() => setMode(mode === "up" ? "in" : "up")}
+      <div className="relative z-10 mx-auto flex min-h-dvh max-w-md flex-col justify-center px-5 py-16">
+        <Link
+          to="/"
+          search={{}}
+          className="mb-8 inline-flex w-fit items-center gap-2 text-[13.5px] font-medium text-white/70 transition-colors hover:text-white"
         >
-          {mode === "up"
-            ? pick(locale, "Already have an account? Sign in", "已有账户？去登录")
-            : pick(locale, "New here? Create an account", "新用户？创建账户")}
-        </button>
+          <ArrowLeft className="size-4" />
+          {t.loginBack}
+        </Link>
 
-        <p className="mt-10 text-[12px] text-faint">
-          <Link to="/" className="hover:text-dim">
-            ← {pick(locale, "Back to ProofShip", "返回 ProofShip")}
-          </Link>
-        </p>
+        <div className="rounded-[var(--radius-2xl)] border border-border bg-surface/90 p-7 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-8">
+          <p className="font-display text-[1.75rem] italic leading-none text-fg">ProofShip</p>
+          <h1 className="mt-4 text-[1.35rem] font-semibold tracking-tight">{t.loginTitle}</h1>
+          <p className="mt-2 text-[14px] leading-relaxed text-fg-muted">{t.loginSub}</p>
+
+          <div className="mt-7 space-y-3">
+            {isPending ? (
+              <div className="h-11 animate-pulse rounded-[var(--radius-md)] bg-white/10" />
+            ) : authEnabled ? (
+              GROK_PROVIDERS.map((p) => (
+                <Button
+                  key={p.providerId}
+                  type="button"
+                  variant="secondary"
+                  className="w-full"
+                  onClick={() => void signIn(p.providerId, { callbackURL: next })}
+                >
+                  {t.loginContinue} {p.label}
+                </Button>
+              ))
+            ) : (
+              <p className="text-sm text-fg-muted">{t.loginDisabled}</p>
+            )}
+          </div>
+
+          <div className="my-6 flex items-center gap-3 text-[12px] text-fg-subtle">
+            <span className="h-px flex-1 bg-border" />
+            {t.loginEmail}
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
+          <form className="space-y-3" onSubmit={(e) => void onEmail(e)}>
+            {mode === "up" && (
+              <Input
+                placeholder={t.loginName}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoComplete="name"
+              />
+            )}
+            <Input
+              type="email"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+            />
+            <Input
+              type="password"
+              required
+              minLength={8}
+              placeholder={t.loginPassword}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === "up" ? "new-password" : "current-password"}
+            />
+            {error && <p className="text-[13px] text-red-300">{error}</p>}
+            <Button type="submit" className="h-11 w-full" disabled={busy}>
+              {mode === "up" ? t.loginCreate : t.loginSignIn}
+            </Button>
+          </form>
+
+          <button
+            type="button"
+            className="mt-4 text-[13px] text-fg-muted hover:text-fg"
+            onClick={() => setMode(mode === "up" ? "in" : "up")}
+          >
+            {mode === "up" ? t.loginHaveAccount : t.loginNewHere}
+          </button>
+        </div>
       </div>
-    </main>
+    </div>
   );
 }

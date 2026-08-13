@@ -1,7 +1,6 @@
 {
   "name": "proofship-web",
   "private": true,
-  "description": "ProofShip Sessions companion — landing + local gate demo. Keys never transit the web.",
   "sideEffects": false,
   "type": "module",
   "overrides": {
@@ -90,5 +89,6 @@
     "typescript": "^5.7.0",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.2.0"
-  }
+  },
+  "description": "ProofShip web: landing + remote Sessions panel. Agent and keys stay on the desktop."
 }

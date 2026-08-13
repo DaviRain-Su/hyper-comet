@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, type Sql } from "@/lib/db";
-import { draftProgram } from "@/lib/agent";
 import { extractModule, gateSummary, runGate, type GateResult } from "@/lib/gate";
 import { templateById } from "@/lib/templates";
 
@@ -162,64 +161,43 @@ export const deleteSession = createServerFn({ method: "POST" })
     return { ok: true as const };
   });
 
-async function persistTurn(opts: {
-  sql: Sql;
-  userId: string;
-  sessionId: string;
-  title?: string;
-  userText?: string;
-  agentNote: string;
-  source: string;
-  gate: GateResult;
-}) {
-  const now = new Date().toISOString();
-  if (opts.userText) {
-    await opts.sql`
+export const appendMessage = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(
+    (input: {
+      sessionId: string;
+      role: MessageRow["role"];
+      kind: MessageRow["kind"];
+      content: string;
+      title?: string;
+    }) => input,
+  )
+  .handler(async ({ context, data }) => {
+    const sql = await getSql();
+    const sessions = await sql<SessionDb>`
+      select * from ship_sessions
+      where id = ${data.sessionId} and user_id = ${context.userId}
+      limit 1
+    `;
+    if (!sessions[0]) throw new Error("Session not found");
+    await sql`
       insert into ship_messages (id, session_id, user_id, role, kind, content)
-      values (${nid()}, ${opts.sessionId}, ${opts.userId}, ${"user"}, ${"text"}, ${opts.userText})
+      values (${nid()}, ${data.sessionId}, ${context.userId}, ${data.role}, ${data.kind}, ${data.content})
     `;
-  }
-  await opts.sql`
-    insert into ship_messages (id, session_id, user_id, role, kind, content)
-    values (${nid()}, ${opts.sessionId}, ${opts.userId}, ${"agent"}, ${"text"}, ${opts.agentNote})
-  `;
-  await opts.sql`
-    insert into ship_messages (id, session_id, user_id, role, kind, content)
-    values (${nid()}, ${opts.sessionId}, ${opts.userId}, ${"agent"}, ${"lean"}, ${opts.source})
-  `;
-  const summary = gateSummary(opts.gate);
-  await opts.sql`
-    insert into ship_messages (id, session_id, user_id, role, kind, content, meta_json)
-    values (
-      ${nid()}, ${opts.sessionId}, ${opts.userId}, ${"tool"}, ${"gate"}, ${summary},
-      ${JSON.stringify(opts.gate)}
-    )
-  `;
-  const status: SessionStatus = opts.gate.passed ? "ready" : "failed";
-  if (opts.title) {
-    await opts.sql`
+    const title =
+      data.title ||
+      (sessions[0].title === "New session" && data.role === "user"
+        ? titleFrom(data.content)
+        : sessions[0].title);
+    await sql`
       update ship_sessions
-      set title = ${opts.title},
-          status = ${status},
-          source = ${opts.source},
-          module_name = ${opts.gate.module},
-          gate_json = ${JSON.stringify(opts.gate)},
-          updated_at = ${now}
-      where id = ${opts.sessionId} and user_id = ${opts.userId}
+      set title = ${title}, updated_at = ${new Date().toISOString()}
+      where id = ${data.sessionId} and user_id = ${context.userId}
     `;
-  } else {
-    await opts.sql`
-      update ship_sessions
-      set status = ${status},
-          source = ${opts.source},
-          module_name = ${opts.gate.module},
-          gate_json = ${JSON.stringify(opts.gate)},
-          updated_at = ${now}
-      where id = ${opts.sessionId} and user_id = ${opts.userId}
-    `;
-  }
-}
+    return loadBundle(sql, context.userId, data.sessionId);
+  });
 
+/** Queue a prompt for the desktop. This process never drafts. */
 export const sendPrompt = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { sessionId: string; prompt: string }) => input)
@@ -236,63 +214,28 @@ export const sendPrompt = createServerFn({ method: "POST" })
     if (!session) throw new Error("Session not found");
 
     await sql`
-      update ship_sessions set status = ${"running"}, updated_at = ${new Date().toISOString()}
+      insert into ship_messages (id, session_id, user_id, role, kind, content)
+      values (${nid()}, ${session.id}, ${context.userId}, ${"user"}, ${"text"}, ${prompt})
+    `;
+    await sql`
+      insert into ship_messages (id, session_id, user_id, role, kind, content)
+      values (
+        ${nid()}, ${session.id}, ${context.userId}, ${"system"}, ${"text"},
+        ${"Queued for your desktop. This page does not run an agent."}
+      )
+    `;
+    const nextTitle = session.title === "New session" ? titleFrom(prompt) : session.title;
+    await sql`
+      update ship_sessions
+      set status = ${"running"},
+          title = ${nextTitle},
+          updated_at = ${new Date().toISOString()}
       where id = ${session.id} and user_id = ${context.userId}
     `;
-
-    const draft = await draftProgram(prompt, session.source || undefined);
-    if (!draft.ok) {
-      const ask = draft.ask ?? draft.error;
-      await sql`
-        insert into ship_messages (id, session_id, user_id, role, kind, content)
-        values (${nid()}, ${session.id}, ${context.userId}, ${"user"}, ${"text"}, ${prompt})
-      `;
-      await sql`
-        insert into ship_messages (id, session_id, user_id, role, kind, content)
-        values (${nid()}, ${session.id}, ${context.userId}, ${"agent"}, ${"text"}, ${ask})
-      `;
-      const nextTitle = session.title === "New session" ? titleFrom(prompt) : session.title;
-      await sql`
-        update ship_sessions
-        set status = ${"idle"},
-            title = ${nextTitle},
-            updated_at = ${new Date().toISOString()}
-        where id = ${session.id} and user_id = ${context.userId}
-      `;
-      return loadBundle(sql, context.userId, session.id);
-    }
-
-    let gate = runGate(draft.source);
-    let source = draft.source;
-    let note = draft.note;
-    if (!gate.passed) {
-      const repair = await draftProgram(
-        `Gate failed. Repair the ProgramV1. Diagnostics:\n${gate.steps[0]?.diagnostics
-          .map((d) => `${d.code}: ${d.message}`)
-          .join("\n")}\n\nOriginal request:\n${prompt}`,
-        draft.source,
-      );
-      if (repair.ok) {
-        source = repair.source;
-        gate = runGate(repair.source);
-        note = `${note}\n\nRepair pass applied.`;
-      }
-    }
-
-    await persistTurn({
-      sql,
-      userId: context.userId,
-      sessionId: session.id,
-      title: session.title === "New session" ? titleFrom(prompt) : undefined,
-      userText: prompt,
-      agentNote: note,
-      source,
-      gate,
-    });
-
     return loadBundle(sql, context.userId, session.id);
   });
 
+/** Load a known-good starter as a local preview — not an agent draft. */
 export const applyTemplate = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator((input: { sessionId: string; templateId: string; locale?: "en" | "zh" }) => input)
@@ -312,21 +255,40 @@ export const applyTemplate = createServerFn({ method: "POST" })
     const source = tpl.source;
     const gate = runGate(source);
     const title = data.locale === "zh" ? tpl.titleZh : tpl.title;
+    const note =
+      data.locale === "zh"
+        ? `只读模板 ${tpl.module}。真正的起草和门禁在你的桌面端跑。把这段说明发给本机 agent。`
+        : `Read-only starter ${tpl.module}. Real drafting and the gate run on your desktop. Send this spec to the local agent.`;
 
-    await persistTurn({
-      sql,
-      userId: context.userId,
-      sessionId: session.id,
-      title,
-      userText: prompt,
-      agentNote:
-        data.locale === "zh"
-          ? `已载入模板 ${tpl.module}。源码仍须过门禁后才能上链。`
-          : `Loaded starter ${tpl.module}. The gate still decides if it ships.`,
-      source,
-      gate,
-    });
-
+    await sql`
+      insert into ship_messages (id, session_id, user_id, role, kind, content)
+      values (${nid()}, ${session.id}, ${context.userId}, ${"user"}, ${"text"}, ${prompt})
+    `;
+    await sql`
+      insert into ship_messages (id, session_id, user_id, role, kind, content)
+      values (${nid()}, ${session.id}, ${context.userId}, ${"system"}, ${"text"}, ${note})
+    `;
+    await sql`
+      insert into ship_messages (id, session_id, user_id, role, kind, content)
+      values (${nid()}, ${session.id}, ${context.userId}, ${"agent"}, ${"lean"}, ${source})
+    `;
+    await sql`
+      insert into ship_messages (id, session_id, user_id, role, kind, content, meta_json)
+      values (
+        ${nid()}, ${session.id}, ${context.userId}, ${"tool"}, ${"gate"},
+        ${gateSummary(gate)}, ${JSON.stringify(gate)}
+      )
+    `;
+    await sql`
+      update ship_sessions
+      set title = ${title},
+          status = ${gate.passed ? "ready" : "failed"},
+          source = ${source},
+          module_name = ${gate.module},
+          gate_json = ${JSON.stringify(gate)},
+          updated_at = ${new Date().toISOString()}
+      where id = ${session.id} and user_id = ${context.userId}
+    `;
     return loadBundle(sql, context.userId, session.id);
   });
 
