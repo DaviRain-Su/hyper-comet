@@ -31,7 +31,10 @@ pub use launch_run::StudioLaunchRunner;
 pub use mcp::{DEFAULT_REMOTE_PF_MCP_URL, resolve_studio_mcp_servers};
 pub use networks::{NetworkError, NetworkStore};
 pub use preview::StudioPreview;
-pub use relay::{RelayCommand, RelayCommandKind, StudioRelay};
+pub use relay::{
+    DEFAULT_PROOFSHIP_RELAY, DEFAULT_PROOFSHIP_WEB, RelayCommand, RelayCommandKind, RelayIdentity,
+    StudioRelay, resolve_relay_base, resolve_relay_identity,
+};
 pub use session_enrich::{SKILL_PROMPT_MARKER, enrich_sessions_run_request};
 pub use store::{StoreError, StudioStore};
 pub use templates::{TemplateError, TemplateStore};

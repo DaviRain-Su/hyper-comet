@@ -70,7 +70,7 @@
 
 | 类型 | 形态 | 职责 |
 |---|---|---|
-| **UserExecutor** | 本机桌面引擎或用户自挂 VPS(`PROOFSHIP_RELAY` 注册) | Sessions `QueueCommand` + skill/MCP;gate;deploy(DevEnvKey / WC) |
+| **UserExecutor** | 本机桌面引擎或用户自挂 VPS。**默认**连托管 relay `https://proofship-relay.davirain-yin.workers.dev`(房间 `desktop-{deviceId}`);`PROOFSHIP_RELAY=off` 关闭 | Sessions `QueueCommand` + skill/MCP;gate;deploy(DevEnvKey / WC) |
 | **PlatformExecutor** | Cloudflare **Sandbox**(`proofship/platform-sandbox/`) | gate / 后续 agent_draft;**拒绝** keyed deploy |
 | `@cloudflare/computer` | 仅 spike | 编排/文件;gate 仍进 container — 见 `COMPUTER_SPIKE.md`;**非**生产默认 |
 

@@ -31,11 +31,11 @@ between the draft and the chain:
 - **One-command deploy** — gated artifacts deploy to **X Layer testnet**
   (chainId 1952) via `proofship/scripts/deploy-xlayer-testnet.sh`; keys live
   only in env vars, never in the app or the repo.
-- **Local-first, multi-device-ready** — everything works offline; a sync
-  foundation (Loro CRDTs through Cloudflare Durable Objects, engine headless on
-  a VPS or embedded in the app) is built in but currently dormant — it activates
-  once you deploy your own `edge/` Worker. Web app (Cloudflare-hosted front end
-  + `proofship/relay/`) is the next milestone.
+- **Local-first, multi-device-ready** — desktop works offline. The engine
+  **defaults** to the hosted ProofShip relay so web Sessions at
+  [proofship-web.pages.dev](https://proofship-web.pages.dev) can drive this
+  machine (`PROOFSHIP_RELAY=off` to disable). Sync edge (`edge/`) still needs
+  your own Worker if you want comet-style CRDT rooms.
 
 ## Quick start
 

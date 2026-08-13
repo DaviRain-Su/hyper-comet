@@ -1,10 +1,12 @@
 //! Engine → Cloudflare relay WebSocket client (web coordinator).
 //!
 //! The local engine is a **UserExecutor**. Env:
-//! - `PROOFSHIP_RELAY` — Worker base URL (required to enable)
+//! - `PROOFSHIP_RELAY` — Worker base URL. **Unset defaults to the hosted
+//!   ProofShip relay.** Set `off` / `0` / `-` to disable.
 //! - `PROOFSHIP_DEVICE_TOKEN` / `DEVICE_TOKEN` / `ENGINE_TOKEN` — device auth
-//! - `PROOFSHIP_DEVICE_ID` — device id matched in relay DEVICE_TOKENS (default `default`)
-//! - `PROOFSHIP_SESSION_ID` / `PROOFSHIP_LAUNCH_ID` — room id (default `default`)
+//! - `PROOFSHIP_DEVICE_ID` — device id (default: this install's engine id)
+//! - `PROOFSHIP_SESSION_ID` / `PROOFSHIP_LAUNCH_ID` — room id
+//!   (default: `desktop-{deviceId}` so machines do not collide)
 //! - `PROOFSHIP_RELAY_CHAT_ID` — Sessions chat used for web prompts (default `proofship-relay`)
 
 use std::sync::{Arc, Mutex};
@@ -17,9 +19,92 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 const BUFFER_CAP: usize = 200;
 const MAX_TEXT: usize = 4096;
 
+/// Hosted ProofShip coordinator (Cloudflare Worker, 2026-08-13).
+pub const DEFAULT_PROOFSHIP_RELAY: &str = "https://proofship-relay.davirain-yin.workers.dev";
+/// Hosted Sessions viewer (Cloudflare Pages).
+pub const DEFAULT_PROOFSHIP_WEB: &str = "https://proofship-web.pages.dev";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayIdentity {
+    pub base: String,
+    pub device_id: String,
+    pub session_id: String,
+}
+
+impl RelayIdentity {
+    pub fn web_url(&self) -> String {
+        format!(
+            "{}/?relay={}&session={}",
+            DEFAULT_PROOFSHIP_WEB.trim_end_matches('/'),
+            urlencoding_encode(&self.base),
+            urlencoding_encode(&self.session_id)
+        )
+    }
+}
+
+/// Resolve the Worker base. Unset → hosted default. `off`/`0`/`-`/`false` → disabled.
+pub fn resolve_relay_base(raw: Option<&str>) -> Option<String> {
+    match raw {
+        None => Some(DEFAULT_PROOFSHIP_RELAY.trim_end_matches('/').to_string()),
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() || is_relay_off(trimmed) {
+                None
+            } else {
+                Some(trimmed.trim_end_matches('/').to_string())
+            }
+        }
+    }
+}
+
+fn is_relay_off(value: &str) -> bool {
+    matches!(
+        value.to_ascii_lowercase().as_str(),
+        "off" | "0" | "-" | "false" | "disable" | "disabled" | "none" | "local"
+    )
+}
+
+/// Device + room used when env vars are omitted.
+pub fn resolve_relay_identity(
+    base: &str,
+    default_device_id: &str,
+    device_override: Option<&str>,
+    session_override: Option<&str>,
+) -> RelayIdentity {
+    let device_id = device_override
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(default_device_id)
+        .to_string();
+    let session_id = session_override
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("desktop-{device_id}"));
+    RelayIdentity {
+        base: base.to_string(),
+        device_id,
+        session_id,
+    }
+}
+
+fn identity_from_env(base: &str, default_device_id: &str) -> RelayIdentity {
+    let device = std::env::var("PROOFSHIP_DEVICE_ID").ok();
+    let session = std::env::var("PROOFSHIP_SESSION_ID")
+        .or_else(|_| std::env::var("PROOFSHIP_LAUNCH_ID"))
+        .ok();
+    resolve_relay_identity(
+        base,
+        default_device_id,
+        device.as_deref(),
+        session.as_deref(),
+    )
+}
+
 #[derive(Clone, Default)]
 pub struct StudioRelay {
     inner: Arc<Mutex<Option<RelayState>>>,
+    default_device: Arc<Mutex<String>>,
 }
 
 struct RelayState {
@@ -52,33 +137,81 @@ impl StudioRelay {
         Self::default()
     }
 
-    /// Spawn the reconnecting client when `PROOFSHIP_RELAY` is set.
-    pub fn start_from_env(&self) -> Option<mpsc::UnboundedReceiver<RelayCommand>> {
+    pub fn set_default_device(&self, device_id: &str) {
+        *self.default_device.lock().unwrap_or_else(|e| e.into_inner()) = device_id.to_string();
+    }
+
+    pub fn default_device(&self) -> String {
+        let id = self
+            .default_device
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if id.is_empty() {
+            "desktop".into()
+        } else {
+            id
+        }
+    }
+
+    pub fn status(&self) -> comet_proto::StudioRelayStatus {
+        let device = self.default_device();
+        match resolve_relay_base(std::env::var("PROOFSHIP_RELAY").ok().as_deref()) {
+            Some(base) => {
+                let id = identity_from_env(&base, &device);
+                comet_proto::StudioRelayStatus {
+                    enabled: true,
+                    web_url: Some(id.web_url()),
+                    base: Some(id.base),
+                    device_id: id.device_id,
+                    session_id: id.session_id,
+                }
+            }
+            None => comet_proto::StudioRelayStatus {
+                enabled: false,
+                base: None,
+                device_id: device,
+                session_id: String::new(),
+                web_url: None,
+            },
+        }
+    }
+
+    /// Spawn the reconnecting client. Hosted relay is the default; `PROOFSHIP_RELAY=off` disables.
+    pub fn start_from_env(
+        &self,
+        default_device_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<RelayCommand>> {
         {
             let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if guard.is_some() {
                 return None;
             }
         }
-        let base = std::env::var("PROOFSHIP_RELAY").ok()?;
-        let base = base.trim().trim_end_matches('/').to_string();
-        if base.is_empty() {
-            return None;
-        }
+        let base = resolve_relay_base(std::env::var("PROOFSHIP_RELAY").ok().as_deref())?;
+        self.set_default_device(default_device_id);
+        let identity = identity_from_env(&base, default_device_id);
         let token = std::env::var("PROOFSHIP_DEVICE_TOKEN")
             .or_else(|_| std::env::var("DEVICE_TOKEN"))
             .or_else(|_| std::env::var("ENGINE_TOKEN"))
             .unwrap_or_default();
-        let device_id =
-            std::env::var("PROOFSHIP_DEVICE_ID").unwrap_or_else(|_| "default".into());
-        let session_id = std::env::var("PROOFSHIP_SESSION_ID")
-            .or_else(|_| std::env::var("PROOFSHIP_LAUNCH_ID"))
-            .unwrap_or_else(|_| "default".into());
         let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(RelayState { tx: out_tx });
+        tracing::info!(
+            base = %identity.base,
+            device = %identity.device_id,
+            session = %identity.session_id,
+            web = %identity.web_url(),
+            "proofship relay starting (user executor)"
+        );
         tokio::spawn(run_client(
-            base, token, device_id, session_id, out_rx, cmd_tx,
+            identity.base,
+            token,
+            identity.device_id,
+            identity.session_id,
+            out_rx,
+            cmd_tx,
         ));
         Some(cmd_rx)
     }
@@ -307,6 +440,27 @@ fn parse_command(text: &str) -> Option<RelayCommand> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unset_relay_defaults_to_hosted_worker() {
+        let base = resolve_relay_base(None).expect("default");
+        assert_eq!(base, DEFAULT_PROOFSHIP_RELAY);
+        assert!(resolve_relay_base(Some("off")).is_none());
+        assert!(resolve_relay_base(Some("LOCAL")).is_none());
+        assert_eq!(
+            resolve_relay_base(Some(" https://custom.example/ ")).as_deref(),
+            Some("https://custom.example")
+        );
+    }
+
+    #[test]
+    fn identity_defaults_to_per_device_room() {
+        let id = resolve_relay_identity(DEFAULT_PROOFSHIP_RELAY, "abc-123", None, None);
+        assert_eq!(id.device_id, "abc-123");
+        assert_eq!(id.session_id, "desktop-abc-123");
+        assert!(id.web_url().contains("session=desktop-abc-123"));
+        assert!(id.web_url().starts_with(DEFAULT_PROOFSHIP_WEB));
+    }
 
     #[test]
     fn socket_url_rewrites_https() {

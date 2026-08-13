@@ -117,6 +117,7 @@ pub mod methods {
     pub const APPLY_UPDATE: &str = "ApplyUpdate";
     // ProofShip Launch Studio (local engine gate + launch store).
     pub const STUDIO_STATUS: &str = "StudioStatus";
+    pub const STUDIO_RELAY_STATUS: &str = "StudioRelayStatus";
     pub const STUDIO_DRAFT: &str = "StudioDraft";
     pub const STUDIO_GATE: &str = "StudioGate";
     pub const STUDIO_LAUNCH_RUN: &str = "StudioLaunchRun";

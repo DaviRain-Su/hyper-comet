@@ -843,6 +843,7 @@ fn forwardable(method: &str) -> bool {
             // Studio is device-local: the gate runs against the target device's
             // local vendored toolchain and launch store.
             | methods::STUDIO_STATUS
+            | methods::STUDIO_RELAY_STATUS
             | methods::STUDIO_DRAFT
             | methods::STUDIO_GATE
             | methods::STUDIO_LAUNCH_RUN
@@ -1168,6 +1169,7 @@ impl RpcService for EngineRpc {
                 RpcReply::value(&serde_json::json!({ "deviceId": self.doc_host.device_id() }))
             }
             methods::STUDIO_STATUS => RpcReply::value(&self.studio_gate.status()),
+            methods::STUDIO_RELAY_STATUS => RpcReply::value(&self.studio_relay.status()),
             methods::STUDIO_DRAFT => {
                 let p: StudioDraftRequest = parse_params(params)?;
                 let stream = self

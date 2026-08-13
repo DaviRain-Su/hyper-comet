@@ -542,6 +542,7 @@ impl EngineCore {
         let studio_interact = StudioInteract::new(inbox_root, wallet_connect.clone());
         let studio_preview = StudioPreview::new();
         let studio_relay = StudioRelay::new();
+        studio_relay.set_default_device(&device_id);
         let template_store = TemplateStore::new(Vec::<PathBuf>::new());
         Ok(Self {
             sessions,
@@ -668,12 +669,12 @@ impl EngineCore {
         comet_rpc::HostRelay::spawn(config, self.rpc_service(), on_nudge)
     }
 
-    /// Start the Cloudflare relay client when `PROOFSHIP_RELAY` is set.
+    /// Start the Cloudflare relay client (hosted Worker by default).
     /// Web prompts become Sessions runs (skill + MCP via enrich_sessions_run_request).
     pub fn boot_studio_relay(&self) {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
-            if let Some(mut cmds) = self.studio_relay.start_from_env() {
+            if let Some(mut cmds) = self.studio_relay.start_from_env(&self.device_id) {
                 let relay = self.studio_relay.clone();
                 let sessions = self.sessions.clone();
                 let doc_host = self.doc_host.clone();
