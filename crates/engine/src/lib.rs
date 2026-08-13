@@ -45,9 +45,10 @@ pub use run_journal::{JournalError, RunJournal};
 pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
 pub use studio::{
-    DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, TemplateStore,
-    WalletConnectBridge, WalletStore,
+    DEFAULT_PROOFSHIP_RELAY, DEFAULT_PROOFSHIP_WEB, DeployStore, DraftRunner, NetworkStore,
+    StudioDeployer, StudioGate, StudioInteract, StudioLaunchRunner, StudioPreview, StudioRelay,
+    StudioStore, TemplateStore, WalletConnectBridge, WalletStore, resolve_device_token,
+    resolve_relay_base, resolve_relay_identity,
 };
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
@@ -415,6 +416,7 @@ pub struct EngineCore {
     pub studio_preview: StudioPreview,
     pub wallet_connect: WalletConnectBridge,
     pub studio_relay: StudioRelay,
+    pub data_dir: PathBuf,
     pub template_store: TemplateStore,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
@@ -570,6 +572,7 @@ impl EngineCore {
             studio_preview,
             wallet_connect,
             studio_relay,
+            data_dir: data_dir.to_path_buf(),
             template_store,
             uploads,
             agent_accounts,
@@ -679,7 +682,8 @@ impl EngineCore {
     pub fn boot_studio_relay(&self) {
         static ONCE: std::sync::Once = std::sync::Once::new();
         ONCE.call_once(|| {
-            if let Some(mut cmds) = self.studio_relay.start_from_env(&self.device_id) {
+            if let Some(mut cmds) = self.studio_relay.start_from_env(&self.device_id, &self.data_dir)
+            {
                 let relay = self.studio_relay.clone();
                 let sessions = self.sessions.clone();
                 let doc_host = self.doc_host.clone();

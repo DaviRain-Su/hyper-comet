@@ -2,6 +2,7 @@
 //! decoupled from the daemon: `comet login` persists the session and exits, so a
 //! service-managed `comet headless` only ever loads saved credentials.
 
+mod agent_cli;
 mod auth_cli;
 mod daemon;
 mod update_cli;
@@ -28,6 +29,11 @@ enum Command {
     /// Live sync introspection from the running engine: per-room connection
     /// state, last pushed-frame/ack ages, rejoin/probe/resync counters.
     Sync,
+    /// ProofShip UserExecutor: local agent that talks to the Cloudflare relay.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     /// Manage `comet headless` as a background service (launchd / systemd --user).
     Daemon {
         #[command(subcommand)]
@@ -39,6 +45,16 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum AgentCommand {
+    /// Show whether this machine is online for web Sessions.
+    Status,
+    /// Print the web Sessions URL for this device.
+    Url,
+    /// Run the engine without a UI (same as `comet headless`).
+    Start,
 }
 
 #[derive(Subcommand)]
@@ -93,7 +109,12 @@ fn main() -> anyhow::Result<()> {
     // journald on every snapshot export — enough to fill a disk on a
     // long-running headless host. Quiet them by default (RUST_LOG still
     // overrides the whole filter).
-    let long_running = matches!(&cli.command, None | Some(Command::Headless));
+    let long_running = matches!(
+        &cli.command,
+        None | Some(Command::Headless) | Some(Command::Agent {
+            command: AgentCommand::Start
+        })
+    );
     let default_filter = if long_running {
         "info,loro_internal=warn,loro=warn"
     } else {
@@ -107,7 +128,10 @@ fn main() -> anyhow::Result<()> {
     // the engine logs the exact failure line. One file per launch, previous
     // launch kept as `.old`.
     let log_file = if long_running {
-        let mode = if cli.command.is_some() {
+        let mode = if matches!(
+            &cli.command,
+            Some(Command::Headless) | Some(Command::Agent { command: AgentCommand::Start })
+        ) {
             "headless"
         } else {
             "headed"
@@ -162,6 +186,23 @@ fn main() -> anyhow::Result<()> {
             let runtime = tokio::runtime::Runtime::new()?;
             runtime.block_on(update_cli::update(&edge_url_from_env(), check))
         }
+        Some(Command::Agent { command }) => match command {
+            AgentCommand::Status => {
+                let runtime = tokio::runtime::Runtime::new()?;
+                runtime.block_on(agent_cli::status(engine_config_from_env()))
+            }
+            AgentCommand::Url => {
+                let runtime = tokio::runtime::Runtime::new()?;
+                runtime.block_on(agent_cli::url(engine_config_from_env()))
+            }
+            AgentCommand::Start => {
+                let runtime = tokio::runtime::Runtime::new()?;
+                runtime.block_on(async {
+                    let engine = comet_engine::Engine::new(engine_config_from_env());
+                    engine.run().await
+                })
+            }
+        },
         Some(Command::Daemon { command }) => match command {
             DaemonCommand::Install => daemon::install(&engine_config_from_env().data_dir),
             DaemonCommand::Uninstall => daemon::uninstall(),

@@ -9,6 +9,7 @@
 //!   (default: `desktop-{deviceId}` so machines do not collide)
 //! - `PROOFSHIP_RELAY_CHAT_ID` — Sessions chat used for web prompts (default `proofship-relay`)
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -87,6 +88,44 @@ pub fn resolve_relay_identity(
         device_id,
         session_id,
     }
+}
+
+/// Env token wins; otherwise a stable file under `{data_dir}/studio/relay-token`.
+pub fn resolve_device_token(data_dir: &Path) -> String {
+    for key in ["PROOFSHIP_DEVICE_TOKEN", "DEVICE_TOKEN", "ENGINE_TOKEN"] {
+        if let Ok(value) = std::env::var(key) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+    load_or_create_relay_token(data_dir)
+}
+
+fn load_or_create_relay_token(data_dir: &Path) -> String {
+    let path = data_dir.join("studio").join("relay-token");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        let trimmed = existing.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let token = format!("ps_{}", uuid::Uuid::new_v4().simple());
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, &token);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(&path, perms);
+        }
+    }
+    token
 }
 
 fn identity_from_env(base: &str, default_device_id: &str) -> RelayIdentity {
@@ -185,6 +224,7 @@ impl StudioRelay {
     pub fn start_from_env(
         &self,
         default_device_id: &str,
+        data_dir: &Path,
     ) -> Option<mpsc::UnboundedReceiver<RelayCommand>> {
         {
             let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
@@ -195,10 +235,7 @@ impl StudioRelay {
         let base = resolve_relay_base(std::env::var("PROOFSHIP_RELAY").ok().as_deref())?;
         self.set_default_device(default_device_id);
         let identity = identity_from_env(&base, default_device_id);
-        let token = std::env::var("PROOFSHIP_DEVICE_TOKEN")
-            .or_else(|_| std::env::var("DEVICE_TOKEN"))
-            .or_else(|_| std::env::var("ENGINE_TOKEN"))
-            .unwrap_or_default();
+        let token = resolve_device_token(data_dir);
         let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<RelayCommand>();
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(RelayState { tx: out_tx });
@@ -459,6 +496,23 @@ mod tests {
             resolve_relay_base(Some(" https://custom.example/ ")).as_deref(),
             Some("https://custom.example")
         );
+    }
+
+    #[test]
+    fn relay_token_persists_and_skips_empty_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = resolve_device_token(dir.path());
+        let second = resolve_device_token(dir.path());
+        assert_eq!(first, second);
+        assert!(first.starts_with("ps_"));
+        let mode = std::fs::metadata(dir.path().join("studio/relay-token"))
+            .unwrap()
+            .permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(mode.mode() & 0o777, 0o600);
+        }
     }
 
     #[test]

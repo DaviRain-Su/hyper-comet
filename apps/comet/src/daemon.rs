@@ -34,6 +34,14 @@ const CAPTURED_ENV: &[&str] = &[
     "COMET_HARNESS",
     "COMET_DEVICE_NAME",
     "RUST_LOG",
+    "PROOFSHIP_RELAY",
+    "PROOFSHIP_DEVICE_TOKEN",
+    "PROOFSHIP_DEVICE_ID",
+    "PROOFSHIP_SESSION_ID",
+    "PROOFSHIP_LAUNCH_ID",
+    "PROOFSHIP_RELAY_CHAT_ID",
+    "PROOFSHIP_RELAY_CWD",
+    "PROOFSHIP_DEFAULT_HARNESS",
 ];
 
 pub fn install(data_dir: &Path) -> anyhow::Result<()> {
@@ -78,7 +86,30 @@ pub fn install(data_dir: &Path) -> anyhow::Result<()> {
             format!("journalctl --user -u {SYSTEMD_UNIT}")
         }
     );
+    if let Some(url) = proofship_web_url(data_dir) {
+        println!("Web Sessions: {url}");
+        println!("This daemon stays online after you close the desktop window.");
+    }
     Ok(())
+}
+
+fn proofship_web_url(data_dir: &Path) -> Option<String> {
+    let base = comet_engine::resolve_relay_base(std::env::var("PROOFSHIP_RELAY").ok().as_deref())?;
+    let device = std::fs::read_to_string(data_dir.join("device-id"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "desktop".into());
+    let id = comet_engine::resolve_relay_identity(
+        &base,
+        &device,
+        std::env::var("PROOFSHIP_DEVICE_ID").ok().as_deref(),
+        std::env::var("PROOFSHIP_SESSION_ID")
+            .ok()
+            .or_else(|| std::env::var("PROOFSHIP_LAUNCH_ID").ok())
+            .as_deref(),
+    );
+    Some(id.web_url())
 }
 
 pub fn uninstall() -> anyhow::Result<()> {
@@ -397,6 +428,13 @@ mod tests {
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("EnvironmentFile=-%h/.comet-native/env"));
         assert!(unit.contains("WantedBy=default.target"));
+    }
+
+    #[test]
+    fn captured_env_includes_proofship_relay_vars() {
+        assert!(CAPTURED_ENV.contains(&"PROOFSHIP_RELAY"));
+        assert!(CAPTURED_ENV.contains(&"PROOFSHIP_DEVICE_ID"));
+        assert!(CAPTURED_ENV.contains(&"PROOFSHIP_SESSION_ID"));
     }
 
     #[test]
