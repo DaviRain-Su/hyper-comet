@@ -16,8 +16,8 @@ export function EmptySession({
   return (
     <div className="mx-auto flex w-full max-w-[720px] flex-col px-5 py-10">
       <p className="text-[11px] font-semibold tracking-[0.14em] text-accent">Sessions</p>
-      <h1 className="mt-3 text-balance font-display text-[2rem] italic tracking-tight text-fg">
-        {pick(locale, "Drive the machine in front of you.", "驱动你面前的那台机器。")}
+      <h1 className="mt-3 text-balance font-display text-[2rem] text-fg">
+        {pick(locale, "Drive the machine in front of you.", "远程驱动你的电脑。")}
       </h1>
       <p className="mt-3 max-w-[48ch] text-[14.5px] leading-relaxed text-fg-muted">
         {pick(

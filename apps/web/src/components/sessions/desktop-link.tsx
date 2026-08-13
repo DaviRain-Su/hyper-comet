@@ -202,7 +202,7 @@ export function PairingCard({ link }: { link: Link }) {
       <p className="text-[11px] font-semibold tracking-[0.14em] text-accent">
         {pick(locale, "Local first", "本地优先")}
       </p>
-      <h2 className="mt-2 font-display text-[1.65rem] italic tracking-tight text-fg">
+      <h2 className="mt-2 font-display text-[1.65rem] text-fg">
         {pick(locale, "This page is a remote panel.", "这个页面只是远程面板。")}
       </h2>
       <p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-fg-muted">

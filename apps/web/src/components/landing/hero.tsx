@@ -77,7 +77,7 @@ export function Hero() {
               <span className="size-1.5 rounded-full bg-accent" />
               {t.heroBadge}
             </p>
-            <h1 className="rise-in rise-in-delay-1 text-[1.85rem] font-medium leading-[1.16] tracking-[-0.02em] text-white sm:text-[2.35rem] md:text-[2.65rem] lg:text-[2.85rem]">
+            <h1 className="rise-in rise-in-delay-1 text-[1.85rem] font-semibold leading-[1.28] text-white sm:text-[2.35rem] md:text-[2.65rem] lg:text-[2.85rem]">
               {t.heroTitle}
             </h1>
             <p className="rise-in rise-in-delay-2 mt-5 max-w-xl text-[15px] leading-relaxed text-white/80 sm:text-[16px]">

@@ -9,7 +9,6 @@ import {
   Terminal,
   Cpu,
   Layers,
-  Ban,
   Unplug,
   Globe2,
   Server,
@@ -234,9 +233,9 @@ export function ProofForgeSection() {
       <div className="mx-auto max-w-[1280px] px-5 sm:px-8">
         <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
           <div>
-            <p className="mb-3 inline-flex items-center gap-2 text-[12px] font-semibold tracking-wide text-accent uppercase">
+            <p className="mb-3 inline-flex items-center gap-2 text-[12px] font-semibold tracking-wide text-accent">
               <Cpu className="size-3.5" />
-              Kernel
+              {t.forgeKicker}
             </p>
             <h2 className="text-[1.65rem] font-semibold tracking-tight sm:text-[1.9rem]">
               {t.forgeTitle}
@@ -280,21 +279,17 @@ export function ProofForgeSection() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-[var(--radius-xl)] border border-border bg-surface p-5">
                 <div className="flex items-center gap-2 text-[13px] font-semibold">
-                  <Ban className="size-4 text-accent" />
+                  <ShieldCheck className="size-4 text-accent" />
                   {t.forgeFail}
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
-                  Fail closed · no best-effort fallback
-                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">{t.forgeFailBody}</p>
               </div>
               <div className="rounded-[var(--radius-xl)] border border-border bg-surface p-5">
                 <div className="flex items-center gap-2 text-[13px] font-semibold">
-                  <ShieldCheck className="size-4 text-accent" />
+                  <FileCode2 className="size-4 text-accent" />
                   {t.forgeLean}
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
-                  Lean 4 multi-target compiler
-                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">{t.forgeLeanBody}</p>
               </div>
             </div>
           </div>
@@ -309,8 +304,8 @@ export function ProofForgeSection() {
             <span className="inline-flex size-9 items-center justify-center rounded-[var(--radius-md)] border border-border bg-bg text-accent">
               <ScrollText className="size-4" strokeWidth={1.75} />
             </span>
-            <p className="text-[12px] font-semibold tracking-wide text-accent uppercase">
-              Formal methods
+            <p className="text-[12px] font-semibold tracking-wide text-accent">
+              {t.formalKicker}
             </p>
           </div>
           <h3 className="mt-3 text-[1.35rem] font-semibold tracking-tight sm:text-[1.55rem]">
@@ -392,12 +387,12 @@ export function PricingSection() {
           <article className="rounded-[var(--radius-2xl)] border border-border bg-bg p-6 sm:p-8">
             <div className="flex items-center gap-2 text-accent">
               <Terminal className="size-4" />
-              <span className="text-[12px] font-semibold tracking-wide uppercase">
-                Local
+              <span className="text-[12px] font-semibold tracking-wide">
+                {t.pricingLocalKicker}
               </span>
             </div>
             <h3 className="mt-3 text-[1.25rem] font-semibold">{t.pricingLocalTitle}</h3>
-            <p className="mt-1 font-display text-[2.25rem] italic text-fg">
+            <p className="mt-1 text-[2.25rem] font-semibold tracking-tight text-fg">
               {t.pricingLocalPrice}
             </p>
             <p className="mt-3 text-[14px] leading-relaxed text-fg-muted">
@@ -422,12 +417,12 @@ export function PricingSection() {
           <article className="rounded-[var(--radius-2xl)] border border-border-strong bg-sky-deep/40 p-6 sm:p-8">
             <div className="flex items-center gap-2 text-accent">
               <Cloud className="size-4" />
-              <span className="text-[12px] font-semibold tracking-wide uppercase">
-                Cloud
+              <span className="text-[12px] font-semibold tracking-wide">
+                {t.pricingCloudKicker}
               </span>
             </div>
             <h3 className="mt-3 text-[1.25rem] font-semibold">{t.pricingCloudTitle}</h3>
-            <p className="mt-1 font-display text-[2.25rem] italic text-fg">
+            <p className="mt-1 text-[2.25rem] font-semibold tracking-tight text-fg">
               {t.pricingCloudPrice}
             </p>
             <p className="mt-3 text-[14px] leading-relaxed text-fg-muted">
@@ -472,7 +467,7 @@ export function FinalCta() {
   return (
     <section className="border-t border-border bg-sky-deep py-16 sm:py-20">
       <div className="mx-auto max-w-[1280px] px-5 text-center sm:px-8">
-        <h2 className="font-display text-[2rem] italic tracking-tight text-white sm:text-[2.4rem]">
+        <h2 className="text-[2rem] font-semibold tracking-tight text-white sm:text-[2.4rem]">
           {t.ctaTitle}
         </h2>
         <p className="mx-auto mt-3 max-w-lg text-[15px] text-white/75">{t.ctaSub}</p>
@@ -500,7 +495,7 @@ export function SiteFooter() {
     <footer className="border-t border-border bg-bg py-10">
       <div className="mx-auto flex max-w-[1280px] flex-col gap-6 px-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
         <div>
-          <p className="font-display text-[1.35rem] italic text-fg">ProofShip</p>
+          <p className="wordmark font-display text-[1.35rem] italic text-fg">ProofShip</p>
           <p className="mt-1 text-[13px] text-fg-muted">{t.footerTag}</p>
         </div>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-fg-muted">

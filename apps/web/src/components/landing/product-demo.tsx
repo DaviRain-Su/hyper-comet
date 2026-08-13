@@ -92,7 +92,7 @@ function EmptyChrome({ zh, compact }: { zh: boolean; compact?: boolean }) {
       )}
     >
       <aside className="hidden border-r border-border bg-surface p-4 sm:block">
-        <p className="font-display text-[1.35rem] italic leading-none text-fg">ProofShip</p>
+        <p className="wordmark font-display text-[1.35rem] italic leading-none text-fg">ProofShip</p>
         <div className="mt-5 flex h-9 items-center justify-center gap-1.5 rounded-[var(--radius-md)] bg-accent text-[12px] font-semibold text-accent-fg">
           <Plus className="size-3.5" />
           {zh ? "新会话" : "New session"}
@@ -139,13 +139,13 @@ function EmptyChrome({ zh, compact }: { zh: boolean; compact?: boolean }) {
         </div>
         <div className="min-h-0 flex-1 space-y-4 overflow-hidden px-5 py-6">
           <p className="text-[11px] font-semibold tracking-[0.14em] text-accent">Sessions</p>
-          <h3 className="font-display text-[1.65rem] italic leading-tight tracking-tight text-fg sm:text-[1.85rem]">
-            {zh ? "驱动你面前的那台机器。" : "Drive the machine in front of you."}
+          <h3 className="font-display text-[1.65rem] leading-tight text-fg sm:text-[1.85rem]">
+            {zh ? "远程驱动你的电脑。" : "Drive the machine in front of you."}
           </h3>
           <p className="max-w-[46ch] text-[13px] leading-relaxed text-fg-muted">
             {zh
-              ? "网页是远程面板。Agent 和门禁留在桌面。打开 Sessions 即可登录进入。"
-              : "Web is the remote panel. Agent and gate stay on your desktop. Open Sessions to sign in."}
+              ? "网页是远程工作台。Agent 和门禁留在桌面。点开始即可登录进入。"
+              : "Web is the remote workspace. Agent and gate stay on your desktop. Get started to sign in."}
           </p>
           {!compact && (
             <>
@@ -153,12 +153,12 @@ function EmptyChrome({ zh, compact }: { zh: boolean; compact?: boolean }) {
                 <p className="text-[11px] font-semibold tracking-[0.12em] text-accent">
                   {zh ? "本地优先" : "Local first"}
                 </p>
-                <p className="mt-1.5 font-display text-[1.25rem] italic text-fg">
+                <p className="mt-1.5 font-display text-[1.25rem] text-fg">
                   {zh ? "这个页面只是远程面板。" : "This page is a remote panel."}
                 </p>
                 <ol className="mt-3 space-y-1.5 text-[12.5px] text-fg-muted">
                   <li>1. {zh ? "下载桌面版 ProofShip" : "Download desktop ProofShip"}</li>
-                  <li>2. {zh ? "粘贴房间号，点连接" : "Paste the room id, then Attach"}</li>
+                  <li>2. {zh ? "在本机运行 comet agent url，打开链接" : "Run comet agent url, then open the link"}</li>
                   <li>3. {zh ? "桌面灯亮后，提示发到本机" : "When Desktop is on, prompts go local"}</li>
                 </ol>
               </div>
@@ -215,7 +215,7 @@ function SessionChrome({ zh }: { zh: boolean }) {
   return (
     <div className="grid min-h-[420px] bg-bg lg:grid-cols-[200px_minmax(0,1fr)_220px] lg:min-h-[500px]">
       <aside className="hidden border-r border-border bg-surface p-4 lg:block">
-        <p className="font-display text-[1.35rem] italic leading-none text-fg">ProofShip</p>
+        <p className="wordmark font-display text-[1.35rem] italic leading-none text-fg">ProofShip</p>
         <div className="mt-5 flex h-9 items-center justify-center gap-1.5 rounded-[var(--radius-md)] bg-accent text-[12px] font-semibold text-accent-fg">
           <Plus className="size-3.5" />
           {zh ? "新会话" : "New session"}

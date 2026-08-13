@@ -55,7 +55,7 @@ export function SiteNav() {
         <Link
           to="/"
           search={{}}
-          className="font-display text-[1.55rem] italic leading-none tracking-tight text-fg sm:text-[1.65rem]"
+          className="wordmark font-display text-[1.55rem] italic leading-none tracking-tight text-fg sm:text-[1.65rem]"
         >
           ProofShip
         </Link>

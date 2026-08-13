@@ -7,7 +7,7 @@ export function Wordmark({ className, to = "/" }: { className?: string; to?: str
       to={to}
       search={{}}
       className={cn(
-        "font-display text-[1.45rem] italic leading-none tracking-tight text-fg",
+        "wordmark font-display text-[1.45rem] italic leading-none tracking-tight text-fg",
         className,
       )}
       aria-label="ProofShip home"

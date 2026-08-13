@@ -94,7 +94,7 @@ function Login() {
         </Link>
 
         <div className="rounded-[var(--radius-2xl)] border border-border bg-surface/90 p-7 shadow-[var(--shadow-soft)] backdrop-blur-md sm:p-8">
-          <p className="font-display text-[1.75rem] italic leading-none text-fg">ProofShip</p>
+          <p className="wordmark font-display text-[1.75rem] italic leading-none text-fg">ProofShip</p>
           <h1 className="mt-4 text-[1.35rem] font-semibold tracking-tight">{t.loginTitle}</h1>
           <p className="mt-2 text-[14px] leading-relaxed text-fg-muted">{t.loginSub}</p>
 
