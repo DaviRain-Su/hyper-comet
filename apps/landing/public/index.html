@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ProofShip — AI drafts the contract. The gate decides if it ships.</title>
-<meta name="description" content="ProofShip is a local-first smart contract ship engine. AI drafts ProgramV1 contracts across 7 ACP lanes, gated by ProofForge before deployment to X Layer." />
+<meta name="description" content="ProofShip is a local-first desktop app for shipping Web3 products. AI drafts ProgramV1 contracts across 7 ACP lanes, gated by ProofForge before deployment to X Layer. Free and open source." />
 <meta property="og:title" content="ProofShip" />
 <meta property="og:description" content="AI drafts the contract. The gate decides if it ships." />
 <meta property="og:image" content="/assets/app-screenshot.jpg" />
@@ -246,6 +246,176 @@
   @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; gap: 36px; } }
 
+  /* ── section scaffold (today / roadmap / pricing) ────── */
+  .sec { padding: 130px 32px 0; }
+  .sec-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: var(--purple-hi);
+    text-transform: uppercase;
+  }
+  .sec h2 {
+    margin-top: 14px;
+    font-size: clamp(26px, 3.4vw, 36px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+  }
+  .sec > p.lede {
+    margin-top: 14px;
+    max-width: 520px;
+    font-size: 14.5px;
+    line-height: 1.65;
+    color: var(--dim);
+  }
+
+  /* ── today (current features) ────────────────────────── */
+  .today-grid {
+    margin-top: 44px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .today-item {
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    background: var(--bg-raise);
+    padding: 18px 20px;
+  }
+  .today-item h3 {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .today-item h3::before {
+    content: "";
+    flex: none;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background:
+      url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 8.5 6.8 11 12 5.5"/></svg>')
+      center / 11px no-repeat,
+      var(--purple-deep);
+  }
+  .today-item p { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--dim); }
+  @media (max-width: 980px) { .today-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .today-grid { grid-template-columns: 1fr; } }
+
+  /* ── roadmap ─────────────────────────────────────────── */
+  .road-grid {
+    margin-top: 44px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .road-col {
+    border: 1px solid var(--line-soft);
+    border-radius: 10px;
+    background: var(--bg-raise);
+    padding: 22px;
+  }
+  .road-col.now { border-color: var(--purple-deep); }
+  .road-when {
+    display: inline-flex;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--purple-hi);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 11px;
+  }
+  .road-col.now .road-when { background: var(--purple-deep); border-color: var(--purple-deep); color: #fff; }
+  .road-col h3 { margin-top: 16px; font-size: 15.5px; font-weight: 600; letter-spacing: -0.015em; }
+  .road-col ul { margin-top: 14px; list-style: none; }
+  .road-col li {
+    position: relative;
+    padding: 5px 0 5px 18px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dim);
+  }
+  .road-col li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 12px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--purple);
+  }
+  @media (max-width: 900px) { .road-grid { grid-template-columns: 1fr; } }
+
+  /* ── pricing ─────────────────────────────────────────── */
+  .price-grid {
+    margin-top: 44px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+    max-width: 860px;
+  }
+  .price-card {
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    background: var(--bg-raise);
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+  }
+  .price-card.featured { border-color: var(--purple-deep); }
+  .price-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .price-tag {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    color: var(--purple-hi);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 9px;
+  }
+  .price-amount { margin-top: 18px; font-size: 38px; font-weight: 600; letter-spacing: -0.03em; }
+  .price-amount span { font-size: 13px; font-weight: 400; color: var(--faint); letter-spacing: 0; }
+  .price-card ul { margin: 20px 0 26px; list-style: none; flex: 1; }
+  .price-card li {
+    position: relative;
+    padding: 5px 0 5px 20px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dim);
+  }
+  .price-card li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--purple-hi);
+    font-size: 12px;
+  }
+  .price-card .btn { justify-content: center; }
+  .price-card .btn.disabled {
+    background: transparent;
+    color: var(--faint);
+    border: 1px solid var(--line);
+    cursor: default;
+  }
+  .price-note { margin-top: 18px; font-size: 12px; color: var(--faint); max-width: 640px; line-height: 1.6; }
+  @media (max-width: 760px) { .price-grid { grid-template-columns: 1fr; } }
+
+  @media (max-width: 640px) {
+    .sec { padding: 84px 20px 0; }
+  }
+
   /* ── closing ─────────────────────────────────────────── */
   .closing {
     margin: 140px 0 80px;
@@ -308,6 +478,7 @@
   @media (max-width: 640px) {
     .wrap { padding: 0 20px; }
     .nav-inner { height: 56px; }
+    .navlink { display: none; }
     .hero-grid { padding: 36px 20px 32px; gap: 44px; }
     h1 { font-size: clamp(32px, 9vw, 38px); }
     .hero p.sub { font-size: 15px; }
@@ -334,6 +505,9 @@
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="ProofShip home">ProofShip</a>
       <div class="links">
+        <a class="navlink" href="#today">Features</a>
+        <a class="navlink" href="#roadmap">Roadmap</a>
+        <a class="navlink" href="#pricing">Pricing</a>
         <a class="gh-icon" href="https://github.com/DaviRain-Su/proofship" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         </a>
@@ -352,7 +526,7 @@
         </p>
         <div class="cta-row">
           <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
-          <span class="cta-ver" id="ver">v0.1.48</span>
+          <span class="cta-ver" id="ver">v0.1.52 · macOS &amp; Linux desktop</span>
         </div>
         <div class="agents" aria-label="Supported agents">
           <span class="agent-icon" title="Claude Code" style="--icon: url('/assets/icons/claude-mark.svg')"></span>
@@ -441,6 +615,108 @@
       <h3>Keys stay user-side</h3>
       <p>Deploy keys stay in your environment or wallet — never in the app, repo, or relay. The desktop app works offline.</p>
     </div>
+  </section>
+
+  <section class="wrap sec" id="today">
+    <div class="sec-label">In the app today</div>
+    <h2>What ships in the current build</h2>
+    <p class="lede">A local-first desktop app. Your agents, your keys, your machine — nothing is locked behind a hosted platform.</p>
+    <div class="today-grid">
+      <div class="today-item">
+        <h3>Sessions with 7 coding agents</h3>
+        <p>Claude Code, Codex, Cursor, Grok, Hermes, Pi, and OpenCode drive local Sessions over one ACP layer. Bring the agent subscriptions you already pay for.</p>
+      </div>
+      <div class="today-item">
+        <h3>ProofForge drafting skill</h3>
+        <p>Natural language to ProgramV1 (Lean DSL): the skill teaches your agent the language surface, forbidden patterns, and the PF-* diagnostic repair loop.</p>
+      </div>
+      <div class="today-item">
+        <h3>X Layer network presets</h3>
+        <p>X Layer testnet (1952) and mainnet (196) built in, plus Sepolia and Base Sepolia. Add any custom EVM RPC in Settings → Networks.</p>
+      </div>
+      <div class="today-item">
+        <h3>Wallets without key juggling</h3>
+        <p>Create an in-app signer (key stored locally, mode 0600, never synced), reference an env key, watch an address, or sign through WalletConnect.</p>
+      </div>
+      <div class="today-item">
+        <h3>Git-aware workspace</h3>
+        <p>Branch diff panel, integrated terminal, and per-project sessions. Multi-device remote control through a self-hosted sync edge.</p>
+      </div>
+      <div class="today-item">
+        <h3>Open source, offline-capable</h3>
+        <p>MIT licensed. The whole drafting and gating loop runs on your machine — no account, no server, no telemetry required.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap sec" id="roadmap">
+    <div class="sec-label">Roadmap</div>
+    <h2>Local first, then the cloud</h2>
+    <p class="lede">The order is deliberate: prove the gate on your machine, then remove the remaining friction with hosted services.</p>
+    <div class="road-grid">
+      <div class="road-col now">
+        <span class="road-when">Now</span>
+        <h3>Draft &amp; gate on X Layer</h3>
+        <ul>
+          <li>Desktop app: Sessions + 7 ACP agent lanes</li>
+          <li>ProofForge ProgramV1 skill injection</li>
+          <li>Networks &amp; Wallets settings, X Layer first</li>
+          <li>Local signer + WalletConnect signing</li>
+        </ul>
+      </div>
+      <div class="road-col">
+        <span class="road-when">Next</span>
+        <h3>The gate as a native tool</h3>
+        <ul>
+          <li>ProofForge MCP auto-attached to every session — check, build, inspect as real tool calls</li>
+          <li>One-click deploy from sealed gate artifacts</li>
+          <li>Source verification on the OKX explorer</li>
+          <li>OKX Wallet flows polished end to end</li>
+        </ul>
+      </div>
+      <div class="road-col">
+        <span class="road-when">Later</span>
+        <h3>Hosted where it helps</h3>
+        <ul>
+          <li>Hosted gate service — no local Lean toolchain install</li>
+          <li>Web UI on the same local engine</li>
+          <li>Team workspaces and cloud sync</li>
+          <li>More chains through ProofForge backends</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap sec" id="pricing">
+    <div class="sec-label">Pricing</div>
+    <h2>The local app is free. Forever.</h2>
+    <p class="lede">You already pay for your coding agent — ProofShip doesn't charge you again for running it on your own machine.</p>
+    <div class="price-grid">
+      <div class="price-card featured">
+        <div class="price-name">Local <span class="price-tag">MIT · OPEN SOURCE</span></div>
+        <div class="price-amount">$0 <span>/ forever</span></div>
+        <ul>
+          <li>Full desktop app, all 7 agent lanes</li>
+          <li>Unlimited drafts, gate runs, and deploys</li>
+          <li>X Layer + custom EVM networks</li>
+          <li>Local signer, env keys, WalletConnect</li>
+          <li>Keys and code never leave your machine</li>
+        </ul>
+        <a class="btn" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
+      </div>
+      <div class="price-card">
+        <div class="price-name">Cloud <span class="price-tag">COMING SOON</span></div>
+        <div class="price-amount">TBA <span>/ month</span></div>
+        <ul>
+          <li>Hosted ProofForge gate — zero toolchain setup</li>
+          <li>Managed deployments &amp; explorer verification</li>
+          <li>Team workspaces with cloud sync</li>
+          <li>Priority support</li>
+        </ul>
+        <a class="btn disabled" aria-disabled="true">Not open yet</a>
+      </div>
+    </div>
+    <p class="price-note">Cloud pricing lands with the hosted gate service. The local app stays free and fully functional either way — the cloud tier removes setup friction, it never gates core features.</p>
   </section>
 
   <section class="closing">
