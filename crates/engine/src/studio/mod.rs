@@ -17,6 +17,7 @@ pub mod relay;
 mod session_enrich;
 pub mod store;
 pub mod templates;
+pub mod local_wallet;
 pub mod walletconnect;
 pub mod wallets;
 
@@ -39,4 +40,5 @@ pub use session_enrich::{SKILL_PROMPT_MARKER, enrich_sessions_run_request};
 pub use store::{StoreError, StudioStore};
 pub use templates::{TemplateError, TemplateStore};
 pub use walletconnect::{WalletConnectBridge, resolve_project_id, wait_contract_address};
+pub use local_wallet::{WalletSecrets, send_with_local};
 pub use wallets::{WalletError, WalletStore};

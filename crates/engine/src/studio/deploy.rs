@@ -95,6 +95,7 @@ pub struct StudioDeployer {
     inbox_root: PathBuf,
     store: DeployStore,
     wallet_connect: crate::studio::WalletConnectBridge,
+    wallet_secrets: crate::studio::WalletSecrets,
 }
 
 impl StudioDeployer {
@@ -103,12 +104,14 @@ impl StudioDeployer {
         inbox_root: PathBuf,
         store: DeployStore,
         wallet_connect: crate::studio::WalletConnectBridge,
+        wallet_secrets: crate::studio::WalletSecrets,
     ) -> Self {
         Self {
             gate,
             inbox_root,
             store,
             wallet_connect,
+            wallet_secrets,
         }
     }
 
@@ -122,6 +125,7 @@ impl StudioDeployer {
         let inbox_root = self.inbox_root.clone();
         let store = self.store.clone();
         let wallet_connect = self.wallet_connect.clone();
+        let wallet_secrets = self.wallet_secrets.clone();
         let (tx, rx) = mpsc::channel(16);
         tokio::spawn(async move {
             deploy_inner(
@@ -132,6 +136,7 @@ impl StudioDeployer {
                 inbox_root,
                 store,
                 wallet_connect,
+                wallet_secrets,
                 tx,
             )
             .await;
@@ -165,6 +170,11 @@ pub fn preflight(network: &EvmNetwork, wallet: &WalletAccount) -> Result<(), Str
                 ));
             }
         }
+        WalletSource::Local => {
+            if wallet.address.trim().is_empty() {
+                return Err("local wallet has no address — create or import it again".into());
+            }
+        }
     }
     if wallet.source == WalletSource::DevEnvKey
         && wallet
@@ -195,6 +205,7 @@ async fn deploy_inner(
     inbox_root: PathBuf,
     store: DeployStore,
     wallet_connect: crate::studio::WalletConnectBridge,
+    wallet_secrets: crate::studio::WalletSecrets,
     tx: mpsc::Sender<StudioDeployEvent>,
 ) {
     let network_id = req.network_id.clone();
@@ -335,6 +346,27 @@ async fn deploy_inner(
             }
         }
         WalletSource::Watch => Err("watch-only wallets cannot sign".into()),
+        WalletSource::Local => {
+            match crate::studio::send_with_local(
+                &wallet_secrets,
+                &wallet.id,
+                &network.rpc_url,
+                network.chain_id,
+                None,
+                &create_data,
+            )
+            .await
+            {
+                Ok(sent) => match sent.contract_address {
+                    Some(address) => Ok((address, sent.tx_hash)),
+                    None => Err(format!(
+                        "deploy tx {} mined without a contract address",
+                        sent.tx_hash
+                    )),
+                },
+                Err(err) => Err(err),
+            }
+        }
     };
 
     match send_result {
@@ -692,6 +724,19 @@ mod tests {
         let err = preflight(&xlayer_mainnet(), &dev_env_wallet()).unwrap_err();
         assert!(err.contains("mainnet"));
         assert!(err.contains("196"));
+    }
+
+    #[test]
+    fn preflight_accepts_local_on_testnet_and_mainnet() {
+        let wallet = WalletAccount {
+            id: "local-1".into(),
+            label: "Studio".into(),
+            address: "0x0000000000000000000000000000000000000001".into(),
+            source: WalletSource::Local,
+            env_key_name: None,
+        };
+        preflight(&xlayer_testnet(), &wallet).unwrap();
+        preflight(&xlayer_mainnet(), &wallet).unwrap();
     }
 
     #[test]

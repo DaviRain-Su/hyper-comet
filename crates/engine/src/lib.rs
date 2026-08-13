@@ -538,8 +538,13 @@ impl EngineCore {
             inbox_root.clone(),
             deploy_store.clone(),
             wallet_connect.clone(),
+            wallet_store.secrets().clone(),
         );
-        let studio_interact = StudioInteract::new(inbox_root, wallet_connect.clone());
+        let studio_interact = StudioInteract::new(
+            inbox_root,
+            wallet_connect.clone(),
+            wallet_store.secrets().clone(),
+        );
         let studio_preview = StudioPreview::new();
         let studio_relay = StudioRelay::new();
         studio_relay.set_default_device(&device_id);

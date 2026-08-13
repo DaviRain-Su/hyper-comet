@@ -18,6 +18,9 @@ pub enum WalletSource {
     /// Reference to an env var *name* holding a hex key. Testnet-only by
     /// product policy; the key value is never persisted.
     DevEnvKey,
+    /// In-app Alloy signer. The private key is stored under the data dir
+    /// (`studio/wallet-secrets/`, mode 0600) — never in `wallets.json`.
+    Local,
 }
 
 /// One signer / watch address the operator can pick at deploy time.
@@ -57,4 +60,28 @@ pub struct UpsertWalletRequest {
 #[serde(rename_all = "camelCase")]
 pub struct RemoveWalletRequest {
     pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLocalWalletRequest {
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLocalWalletResponse {
+    pub wallets: Vec<WalletAccount>,
+    pub wallet: WalletAccount,
+    /// One-time hex key so the operator can back it up. Never persisted.
+    pub backup_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportLocalWalletRequest {
+    #[serde(default)]
+    pub label: String,
+    pub secret: String,
 }

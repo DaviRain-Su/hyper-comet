@@ -56,7 +56,8 @@ use tokio::sync::watch;
 
 use comet_doc::{MessagePart, SessionCommandPayload};
 use comet_proto::{
-    ChatConfig, HarnessId, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
+    ChatConfig, CreateLocalWalletRequest, CreateLocalWalletResponse, HarnessId,
+    ImportLocalWalletRequest, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
     RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
     StudioCandidatesResponse, StudioDeployRequest, StudioDraftRequest, StudioGateRequest,
     StudioLaunchRunRequest, StudioLaunchesResponse, StudioLogsRequest, StudioPreviewStartRequest,
@@ -857,6 +858,8 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_PUT_WALLETS
             | methods::STUDIO_UPSERT_WALLET
             | methods::STUDIO_REMOVE_WALLET
+            | methods::STUDIO_WALLET_CREATE
+            | methods::STUDIO_WALLET_IMPORT
             | methods::STUDIO_DEPLOYMENTS
             | methods::STUDIO_CANDIDATES
             | methods::STUDIO_DEPLOY
@@ -1341,6 +1344,26 @@ impl RpcService for EngineRpc {
                 let wallets = self
                     .wallet_store
                     .remove(&p.id)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&WalletsResponse { wallets })
+            }
+            methods::STUDIO_WALLET_CREATE => {
+                let p: CreateLocalWalletRequest = parse_params(params)?;
+                let (wallets, wallet, backup_hex) = self
+                    .wallet_store
+                    .create_local(&p.label)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&CreateLocalWalletResponse {
+                    wallets,
+                    wallet,
+                    backup_hex,
+                })
+            }
+            methods::STUDIO_WALLET_IMPORT => {
+                let p: ImportLocalWalletRequest = parse_params(params)?;
+                let (wallets, _) = self
+                    .wallet_store
+                    .import_local(&p.label, &p.secret)
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&WalletsResponse { wallets })
             }

@@ -1,12 +1,15 @@
 //! Local wallet address book persisted under `{data_dir}/studio/wallets.json`.
 //!
 //! **Private keys never appear in this file.** `env_key_name` stores only the
-//! variable name for `DevEnvKey` rows; WalletConnect session state is
+//! variable name for `DevEnvKey` rows. Local Alloy keys live in
+//! `studio/wallet-secrets/` (mode 0600). WalletConnect session state is
 //! memory-only — persisted rows are bookkeeping (label + address).
 
 use std::path::{Path, PathBuf};
 
 use comet_proto::{WalletAccount, WalletSource};
+
+use super::local_wallet::{self, WalletSecrets};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalletError {
@@ -21,13 +24,81 @@ pub enum WalletError {
 #[derive(Debug, Clone)]
 pub struct WalletStore {
     file: PathBuf,
+    secrets: WalletSecrets,
 }
 
 impl WalletStore {
     pub fn new(data_dir: &Path) -> Self {
         Self {
             file: data_dir.join("studio").join("wallets.json"),
+            secrets: WalletSecrets::new(data_dir),
         }
+    }
+
+    pub fn secrets(&self) -> &WalletSecrets {
+        &self.secrets
+    }
+
+    /// Create a random local signer. Returns the bookkeeping row plus a
+    /// one-time hex backup (never written to `wallets.json`).
+    pub fn create_local(
+        &self,
+        label: &str,
+    ) -> Result<(Vec<WalletAccount>, WalletAccount, String), WalletError> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err(WalletError::Invalid("label must not be empty".into()));
+        }
+        let (backup, address) =
+            local_wallet::generate_local_key().map_err(|e| WalletError::Invalid(e.to_string()))?;
+        let wallet = WalletAccount {
+            id: format!("local-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+            label: label.to_string(),
+            address,
+            source: WalletSource::Local,
+            env_key_name: None,
+        };
+        self.secrets
+            .put(&wallet.id, &backup)
+            .map_err(|e| WalletError::Invalid(e.to_string()))?;
+        let wallets = self.upsert(wallet.clone())?;
+        Ok((wallets, wallet, backup))
+    }
+
+    pub fn import_local(
+        &self,
+        label: &str,
+        secret: &str,
+    ) -> Result<(Vec<WalletAccount>, WalletAccount), WalletError> {
+        let label = label.trim();
+        if label.is_empty() {
+            return Err(WalletError::Invalid("label must not be empty".into()));
+        }
+        let (backup, address) = local_wallet::import_local_key(secret)
+            .map_err(|e| WalletError::Invalid(e.to_string()))?;
+        if let Some(existing) = self.load()?.into_iter().find(|w| {
+            w.source == WalletSource::Local && w.address.eq_ignore_ascii_case(&address)
+        }) {
+            self.secrets
+                .put(&existing.id, &backup)
+                .map_err(|e| WalletError::Invalid(e.to_string()))?;
+            let mut wallet = existing;
+            wallet.label = label.to_string();
+            let wallets = self.upsert(wallet.clone())?;
+            return Ok((wallets, wallet));
+        }
+        let wallet = WalletAccount {
+            id: format!("local-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+            label: label.to_string(),
+            address,
+            source: WalletSource::Local,
+            env_key_name: None,
+        };
+        self.secrets
+            .put(&wallet.id, &backup)
+            .map_err(|e| WalletError::Invalid(e.to_string()))?;
+        let wallets = self.upsert(wallet.clone())?;
+        Ok((wallets, wallet))
     }
 
     pub fn path(&self) -> &Path {
@@ -74,6 +145,7 @@ impl WalletStore {
         if id.trim().is_empty() {
             return Err(WalletError::Invalid("id must not be empty".into()));
         }
+        self.secrets.delete(id);
         let mut wallets = self.load()?;
         wallets.retain(|w| w.id != id);
         self.save(&wallets)
@@ -132,10 +204,10 @@ fn validate_wallet(wallet: &WalletAccount) -> Result<(), WalletError> {
                 ));
             }
         }
-        WalletSource::WalletConnect => {
+        WalletSource::WalletConnect | WalletSource::Local => {
             if !is_eth_address(&wallet.address) {
                 return Err(WalletError::Invalid(
-                    "wallet connect address must match 0x + 40 hex digits".into(),
+                    "address must match 0x + 40 hex digits".into(),
                 ));
             }
         }
@@ -266,5 +338,23 @@ mod tests {
         let remaining = store.remove("watch-1").expect("remove");
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, "watch-2");
+    }
+
+    #[test]
+    fn create_local_keeps_secret_out_of_address_book() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = WalletStore::new(dir.path());
+        let (wallets, wallet, backup) = store.create_local("Studio").expect("create");
+        assert_eq!(wallets.len(), 1);
+        assert_eq!(wallet.source, WalletSource::Local);
+        assert!(wallet.address.starts_with("0x"));
+        assert_eq!(wallet.address.len(), 42);
+        assert!(backup.starts_with("0x"));
+        assert_eq!(backup.len(), 66);
+        let raw = std::fs::read_to_string(store.path()).expect("read");
+        assert!(!raw.contains(&backup[2..]));
+        assert!(raw.contains(&wallet.address));
+        store.remove(&wallet.id).expect("remove");
+        assert!(store.load().unwrap().is_empty());
     }
 }

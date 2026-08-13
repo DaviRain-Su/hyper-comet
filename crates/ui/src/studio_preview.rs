@@ -176,7 +176,12 @@ impl StudioPreviewPane {
                         pane.selected_wallet_id = pane
                             .wallets
                             .iter()
-                            .find(|w| w.source == WalletSource::DevEnvKey)
+                            .find(|w| w.source == WalletSource::Local)
+                            .or_else(|| {
+                                pane.wallets
+                                    .iter()
+                                    .find(|w| w.source == WalletSource::DevEnvKey)
+                            })
                             .or_else(|| pane.wallets.iter().find(|w| wallet_can_sign(w)))
                             .map(|w| w.id.clone());
                     }
@@ -1222,7 +1227,7 @@ fn wallet_can_sign(wallet: &WalletAccount) -> bool {
     match wallet.source {
         WalletSource::Watch => false,
         WalletSource::WalletConnect => !wallet.address.trim().is_empty(),
-        WalletSource::DevEnvKey => true,
+        WalletSource::DevEnvKey | WalletSource::Local => true,
     }
 }
 
@@ -1238,6 +1243,7 @@ fn wallet_source_label(source: WalletSource) -> &'static str {
         WalletSource::Watch => "Watch",
         WalletSource::DevEnvKey => "Env key",
         WalletSource::WalletConnect => "WalletConnect",
+        WalletSource::Local => "Local",
     }
 }
 
@@ -1312,10 +1318,18 @@ mod tests {
             source: WalletSource::WalletConnect,
             env_key_name: None,
         };
+        let local = WalletAccount {
+            id: "l1".into(),
+            label: "Local".into(),
+            address: "0xabc".into(),
+            source: WalletSource::Local,
+            env_key_name: None,
+        };
         assert!(!wallet_can_sign(&watch));
         assert!(wallet_can_sign(&env));
         assert!(!wallet_can_sign(&wc_empty));
         assert!(wallet_can_sign(&wc));
+        assert!(wallet_can_sign(&local));
     }
 
     #[test]

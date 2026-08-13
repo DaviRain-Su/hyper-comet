@@ -10,19 +10,25 @@ use comet_proto::{
 use tokio::process::Command;
 
 use super::deploy::{preflight, resolve_cast};
-use super::WalletConnectBridge;
+use super::{WalletConnectBridge, WalletSecrets};
 
 #[derive(Debug, Clone)]
 pub struct StudioInteract {
     inbox_root: PathBuf,
     wallet_connect: WalletConnectBridge,
+    wallet_secrets: WalletSecrets,
 }
 
 impl StudioInteract {
-    pub fn new(inbox_root: PathBuf, wallet_connect: WalletConnectBridge) -> Self {
+    pub fn new(
+        inbox_root: PathBuf,
+        wallet_connect: WalletConnectBridge,
+        wallet_secrets: WalletSecrets,
+    ) -> Self {
         Self {
             inbox_root,
             wallet_connect,
+            wallet_secrets,
         }
     }
 
@@ -59,7 +65,9 @@ impl StudioInteract {
         network: EvmNetwork,
         wallet: Option<WalletAccount>,
     ) -> StudioCallResponse {
-        match call_inner(req, network, wallet, &self.wallet_connect).await {
+        match call_inner(req, network, wallet, &self.wallet_connect, &self.wallet_secrets)
+            .await
+        {
             Ok(resp) => resp,
             Err(err) => StudioCallResponse {
                 ok: false,
@@ -173,6 +181,7 @@ async fn call_inner(
     network: EvmNetwork,
     wallet: Option<WalletAccount>,
     wallet_connect: &WalletConnectBridge,
+    wallet_secrets: &WalletSecrets,
 ) -> Result<StudioCallResponse, String> {
     if !req.address.starts_with("0x") || req.address.len() != 42 {
         return Err("address must be 0x + 40 hex chars".into());
@@ -259,6 +268,29 @@ async fn call_inner(
                     })
                 }
                 WalletSource::Watch => Err("watch-only wallets cannot sign".into()),
+                WalletSource::Local => {
+                    let mut calldata_args = vec!["calldata".into(), req.signature.clone()];
+                    calldata_args.extend(req.args.clone());
+                    let data = run_cast(&cast, &calldata_args, &[], None).await?;
+                    let data = data.trim().to_string();
+                    if !data.starts_with("0x") {
+                        return Err(format!("cast calldata returned unexpected output: {data}"));
+                    }
+                    let sent = crate::studio::send_with_local(
+                        wallet_secrets,
+                        &wallet.id,
+                        &network.rpc_url,
+                        network.chain_id,
+                        Some(&req.address),
+                        &data,
+                    )
+                    .await?;
+                    Ok(StudioCallResponse {
+                        ok: true,
+                        output: sent.tx_hash.clone(),
+                        tx_hash: Some(sent.tx_hash),
+                    })
+                }
             }
         }
     }
@@ -481,7 +513,11 @@ mod tests {
         tokio::fs::write(out.join("RwaShareRegistry.abi.json"), abi)
             .await
             .unwrap();
-        let interact = StudioInteract::new(dir.path().to_path_buf(), WalletConnectBridge::new());
+        let interact = StudioInteract::new(
+            dir.path().to_path_buf(),
+            WalletConnectBridge::new(),
+            WalletSecrets::new(dir.path()),
+        );
         let resp = interact.load_abi("RwaShareRegistry").await.unwrap();
         let schema = comet_abi::schema_from_abi_json(&resp.abi_json).unwrap();
         assert!(schema.constructor.is_some());

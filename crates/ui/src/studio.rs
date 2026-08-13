@@ -715,7 +715,12 @@ impl StudioView {
                                 view.selected_wallet_id = resp
                                     .wallets
                                     .iter()
-                                    .find(|w| w.source == WalletSource::DevEnvKey)
+                                    .find(|w| w.source == WalletSource::Local)
+                                    .or_else(|| {
+                                        resp.wallets
+                                            .iter()
+                                            .find(|w| w.source == WalletSource::DevEnvKey)
+                                    })
                                     .map(|w| w.id.clone())
                                     .or_else(|| resp.wallets.first().map(|w| w.id.clone()));
                             }
@@ -2059,7 +2064,7 @@ impl StudioView {
             .is_some_and(|w| {
                 matches!(
                     w.source,
-                    WalletSource::DevEnvKey | WalletSource::WalletConnect
+                    WalletSource::Local | WalletSource::DevEnvKey | WalletSource::WalletConnect
                 ) && (w.source != WalletSource::WalletConnect || !w.address.is_empty())
             });
         let mut network_btn = button_dynamic(network_label, self.networks.is_empty(), &theme)

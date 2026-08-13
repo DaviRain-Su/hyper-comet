@@ -6,6 +6,7 @@ use gpui::{
 };
 
 use comet_proto::{
+    CreateLocalWalletRequest, CreateLocalWalletResponse, ImportLocalWalletRequest,
     RemoveWalletRequest, UpsertWalletRequest, WalletAccount, WalletConnectStartRequest,
     WalletConnectStartResponse, WalletSource, WalletsResponse,
 };
@@ -21,6 +22,8 @@ use crate::theme::Theme;
 enum AddDialogKind {
     Watch,
     DevEnvKey,
+    Import,
+    Create,
 }
 
 struct AddDialog {
@@ -38,6 +41,7 @@ pub struct WalletsPage {
     error: Option<String>,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
+    backup_hex: Option<String>,
 }
 
 impl WalletsPage {
@@ -49,6 +53,7 @@ impl WalletsPage {
             error: None,
             load_task: None,
             action_task: None,
+            backup_hex: None,
         };
         page.load(cx);
         page
@@ -82,6 +87,8 @@ impl WalletsPage {
         let (label_placeholder, second_placeholder) = match kind {
             AddDialogKind::Watch => ("Label", "0x address"),
             AddDialogKind::DevEnvKey => ("Label", "Environment variable name"),
+            AddDialogKind::Import => ("Label", "Private key (0x…64 hex)"),
+            AddDialogKind::Create => ("Label", ""),
         };
         let label = cx.new(|cx| ComposerInput::new(label_placeholder, cx));
         let second = cx.new(|cx| ComposerInput::new(second_placeholder, cx));
@@ -144,6 +151,20 @@ impl WalletsPage {
                     env_key_name: Some(second),
                 }
             }
+            AddDialogKind::Import => {
+                if second.is_empty() {
+                    self.set_dialog_error("Private key is required", cx);
+                    return;
+                }
+                self.dialog = None;
+                self.import_local(label, second, cx);
+                return;
+            }
+            AddDialogKind::Create => {
+                self.dialog = None;
+                self.create_local(label, cx);
+                return;
+            }
         };
 
         self.dialog = None;
@@ -154,6 +175,72 @@ impl WalletsPage {
         if let Some(dialog) = &mut self.dialog {
             dialog.error = Some(message.to_string());
         }
+        cx.notify();
+    }
+
+    fn create_local(&mut self, label: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let req = CreateLocalWalletRequest { label };
+        self.error = None;
+        self.action_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(
+                    methods::STUDIO_WALLET_CREATE,
+                    serde_json::to_value(req).unwrap_or_default(),
+                )
+                .await;
+            this.update(cx, |page, cx| {
+                match result {
+                    Ok(value) => {
+                        match serde_json::from_value::<CreateLocalWalletResponse>(value) {
+                            Ok(resp) => {
+                                page.wallets = Loadable::Ready(resp.wallets);
+                                page.backup_hex = Some(resp.backup_hex);
+                            }
+                            Err(err) => page.error = Some(err.to_string()),
+                        }
+                    }
+                    Err(err) => page.error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn import_local(&mut self, label: String, secret: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        let req = ImportLocalWalletRequest { label, secret };
+        self.error = None;
+        self.action_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(
+                    methods::STUDIO_WALLET_IMPORT,
+                    serde_json::to_value(req).unwrap_or_default(),
+                )
+                .await;
+            this.update(cx, |page, cx| {
+                match result {
+                    Ok(value) => {
+                        if let Ok(response) = serde_json::from_value::<WalletsResponse>(value) {
+                            page.wallets = Loadable::Ready(response.wallets);
+                        } else {
+                            page.error = Some("Unexpected import response".into());
+                        }
+                    }
+                    Err(err) => page.error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
         cx.notify();
     }
 
@@ -248,6 +335,19 @@ impl WalletsPage {
                      variable name.",
                 ),
             ),
+            AddDialogKind::Import => (
+                "Import local wallet",
+                "Private key",
+                Some(
+                    "Hex key only (0x + 64 digits). ProofShip stores it next to the address \
+                     book with mode 0600 — never in wallets.json.",
+                ),
+            ),
+            AddDialogKind::Create => (
+                "Create local wallet",
+                "Unused",
+                Some("Alloy generates a secp256k1 key on this machine. Copy the backup once."),
+            ),
         };
         let field = |label: &str, input: Entity<ComposerInput>| {
             div()
@@ -260,8 +360,10 @@ impl WalletsPage {
         };
         let mut card = popover::dialog_card(&theme)
             .child(popover::dialog_title(&theme, title))
-            .child(field("Label", dialog.label.clone()))
-            .child(field(second_label, dialog.second.clone()));
+            .child(field("Label", dialog.label.clone()));
+        if !matches!(dialog.kind, AddDialogKind::Create) {
+            card = card.child(field(second_label, dialog.second.clone()));
+        }
         if let Some(copy) = helper {
             card = card.child(
                 popover::dialog_body(&theme, copy)
@@ -341,6 +443,7 @@ impl WalletsPage {
                     );
                 }
                 let remove_id = wallet.id.clone();
+                let address = wallet.address.clone();
                 widgets::card_row(&theme, ix == 0)
                     .child(widgets::row_tile(&theme, source_icon(wallet.source)))
                     .child(
@@ -353,6 +456,20 @@ impl WalletsPage {
                             .child(widgets::meta_line(&theme, meta)),
                     )
                     .child(widgets::badge(&theme, source_badge(wallet.source)))
+                    .when(!address.is_empty(), |el| {
+                        el.child(
+                            widgets::ghost_action(&theme)
+                                .id(("wallet-copy", ix))
+                                .opacity(0.7)
+                                .hover(|s| widgets::ghost_hover(&theme, s))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        address.clone(),
+                                    ));
+                                }))
+                                .child(SharedString::from("Copy")),
+                        )
+                    })
                     .child(
                         widgets::ghost_action(&theme)
                             .id(("wallet-remove", ix))
@@ -458,6 +575,7 @@ pub fn source_badge(source: WalletSource) -> &'static str {
         WalletSource::Watch => "Watch",
         WalletSource::DevEnvKey => "Env key",
         WalletSource::WalletConnect => "WalletConnect",
+        WalletSource::Local => "Local",
     }
 }
 
@@ -466,6 +584,7 @@ fn source_icon(source: WalletSource) -> &'static str {
         WalletSource::Watch => crate::icons::MONITOR,
         WalletSource::DevEnvKey => crate::icons::KEY_MINIMALISTIC,
         WalletSource::WalletConnect => crate::icons::GLOBAL,
+        WalletSource::Local => crate::icons::KEY_MINIMALISTIC,
     }
 }
 
@@ -521,7 +640,7 @@ impl Render for WalletsPage {
                                 .text_size(px(14.0))
                                 .text_color(theme.text_muted.opacity(0.6))
                                 .child(SharedString::from(
-                                    "No wallets yet — add a watch address or testnet env-key.",
+                                    "No wallets yet — create a local signer to deploy from this desktop.",
                                 )),
                         )
                     })
@@ -561,6 +680,29 @@ impl Render for WalletsPage {
                                     .gap(px(8.0))
                                     .child(
                                         widgets::ghost_action(&theme)
+                                            .id("wallet-create-local")
+                                            .hover(|s| widgets::ghost_hover(&theme, s))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_add(AddDialogKind::Create, cx);
+                                            }))
+                                            .child(
+                                                crate::icons::icon(crate::icons::ADD_CIRCLE)
+                                                    .size(px(14.0))
+                                                    .text_color(theme.text_muted),
+                                            )
+                                            .child(SharedString::from("Create wallet")),
+                                    )
+                                    .child(
+                                        widgets::ghost_action(&theme)
+                                            .id("wallet-import-local")
+                                            .hover(|s| widgets::ghost_hover(&theme, s))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.open_add(AddDialogKind::Import, cx);
+                                            }))
+                                            .child(SharedString::from("Import key")),
+                                    )
+                                    .child(
+                                        widgets::ghost_action(&theme)
                                             .id("wallet-add-watch")
                                             .hover(|s| widgets::ghost_hover(&theme, s))
                                             .on_click(cx.listener(|this, _, _, cx| {
@@ -591,13 +733,79 @@ impl Render for WalletsPage {
                     )
                     .child(widgets::page_subtitle(
                         &theme,
-                        "Address book for deploy-time signer selection. Private keys stay in \
-                         WalletConnect sessions or your environment — never on disk.",
+                        "Create a local Alloy signer for deploys. The hex key stays in \
+                         studio/wallet-secrets (mode 0600), never in wallets.json.",
                     ))
                     .children(error)
                     .child(body),
             )
             .when_some(dialog, |el, dialog| el.child(dialog))
+            .when_some(self.render_backup(window.viewport_size(), cx), |el, backup| {
+                el.child(backup)
+            })
+    }
+}
+
+impl WalletsPage {
+    fn render_backup(
+        &self,
+        viewport: gpui::Size<gpui::Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let theme = Theme::of(cx).clone();
+        let backup = self.backup_hex.clone()?;
+        let shown = backup.clone();
+        let card = popover::dialog_card(&theme)
+            .child(popover::dialog_title(&theme, "Wallet created"))
+            .child(
+                popover::dialog_body(
+                    &theme,
+                    "Copy this private key now. ProofShip will not show it again. \
+                     Fund the address on X Layer testnet before deploying.",
+                )
+                .mt(px(8.0)),
+            )
+            .child(
+                div()
+                    .mt(px(12.0))
+                    .p(px(10.0))
+                    .rounded(px(8.0))
+                    .bg(theme.surface)
+                    .font_family(theme.font_mono.clone())
+                    .text_size(px(11.0))
+                    .text_color(theme.text)
+                    .child(SharedString::from(shown)),
+            )
+            .child(
+                div()
+                    .mt(px(16.0))
+                    .flex()
+                    .flex_row()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        popover::btn_ghost(&theme, "Copy key", "wallet-backup-copy")
+                            .id("wallet-backup-copy")
+                            .on_click(cx.listener({
+                                let backup = backup.clone();
+                                move |_, _, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        backup.clone(),
+                                    ));
+                                }
+                            })),
+                    )
+                    .child(
+                        popover::btn_primary(&theme, "I've saved it")
+                            .id("wallet-backup-done")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.backup_hex = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element();
+        Some(popover::modal("wallet-backup", viewport, card))
     }
 }
 
@@ -620,5 +828,6 @@ mod tests {
         assert_eq!(source_badge(WalletSource::Watch), "Watch");
         assert_eq!(source_badge(WalletSource::DevEnvKey), "Env key");
         assert_eq!(source_badge(WalletSource::WalletConnect), "WalletConnect");
+        assert_eq!(source_badge(WalletSource::Local), "Local");
     }
 }
