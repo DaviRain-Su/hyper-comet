@@ -80,6 +80,9 @@ export interface SessionState {
     userOnline?: boolean;
     platformOnline?: boolean;
     userDeviceId?: string;
+    userLastSeenAt?: string;
+    platformLastSeenAt?: string;
+    viewerCount?: number;
   };
   launch?: unknown;
   draft?: unknown;
@@ -322,9 +325,12 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
       break;
     case "executor.online":
       if (isRecord(event.payload)) {
-        if (event.payload.role === "platform") next.executors!.platformOnline = true;
-        else {
+        if (event.payload.role === "platform") {
+          next.executors!.platformOnline = true;
+          next.executors!.platformLastSeenAt = event.ts;
+        } else {
           next.executors!.userOnline = true;
+          next.executors!.userLastSeenAt = event.ts;
           if (typeof event.payload.deviceId === "string") {
             next.executors!.userDeviceId = event.payload.deviceId;
           }
@@ -333,8 +339,13 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
       break;
     case "executor.offline":
       if (isRecord(event.payload)) {
-        if (event.payload.role === "platform") next.executors!.platformOnline = false;
-        else next.executors!.userOnline = false;
+        if (event.payload.role === "platform") {
+          next.executors!.platformOnline = false;
+          next.executors!.platformLastSeenAt = event.ts;
+        } else {
+          next.executors!.userOnline = false;
+          next.executors!.userLastSeenAt = event.ts;
+        }
       }
       break;
     case "note": {
@@ -347,4 +358,28 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
       break;
   }
   return next;
+}
+
+/** Live sockets win over persisted online flags (stale after a missed close). */
+export interface LiveExecutorSockets {
+  userOnline: boolean;
+  platformOnline: boolean;
+  userDeviceId?: string;
+  viewerCount?: number;
+}
+
+export function overlayLiveExecutors(
+  state: SessionState,
+  live: LiveExecutorSockets,
+): SessionState {
+  return {
+    ...state,
+    executors: {
+      ...(state.executors ?? {}),
+      userOnline: live.userOnline,
+      platformOnline: live.platformOnline,
+      userDeviceId: live.userDeviceId || state.executors?.userDeviceId,
+      viewerCount: live.viewerCount,
+    },
+  };
 }

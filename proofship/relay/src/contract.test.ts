@@ -5,6 +5,7 @@ import {
   authorizeShare,
   authorizeViewer,
   eventStatePatch,
+  overlayLiveExecutors,
   parseViewerCommand,
   redactSharePayload,
   resolveExecutor,
@@ -314,7 +315,11 @@ describe("eventStatePatch", () => {
       kind: "executor.online",
       payload: { role: "engine", deviceId: "d1" },
     });
-    expect(state.executors).toEqual({ userOnline: true, userDeviceId: "d1" });
+    expect(state.executors).toEqual({
+      userOnline: true,
+      userDeviceId: "d1",
+      userLastSeenAt: "t1",
+    });
 
     state = eventStatePatch(state, {
       seq: 2,
@@ -347,5 +352,31 @@ describe("eventStatePatch", () => {
       payload: { role: "platform" },
     });
     expect(state.executors?.platformOnline).toBe(false);
+    expect(state.executors?.platformLastSeenAt).toBe("t5");
+  });
+
+  it("overlays live sockets over stale persisted flags", () => {
+    const stale: SessionState = {
+      executors: {
+        userOnline: true,
+        platformOnline: true,
+        userDeviceId: "old",
+        userLastSeenAt: "t0",
+      },
+    };
+    expect(
+      overlayLiveExecutors(stale, {
+        userOnline: false,
+        platformOnline: true,
+        userDeviceId: "live-dev",
+        viewerCount: 2,
+      }).executors,
+    ).toEqual({
+      userOnline: false,
+      platformOnline: true,
+      userDeviceId: "live-dev",
+      userLastSeenAt: "t0",
+      viewerCount: 2,
+    });
   });
 });

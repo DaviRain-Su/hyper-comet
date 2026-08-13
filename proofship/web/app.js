@@ -40,14 +40,33 @@ const els = {
   inviteUrl: document.getElementById("invite-url"),
   claimSession: document.getElementById("claim-session"),
   sendComment: document.getElementById("send-comment"),
+  copySession: document.getElementById("copy-session"),
+  copyDevice: document.getElementById("copy-device"),
+  deviceLine: document.getElementById("device-line"),
+  deviceId: document.getElementById("device-id"),
+  roomList: document.getElementById("room-list"),
+  lampDesktop: document.getElementById("lamp-desktop"),
+  lampPlatform: document.getElementById("lamp-platform"),
+  lampRelay: document.getElementById("lamp-relay"),
+  pillDesktop: document.getElementById("pill-desktop"),
+  pillPlatform: document.getElementById("pill-platform"),
+  pillRelay: document.getElementById("pill-relay"),
 };
 
 const DEFAULT_RELAY = "https://proofship-relay.davirain-yin.workers.dev";
 const params = new URLSearchParams(location.search);
 if (params.get("relay")) els.relay.value = params.get("relay");
 else if (els.relay && !els.relay.value.trim()) els.relay.value = DEFAULT_RELAY;
+const LAST_SESSION_KEY = "proofship.lastSession";
 if (params.get("session") || params.get("launch")) {
   els.session.value = params.get("session") || params.get("launch");
+} else {
+  try {
+    const last = localStorage.getItem(LAST_SESSION_KEY);
+    if (last && els.session && !els.session.value.trim()) els.session.value = last;
+  } catch {
+    /* private mode */
+  }
 }
 const initialToken =
   params.get("shareToken") || params.get("token") || params.get("viewerToken");
@@ -77,10 +96,20 @@ if (isShareMode) {
   els.connect.textContent = "Fetch share";
   els.executorStatus.textContent = "Read-only share mode — writer WebSocket disabled.";
   setStatus("Read-only share mode — click Fetch share to load snapshot.");
+  setLamp(els.lampDesktop, false, true);
+  setLamp(els.lampPlatform, false, true);
+  setLamp(els.lampRelay, false, false);
+  setPillText(els.pillDesktop, "share");
+  setPillText(els.pillPlatform, "share");
+  setPillText(els.pillRelay, "idle");
 }
 
 let socket = null;
 let lastState = {};
+let lastQueueDepth = 0;
+let presencePoll = null;
+let presenceInFlight = false;
+let lastPresenceKey = "";
 
 function selectedExecutor() {
   const el = document.querySelector('input[name="executor"]:checked');
@@ -90,6 +119,53 @@ function selectedExecutor() {
 function setStatus(text, kind = "") {
   els.status.textContent = text;
   els.status.className = `status${kind ? ` ${kind}` : ""}`;
+}
+
+function setLamp(el, on, unknown = false) {
+  if (!el) return;
+  el.classList.toggle("on", Boolean(on) && !unknown);
+  el.classList.toggle("off", !on && !unknown);
+  el.classList.toggle("unknown", Boolean(unknown));
+}
+
+function setPillText(el, text) {
+  if (el) el.textContent = text;
+}
+
+function persistSessionId() {
+  const value = els.session?.value.trim();
+  if (!value) return;
+  try {
+    localStorage.setItem(LAST_SESSION_KEY, value);
+  } catch {
+    /* private mode */
+  }
+}
+
+function formatAgo(iso) {
+  if (!iso) return "";
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 15_000) return "just now";
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s ago`;
+  if (ms < 3_600_000) return `${Math.max(1, Math.round(ms / 60_000))}m ago`;
+  if (ms < 86_400_000) return `${Math.max(1, Math.round(ms / 3_600_000))}h ago`;
+  return `${Math.max(1, Math.round(ms / 86_400_000))}d ago`;
+}
+
+function wsOpen() {
+  return Boolean(socket && socket.readyState === WebSocket.OPEN);
+}
+
+async function copyText(value, okMessage) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus(okMessage, "live");
+  } catch {
+    setStatus("Clipboard blocked — select the field and copy.", "err");
+  }
 }
 
 function setDeployStatus(text, kind = "") {
@@ -200,6 +276,7 @@ async function refreshOrgs() {
           .join(" · ");
       }
     }
+    await refreshRooms();
   } catch {
     /* relay offline */
   }
@@ -381,6 +458,7 @@ if (els.claimSession) {
       res.ok ? `Claimed for org ${body.grant?.orgId ?? ""}` : body.error || "claim failed",
       res.ok ? "live" : "err",
     );
+    if (res.ok) await refreshRooms();
   });
 }
 
@@ -427,6 +505,25 @@ async function sendComment() {
 }
 
 if (els.sendComment) els.sendComment.addEventListener("click", () => void sendComment());
+if (els.copySession) {
+  els.copySession.addEventListener("click", () => {
+    void copyText(els.session.value, "Session id copied.");
+  });
+}
+if (els.copyDevice) {
+  els.copyDevice.addEventListener("click", () => {
+    void copyText(els.deviceId?.textContent, "Device id copied.");
+  });
+}
+if (els.session) {
+  els.session.addEventListener("change", () => {
+    persistSessionId();
+    startPresencePoll();
+  });
+}
+if (els.relay) {
+  els.relay.addEventListener("change", () => startPresencePoll());
+}
 refreshAccountUi();
 
 if (params.get("invite") && !isShareMode) {
@@ -448,34 +545,234 @@ if (params.get("invite") && !isShareMode) {
 
 function updateExecutorPresence(state) {
   const ex = state?.executors ?? {};
-  const user = ex.userOnline ? "online" : "offline";
-  const platform = ex.platformOnline ? "online" : "offline";
-  const device = ex.userDeviceId ? ` (${ex.userDeviceId})` : "";
-  els.executorStatus.textContent = `UserExecutor ${user}${device} · Platform ${platform}`;
-  els.executorStatus.className = `status${ex.userOnline || ex.platformOnline ? " live" : ""}`;
+  const connected = wsOpen();
+  const userOn = Boolean(ex.userOnline);
+  const platOn = Boolean(ex.platformOnline);
+  const sessionId = els.session?.value.trim() ?? "";
+  const unknown = !isShareMode && !sessionId;
+  const device = typeof ex.userDeviceId === "string" ? ex.userDeviceId : "";
+
+  setLamp(els.lampDesktop, userOn, unknown);
+  setLamp(els.lampPlatform, platOn, unknown);
+  setLamp(els.lampRelay, connected, false);
+
+  const userSeen = formatAgo(ex.userLastSeenAt);
+  const platSeen = formatAgo(ex.platformLastSeenAt);
+  setPillText(
+    els.pillDesktop,
+    unknown
+      ? "—"
+      : userOn
+        ? device
+          ? `online · ${device}`
+          : "online"
+        : userSeen
+          ? `offline · ${userSeen}`
+          : "offline",
+  );
+  setPillText(
+    els.pillPlatform,
+    unknown ? "—" : platOn ? "online" : platSeen ? `offline · ${platSeen}` : "offline",
+  );
+  setPillText(els.pillRelay, connected ? "live" : "idle");
+
+  if (els.deviceLine && els.deviceId) {
+    if (device) {
+      els.deviceLine.hidden = false;
+      els.deviceId.textContent = device;
+    } else {
+      els.deviceLine.hidden = true;
+      els.deviceId.textContent = "";
+    }
+  }
+
+  const extras = [];
+  if (typeof ex.viewerCount === "number") {
+    extras.push(`${ex.viewerCount} viewer${ex.viewerCount === 1 ? "" : "s"}`);
+  }
+  if (lastQueueDepth > 0) extras.push(`${lastQueueDepth} queued`);
 
   const want = selectedExecutor();
-  const online =
-    want === "platform" ? Boolean(ex.platformOnline) : Boolean(ex.userOnline);
+  const online = want === "platform" ? platOn : userOn;
   const cap = shareAccess?.writeCap;
   const canCommand =
-    cap === "command" ||
-    (!shareAccess && Boolean(socket && socket.readyState === WebSocket.OPEN && online));
+    cap === "command" || (!shareAccess && Boolean(connected && online));
   const canComment = cap === "comment" || canCommand;
-  const canWrite = Boolean(socket && socket.readyState === WebSocket.OPEN && online && canCommand);
+  const canWrite = Boolean(connected && online && canCommand);
   els.sendPrompt.disabled = !canWrite;
   els.steer.disabled = !canWrite;
   els.cancel.disabled = !canWrite;
-  els.deploy.disabled = !(socket && socket.readyState === WebSocket.OPEN && ex.userOnline && canCommand);
+  els.deploy.disabled = !(connected && userOn && canCommand);
   if (els.sendComment) els.sendComment.disabled = !canComment;
 
-  if (socket?.readyState === WebSocket.OPEN && !online) {
-    setStatus(
+  let copy;
+  let kind = "";
+  if (isShareMode) {
+    copy = "Read-only share mode — writer WebSocket disabled.";
+  } else if (unknown) {
+    copy = "Enter the session id from desktop Settings → Networks (desktop-{deviceId}).";
+  } else if (connected && online) {
+    copy =
       want === "platform"
-        ? "Connected (read-only) — Platform executor offline. Open Sandbox or switch to desktop."
-        : "Connected (read-only) — open desktop ProofShip or choose Platform.",
-      "err",
-    );
+        ? "Live with Platform. Prompts run in the sandbox — deploy still needs a desktop."
+        : `Live with desktop${device ? ` ${device}` : ""}. Prompts go to this machine.`;
+    kind = "live";
+  } else if (connected && !online) {
+    copy =
+      want === "platform"
+        ? "Relay connected (read-only). Platform is offline — open Sandbox or switch to desktop."
+        : "Relay connected (read-only). Desktop is not attached — open ProofShip on that machine.";
+    kind = "err";
+  } else if (online) {
+    copy =
+      want === "platform"
+        ? "Platform is online. Connect to send sandbox jobs."
+        : "Desktop is online. Connect to watch and send prompts.";
+    kind = "live";
+  } else {
+    const seen = want === "platform" ? platSeen : userSeen;
+    copy =
+      want === "platform"
+        ? `Platform is offline${seen ? ` (last seen ${seen})` : ""}.`
+        : `Desktop is offline${seen ? ` (last seen ${seen})` : ""}. Open ProofShip on that machine.`;
+  }
+  if (extras.length) copy += ` · ${extras.join(" · ")}`;
+  els.executorStatus.textContent = copy;
+  els.executorStatus.className = `status${kind ? ` ${kind}` : ""}`;
+
+  const presenceKey = `${connected}:${online}:${want}`;
+  if (presenceKey !== lastPresenceKey) {
+    lastPresenceKey = presenceKey;
+    if (connected && !online) {
+      setStatus(
+        want === "platform"
+          ? "Connected (read-only) — Platform executor offline. Open Sandbox or switch to desktop."
+          : "Connected (read-only) — desktop not attached. Open ProofShip or choose Platform.",
+        "err",
+      );
+    } else if (connected && online) {
+      setStatus(`Connected to session ${sessionId}`, "live");
+    }
+  }
+}
+
+function stopPresencePoll() {
+  if (presencePoll) {
+    clearInterval(presencePoll);
+    presencePoll = null;
+  }
+}
+
+function startPresencePoll() {
+  stopPresencePoll();
+  if (isShareMode) return;
+  void fetchSessionState();
+  presencePoll = setInterval(() => void fetchSessionState(), 4000);
+}
+
+async function fetchSessionState() {
+  if (isShareMode) return;
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const sessionId = els.session.value.trim();
+  if (!base || !sessionId) {
+    updateExecutorPresence(lastState);
+    return;
+  }
+  if (presenceInFlight) return;
+  presenceInFlight = true;
+  persistSessionId();
+  try {
+    const url = new URL(`${base}/api/sessions/${encodeURIComponent(sessionId)}/state`);
+    const viewer = els.viewerToken.value.trim();
+    if (viewer) url.searchParams.set("viewerToken", viewer);
+    const res = await fetch(url.toString(), { headers: await authHeaders() });
+    if (!res.ok) {
+      if (res.status === 401) {
+        els.executorStatus.textContent = "Need a viewer token or sign in to read this room.";
+        els.executorStatus.className = "status err";
+      }
+      return;
+    }
+    const data = await res.json();
+    lastQueueDepth = Number(data.queueDepth) || 0;
+    const incoming = data.state && typeof data.state === "object" ? data.state : {};
+    if (wsOpen()) {
+      lastState = { ...lastState, executors: incoming.executors ?? lastState.executors };
+      updateExecutorPresence(lastState);
+    } else {
+      renderSnapshot(incoming);
+      if (Array.isArray(incoming.transcript) && incoming.transcript.length) {
+        renderTranscriptFromState(incoming);
+      }
+    }
+  } catch {
+    if (!wsOpen()) {
+      els.executorStatus.textContent = "Relay unreachable — check the base URL.";
+      els.executorStatus.className = "status err";
+    }
+  } finally {
+    presenceInFlight = false;
+  }
+}
+
+async function decorateRoomChip(base, sessionId, button) {
+  try {
+    const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/state`, {
+      headers: await authHeaders(),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    const on = Boolean(data.state?.executors?.userOnline || data.state?.executors?.platformOnline);
+    button.classList.toggle("live", on);
+    const lamp = button.querySelector(".lamp");
+    setLamp(lamp, on, false);
+  } catch {
+    /* ignore */
+  }
+}
+
+async function refreshRooms() {
+  if (!els.roomList || isShareMode) return;
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const session = loadSession();
+  const orgId = els.orgSelect?.value;
+  if (!base || !session?.token || !orgId) {
+    els.roomList.hidden = true;
+    els.roomList.innerHTML = "";
+    return;
+  }
+  try {
+    const res = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/rooms`, {
+      headers: await authHeaders(),
+    });
+    const body = await res.json();
+    const rooms = body.rooms ?? [];
+    if (!res.ok || rooms.length === 0) {
+      els.roomList.hidden = true;
+      els.roomList.innerHTML = "";
+      return;
+    }
+    els.roomList.hidden = false;
+    els.roomList.innerHTML = "";
+    const heading = document.createElement("div");
+    heading.className = "hint";
+    heading.textContent = "Claimed rooms";
+    els.roomList.appendChild(heading);
+    for (const room of rooms.slice(0, 8)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "room-chip ghost";
+      button.innerHTML = `<span class="lamp off"></span><span>${escapeHtml(room.sessionId)}</span>`;
+      button.addEventListener("click", () => {
+        els.session.value = room.sessionId;
+        persistSessionId();
+        startPresencePoll();
+      });
+      els.roomList.appendChild(button);
+      void decorateRoomChip(base, room.sessionId, button);
+    }
+  } catch {
+    /* relay offline */
   }
 }
 
@@ -568,7 +865,8 @@ function disconnect() {
   }
   setConnectedUi(false);
   setStatus("Disconnected — open desktop ProofShip or choose Platform.");
-  updateExecutorPresence({});
+  lastPresenceKey = "";
+  updateExecutorPresence(lastState);
 }
 
 function sendCommand(payload) {
@@ -686,6 +984,7 @@ els.connect.addEventListener("click", () => {
     return;
   }
   disconnect();
+  persistSessionId();
   setStatus("Connecting…");
   els.connect.disabled = true;
 
@@ -710,6 +1009,7 @@ els.connect.addEventListener("click", () => {
       return;
     }
     if (msg.type === "snapshot") {
+      lastQueueDepth = Number(msg.queueDepth) || lastQueueDepth;
       renderSnapshot(msg.state);
       renderTail(msg.tail);
       renderTranscriptFromState(msg.state);
@@ -1009,4 +1309,6 @@ pfMcp.copy.addEventListener("click", async () => {
 
 if (isShareMode && els.relay.value.trim() && els.session.value.trim()) {
   fetchShare();
+} else if (!isShareMode) {
+  startPresencePoll();
 }

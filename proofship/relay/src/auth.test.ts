@@ -248,4 +248,55 @@ describe("SIWE auth routes", () => {
     const peekBody = (await peek!.json()) as { orgName: string };
     expect(peekBody.orgName).toBe("Personal");
   });
+
+  it("lists claimed rooms for an org member", async () => {
+    const store = new MemoryAccountStore();
+    const nonceRes = await handleAuth(
+      new Request(
+        `http://relay.test/api/auth/siwe/nonce?address=${ACCOUNT.address}`,
+        { headers: originHeaders() },
+      ),
+      {},
+      store,
+    );
+    const { message } = (await nonceRes!.json()) as { message: string };
+    const signature = await ACCOUNT.signMessage({ message });
+    const verifyRes = await handleAuth(
+      new Request("http://relay.test/api/auth/siwe/verify", {
+        method: "POST",
+        headers: { ...originHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ message, signature }),
+      }),
+      {},
+      store,
+    );
+    const { token } = (await verifyRes!.json()) as { token: string };
+    const orgs = await handleAuth(
+      new Request("http://relay.test/api/orgs", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    const orgId = ((await orgs!.json()) as { orgs: { id: string }[] }).orgs[0]?.id;
+    const claim = await handleAuth(
+      new Request("http://relay.test/api/sessions/desktop-abc/claim", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    expect(claim?.status).toBe(200);
+    const rooms = await handleAuth(
+      new Request(`http://relay.test/api/orgs/${orgId}/rooms`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    expect(rooms?.status).toBe(200);
+    const body = (await rooms!.json()) as { rooms: { sessionId: string }[] };
+    expect(body.rooms.map((r) => r.sessionId)).toEqual(["desktop-abc"]);
+  });
 });

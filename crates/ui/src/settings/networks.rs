@@ -1,5 +1,7 @@
 //! Settings → Networks: built-in X Layer presets plus custom EVM RPC entries.
 
+use std::time::Duration;
+
 use gpui::{
     AnyElement, Context, Entity, Render, SharedString, Subscription, Task, Window, div, prelude::*,
     px,
@@ -37,6 +39,7 @@ pub struct NetworksPage {
     error: Option<String>,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
+    relay_watch: Option<Task<()>>,
 }
 
 impl NetworksPage {
@@ -49,8 +52,10 @@ impl NetworksPage {
             error: None,
             load_task: None,
             action_task: None,
+            relay_watch: None,
         };
         page.load(cx);
+        page.start_relay_watch(cx);
         page
     }
 
@@ -85,11 +90,58 @@ impl NetworksPage {
         }));
     }
 
+    fn start_relay_watch(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.relay_watch = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(4))
+                    .await;
+                let relay = engine
+                    .client()
+                    .call(methods::STUDIO_RELAY_STATUS, serde_json::json!({}))
+                    .await;
+                if this
+                    .update(cx, |page, cx| {
+                        if let Ok(value) = relay {
+                            page.relay = serde_json::from_value::<StudioRelayStatus>(value).ok();
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        }));
+    }
+
     fn render_relay_card(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let relay = self.relay.as_ref()?;
         let session = relay.session_id.clone();
+        let device = relay.device_id.clone();
         let web = relay.web_url.clone().unwrap_or_default();
         let base = relay.base.clone().unwrap_or_default();
+        let (status, lamp) = if !relay.enabled {
+            (
+                SharedString::from(
+                    "Web relay is off (PROOFSHIP_RELAY=off). Web Sessions cannot reach this desktop.",
+                ),
+                theme.text_dim,
+            )
+        } else if relay.connected {
+            (
+                SharedString::from(format!("Online as UserExecutor on {base}.")),
+                theme.success,
+            )
+        } else {
+            (
+                SharedString::from(format!("Connecting to {base}…")),
+                theme.warning,
+            )
+        };
         Some(
             div()
                 .mb(px(16.0))
@@ -102,25 +154,45 @@ impl NetworksPage {
                 .gap(px(8.0))
                 .child(
                     div()
-                        .text_size(px(13.0))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(theme.text)
-                        .child("Web relay"),
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .size(px(8.0))
+                                .rounded_full()
+                                .bg(lamp),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(theme.text)
+                                .child("Web relay"),
+                        ),
                 )
                 .child(
                     div()
                         .text_size(px(12.0))
                         .text_color(theme.text_muted)
-                        .child(if relay.enabled {
-                            SharedString::from(format!(
-                                "This desktop is a UserExecutor on {base}. Session {session}."
-                            ))
-                        } else {
-                            SharedString::from(
-                                "Web relay is off (PROOFSHIP_RELAY=off). Web Sessions cannot reach this desktop.",
-                            )
-                        }),
+                        .child(status),
                 )
+                .when(relay.enabled, |el| {
+                    el.child(
+                        div()
+                            .font_family("Geist Mono")
+                            .text_size(px(11.0))
+                            .text_color(theme.text_dim)
+                            .child(SharedString::from(format!("Device  {device}"))),
+                    )
+                    .child(
+                        div()
+                            .font_family("Geist Mono")
+                            .text_size(px(11.0))
+                            .text_color(theme.text_dim)
+                            .child(SharedString::from(format!("Session  {session}"))),
+                    )
+                })
                 .when(relay.enabled && !web.is_empty(), |el| {
                     let web_open = web.clone();
                     el.child(

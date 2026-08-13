@@ -88,6 +88,7 @@ export interface AccountStore {
   deleteMember(orgId: string, userId: string): Promise<void>;
   putRoomGrant(grant: RoomGrant): Promise<void>;
   getRoomGrant(sessionId: string): Promise<RoomGrant | null>;
+  listRoomGrants(orgId: string): Promise<RoomGrant[]>;
   putInvite(tokenHash: string, invite: OrgInvite): Promise<void>;
   getInvite(tokenHash: string): Promise<OrgInvite | null>;
   deleteInvite(tokenHash: string): Promise<void>;
@@ -205,6 +206,12 @@ export class MemoryAccountStore implements AccountStore {
 
   async getRoomGrant(sessionId: string): Promise<RoomGrant | null> {
     return this.rooms.get(sessionId) ?? null;
+  }
+
+  async listRoomGrants(orgId: string): Promise<RoomGrant[]> {
+    return [...this.rooms.values()]
+      .filter((room) => room.orgId === orgId)
+      .sort((a, b) => b.claimedAt.localeCompare(a.claimedAt));
   }
 
   async putInvite(tokenHash: string, invite: OrgInvite): Promise<void> {

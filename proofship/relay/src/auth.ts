@@ -525,6 +525,17 @@ async function handleOrgRoutes(
     return json({ ok: true, orgId, joinedOrgs: joined.map((o) => ({ id: o.id, name: o.name })) });
   }
 
+  const roomsPath = url.pathname.match(/^\/api\/orgs\/([^/]+)\/rooms$/u);
+  if (roomsPath && request.method === "GET") {
+    const orgId = decodeURIComponent(roomsPath[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    if (!orgId || !(await store.getMember(orgId, session.userId))) {
+      return json({ ok: false, error: "not a member of that org" }, 403);
+    }
+    return json({ ok: true, rooms: await store.listRoomGrants(orgId) });
+  }
+
   const claim = url.pathname.match(/^\/api\/sessions\/([^/]+)\/claim$/u);
   if (request.method === "POST" && claim) {
     const sessionId = decodeURIComponent(claim[1] ?? "");

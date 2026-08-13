@@ -24,6 +24,7 @@ import {
   authorizeViewer,
   eventStatePatch,
   isRecord,
+  overlayLiveExecutors,
   parseViewerCommand,
   redactSharePayload,
   resolveExecutor,
@@ -41,6 +42,7 @@ export {
   authorizeShare,
   authorizeViewer,
   eventStatePatch,
+  overlayLiveExecutors,
   parseViewerCommand,
   redactSharePayload,
   resolveExecutor,
@@ -329,10 +331,12 @@ export class SessionRoom extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/state") {
+      const state = this.liveState();
       return json({
-        state: this.state,
+        state,
         tail: this.events.slice(-SNAPSHOT_TAIL),
         queueDepth: this.queue.length,
+        presence: state.executors ?? {},
       });
     }
 
@@ -387,7 +391,7 @@ export class SessionRoom extends DurableObject<Env> {
       if (role === "viewer") {
         sendJson(server, {
           type: "snapshot",
-          state: this.state,
+          state: this.liveState(),
           tail: this.events.slice(-SNAPSHOT_TAIL),
           queueDepth: this.queue.length,
         });
@@ -498,6 +502,21 @@ export class SessionRoom extends DurableObject<Env> {
 
   private socketsFor(role: Role): WebSocket[] {
     return this.ctx.getWebSockets().filter((s) => this.attachmentFor(s).role === role);
+  }
+
+  /** Persisted flags can lag a missed close; live sockets are the source of truth. */
+  private liveState(): SessionState {
+    const userSockets = this.socketsFor("engine");
+    const userDeviceId =
+      userSockets
+        .map((socket) => this.attachmentFor(socket).deviceId)
+        .find((id): id is string => Boolean(id)) ?? this.state.executors?.userDeviceId;
+    return overlayLiveExecutors(this.state, {
+      userOnline: userSockets.length > 0,
+      platformOnline: this.socketsFor("platform").length > 0,
+      userDeviceId,
+      viewerCount: this.socketsFor("viewer").length,
+    });
   }
 
   private async appendEvent(message: EngineEventMessage): Promise<void> {

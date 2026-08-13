@@ -56,6 +56,34 @@ describe("MemoryAccountStore", () => {
 });
 
 describe("orgs", () => {
+  it("lists claimed rooms newest first", async () => {
+    const store = new MemoryAccountStore();
+    const user = await store.upsertUser(ADDRESS, "t0");
+    const org = await ensurePersonalOrg(store, user, "t0");
+    await store.putRoomGrant({
+      sessionId: "desktop-old",
+      orgId: org.id,
+      ownerId: user.id,
+      claimedAt: "2026-08-01T00:00:00.000Z",
+    });
+    await store.putRoomGrant({
+      sessionId: "desktop-new",
+      orgId: org.id,
+      ownerId: user.id,
+      claimedAt: "2026-08-13T00:00:00.000Z",
+    });
+    await store.putRoomGrant({
+      sessionId: "other-org",
+      orgId: "org:other",
+      ownerId: user.id,
+      claimedAt: "2026-08-14T00:00:00.000Z",
+    });
+    expect((await store.listRoomGrants(org.id)).map((r) => r.sessionId)).toEqual([
+      "desktop-new",
+      "desktop-old",
+    ]);
+  });
+
   it("creates a personal org and accepts comment/command shares", async () => {
     const store = new MemoryAccountStore();
     const user = await store.upsertUser(ADDRESS, "t0");

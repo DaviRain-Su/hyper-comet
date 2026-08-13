@@ -310,6 +310,17 @@ export class D1AccountStore implements AccountStore {
       .first<RoomGrant>();
   }
 
+  async listRoomGrants(orgId: string): Promise<RoomGrant[]> {
+    await this.ensure();
+    const { results } = await this.db
+      .prepare(
+        "SELECT session_id AS sessionId, org_id AS orgId, owner_id AS ownerId, claimed_at AS claimedAt FROM room_grants WHERE org_id = ? ORDER BY claimed_at DESC",
+      )
+      .bind(orgId)
+      .all<RoomGrant>();
+    return results ?? [];
+  }
+
   async putInvite(tokenHash: string, invite: OrgInvite): Promise<void> {
     await this.ensure();
     await this.db

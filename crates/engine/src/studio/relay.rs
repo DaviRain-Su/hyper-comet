@@ -9,6 +9,7 @@
 //!   (default: `desktop-{deviceId}` so machines do not collide)
 //! - `PROOFSHIP_RELAY_CHAT_ID` — Sessions chat used for web prompts (default `proofship-relay`)
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -105,6 +106,7 @@ fn identity_from_env(base: &str, default_device_id: &str) -> RelayIdentity {
 pub struct StudioRelay {
     inner: Arc<Mutex<Option<RelayState>>>,
     default_device: Arc<Mutex<String>>,
+    connected: Arc<AtomicBool>,
 }
 
 struct RelayState {
@@ -161,6 +163,7 @@ impl StudioRelay {
                 let id = identity_from_env(&base, &device);
                 comet_proto::StudioRelayStatus {
                     enabled: true,
+                    connected: self.connected.load(Ordering::Relaxed),
                     web_url: Some(id.web_url()),
                     base: Some(id.base),
                     device_id: id.device_id,
@@ -169,6 +172,7 @@ impl StudioRelay {
             }
             None => comet_proto::StudioRelayStatus {
                 enabled: false,
+                connected: false,
                 base: None,
                 device_id: device,
                 session_id: String::new(),
@@ -212,6 +216,7 @@ impl StudioRelay {
             identity.session_id,
             out_rx,
             cmd_tx,
+            self.connected.clone(),
         ));
         Some(cmd_rx)
     }
@@ -278,6 +283,7 @@ async fn run_client(
     session_id: String,
     mut out_rx: mpsc::UnboundedReceiver<String>,
     cmd_tx: mpsc::UnboundedSender<RelayCommand>,
+    connected: Arc<AtomicBool>,
 ) {
     let mut backoff = Duration::from_secs(1);
     let mut queue: Vec<String> = Vec::new();
@@ -286,6 +292,7 @@ async fn run_client(
         match connect_async(&url).await {
             Ok((ws, _)) => {
                 tracing::info!(%url, "proofship relay connected (user executor)");
+                connected.store(true, Ordering::Relaxed);
                 backoff = Duration::from_secs(1);
                 let (mut write, mut read) = ws.split();
                 // Announce session to viewers (relay also emits executor.online).
@@ -343,6 +350,7 @@ async fn run_client(
                 tracing::warn!(error = %err, "proofship relay connect failed");
             }
         }
+        connected.store(false, Ordering::Relaxed);
         tracing::warn!(?backoff, "proofship relay reconnecting");
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(Duration::from_secs(30));
