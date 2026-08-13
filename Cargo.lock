@@ -2136,6 +2136,7 @@ dependencies = [
  "anyhow",
  "clap",
  "comet-engine",
+ "comet-proto",
  "comet-rpc",
  "comet-ui",
  "comet-update",
