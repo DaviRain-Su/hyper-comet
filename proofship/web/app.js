@@ -17,6 +17,7 @@ const els = {
   prompt: document.getElementById("prompt"),
   sendPrompt: document.getElementById("send-prompt"),
   steer: document.getElementById("steer"),
+  agentLane: document.getElementById("agent-lane"),
   status: document.getElementById("status"),
   executorStatus: document.getElementById("executor-status"),
   snapshot: document.getElementById("snapshot"),
@@ -59,6 +60,7 @@ const params = new URLSearchParams(location.search);
 if (params.get("relay")) els.relay.value = params.get("relay");
 else if (els.relay && !els.relay.value.trim()) els.relay.value = DEFAULT_RELAY;
 const LAST_SESSION_KEY = "proofship.lastSession";
+const LAST_LANE_KEY = "proofship.lastLane";
 if (params.get("session") || params.get("launch")) {
   els.session.value = params.get("session") || params.get("launch");
 } else {
@@ -115,6 +117,58 @@ let lastPresenceKey = "";
 function selectedExecutor() {
   const el = document.querySelector('input[name="executor"]:checked');
   return el?.value === "platform" ? "platform" : "user";
+}
+
+function persistLane(id) {
+  if (!id) return;
+  try {
+    localStorage.setItem(LAST_LANE_KEY, id);
+  } catch {
+    /* private mode */
+  }
+}
+
+function rememberedLane() {
+  try {
+    return localStorage.getItem(LAST_LANE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function selectedLane() {
+  return (els.agentLane?.value || "").trim();
+}
+
+function renderAgentPicker(state) {
+  if (!els.agentLane) return;
+  const rows = Array.isArray(state?.harnesses) ? state.harnesses : [];
+  const usable = rows.filter((row) => row && typeof row.id === "string" && row.id);
+  const previous = selectedLane() || rememberedLane() || state?.preferredLane || "";
+  els.agentLane.innerHTML = "";
+  if (usable.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = state?.executors?.userOnline
+      ? "No installed agent reported — enable one in desktop Settings → Agents"
+      : "Connect to a desktop to load local agents";
+    els.agentLane.appendChild(opt);
+    els.agentLane.disabled = true;
+    return;
+  }
+  for (const row of usable) {
+    const opt = document.createElement("option");
+    opt.value = row.id;
+    const mark = row.installed === false ? " (not installed)" : "";
+    opt.textContent = `${row.name || row.id}${mark}`;
+    els.agentLane.appendChild(opt);
+  }
+  const want = usable.some((row) => row.id === previous)
+    ? previous
+    : usable[0].id;
+  els.agentLane.value = want;
+  persistLane(want);
+  els.agentLane.disabled = selectedExecutor() === "platform";
 }
 
 function setStatus(text, kind = "") {
@@ -699,7 +753,13 @@ async function fetchSessionState() {
     lastQueueDepth = Number(data.queueDepth) || 0;
     const incoming = data.state && typeof data.state === "object" ? data.state : {};
     if (wsOpen()) {
-      lastState = { ...lastState, executors: incoming.executors ?? lastState.executors };
+      lastState = {
+        ...lastState,
+        executors: incoming.executors ?? lastState.executors,
+        harnesses: incoming.harnesses ?? lastState.harnesses,
+        preferredLane: incoming.preferredLane ?? lastState.preferredLane,
+      };
+      renderAgentPicker(lastState);
       updateExecutorPresence(lastState);
     } else {
       renderSnapshot(incoming);
@@ -842,6 +902,7 @@ async function refreshInvites() {
 function renderSnapshot(state) {
   lastState = state ?? {};
   els.snapshot.textContent = JSON.stringify(lastState, null, 2);
+  renderAgentPicker(lastState);
   updateExecutorPresence(lastState);
   maybeAutofillDeploy(lastState);
 }
@@ -1031,7 +1092,13 @@ function renderTranscriptFromShare(transcript) {
 els.disconnect.addEventListener("click", disconnect);
 
 for (const radio of document.querySelectorAll('input[name="executor"]')) {
-  radio.addEventListener("change", () => updateExecutorPresence(lastState));
+  radio.addEventListener("change", () => {
+    renderAgentPicker(lastState);
+    updateExecutorPresence(lastState);
+  });
+}
+if (els.agentLane) {
+  els.agentLane.addEventListener("change", () => persistLane(selectedLane()));
 }
 
 els.connect.addEventListener("click", () => {
@@ -1079,7 +1146,11 @@ els.connect.addEventListener("click", () => {
     } else if (msg.type === "event" && msg.event) {
       appendEventLi(msg.event);
       appendTranscriptEvent(msg.event);
-      if (msg.event.kind?.startsWith("executor.") || msg.event.kind === "deploy.done") {
+      if (
+        msg.event.kind?.startsWith("executor.") ||
+        msg.event.kind === "deploy.done" ||
+        msg.event.kind === "harness.catalog"
+      ) {
         const patch = { ...lastState };
         if (msg.event.kind === "executor.online" || msg.event.kind === "executor.offline") {
           const role = msg.event.payload?.role;
@@ -1100,6 +1171,14 @@ els.connect.addEventListener("click", () => {
         }
         if (msg.event.kind === "executor.refused") {
           setDeployStatus(msg.event.payload?.hint || msg.event.payload?.reason || "Refused", "err");
+        }
+        if (msg.event.kind === "harness.catalog") {
+          if (Array.isArray(msg.event.payload?.harnesses)) {
+            patch.harnesses = msg.event.payload.harnesses;
+          }
+          if (msg.event.payload?.defaultId) {
+            patch.preferredLane = msg.event.payload.defaultId;
+          }
         }
         renderSnapshot(patch);
       } else if (
@@ -1131,15 +1210,24 @@ els.sendPrompt.addEventListener("click", () => {
     setStatus("Prompt is empty.", "err");
     return;
   }
+  const lane = selectedLane();
+  if (selectedExecutor() === "user" && !lane) {
+    setStatus("Pick a local code agent first (desktop must be online).", "err");
+    return;
+  }
+  persistLane(lane);
   if (
     sendCommand({
       type: "cmd.prompt",
       nl,
-      lane: "codex",
+      lane: lane || "codex",
       executor: selectedExecutor(),
     })
   ) {
-    setStatus(`Prompt queued for ${selectedExecutor()} executor.`, "live");
+    setStatus(
+      `Prompt queued for ${lane || "default"} on ${selectedExecutor()} executor.`,
+      "live",
+    );
     els.prompt.value = "";
   }
 });

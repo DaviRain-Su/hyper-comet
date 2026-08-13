@@ -355,6 +355,33 @@ describe("eventStatePatch", () => {
     expect(state.executors?.platformLastSeenAt).toBe("t5");
   });
 
+  it("stores the desktop harness catalog for the web picker", () => {
+    let state: SessionState = {};
+    state = eventStatePatch(state, {
+      seq: 1,
+      ts: "t1",
+      kind: "harness.catalog",
+      payload: {
+        defaultId: "claude-code",
+        harnesses: [
+          { id: "claude-code", name: "Claude Code", installed: true, enabled: true },
+          { id: "codex", name: "Codex", installed: true, enabled: true },
+        ],
+      },
+    });
+    expect(state.preferredLane).toBe("claude-code");
+    expect(state.harnesses).toHaveLength(2);
+    expect(state.harnesses?.[0]?.id).toBe("claude-code");
+
+    state = eventStatePatch(state, {
+      seq: 2,
+      ts: "t2",
+      kind: "session.user",
+      payload: { text: "hi", harness: "codex" },
+    });
+    expect(state.preferredLane).toBe("codex");
+  });
+
   it("overlays live sockets over stale persisted flags", () => {
     const stale: SessionState = {
       executors: {

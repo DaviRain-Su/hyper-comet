@@ -88,6 +88,42 @@ fn parse_relay_harness(lane: Option<&str>) -> HarnessId {
     serde_json::from_str(&quoted).unwrap_or(HarnessId::Codex)
 }
 
+/// Agents the web picker should offer: installed + enabled, else all installed.
+fn relay_harness_catalog(
+    registry: &HarnessRegistry,
+    default: HarnessId,
+) -> serde_json::Value {
+    let all: Vec<_> = registry
+        .descriptors()
+        .into_iter()
+        .filter(|d| d.id != HarnessId::Mock)
+        .collect();
+    let offered: Vec<_> = all
+        .iter()
+        .filter(|d| d.installed && crate::registry::descriptor_enabled(d))
+        .cloned()
+        .collect();
+    let list = if offered.is_empty() {
+        all.into_iter().filter(|d| d.installed).collect()
+    } else {
+        offered
+    };
+    let default_id = if list.iter().any(|d| d.id == default) {
+        default
+    } else {
+        list.first().map(|d| d.id).unwrap_or(default)
+    };
+    serde_json::json!({
+        "harnesses": list.iter().map(|d| serde_json::json!({
+            "id": d.id,
+            "name": d.name,
+            "installed": d.installed,
+            "enabled": d.enabled,
+        })).collect::<Vec<_>>(),
+        "defaultId": default_id,
+    })
+}
+
 fn mirror_agent_event(relay: &StudioRelay, event: &comet_proto::AgentEvent) {
     match event {
         comet_proto::AgentEvent::TextDelta { text } => {
@@ -691,6 +727,10 @@ impl EngineCore {
                     .ok()
                     .map(|s| parse_relay_harness(Some(&s)))
                     .unwrap_or(HarnessId::Codex);
+                relay.set_harness_catalog(relay_harness_catalog(
+                    &self.registry,
+                    default_harness,
+                ));
                 let network_store = self.network_store.clone();
                 let wallet_store = self.wallet_store.clone();
                 let studio_deploy = self.studio_deploy.clone();

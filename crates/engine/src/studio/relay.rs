@@ -146,6 +146,7 @@ pub struct StudioRelay {
     inner: Arc<Mutex<Option<RelayState>>>,
     default_device: Arc<Mutex<String>>,
     connected: Arc<AtomicBool>,
+    catalog: Arc<Mutex<serde_json::Value>>,
 }
 
 struct RelayState {
@@ -180,6 +181,11 @@ impl StudioRelay {
 
     pub fn set_default_device(&self, device_id: &str) {
         *self.default_device.lock().unwrap_or_else(|e| e.into_inner()) = device_id.to_string();
+    }
+
+    pub fn set_harness_catalog(&self, catalog: serde_json::Value) {
+        *self.catalog.lock().unwrap_or_else(|e| e.into_inner()) = catalog.clone();
+        self.publish("harness.catalog", catalog);
     }
 
     pub fn default_device(&self) -> String {
@@ -254,6 +260,7 @@ impl StudioRelay {
             out_rx,
             cmd_tx,
             self.connected.clone(),
+            self.catalog.clone(),
         ));
         Some(cmd_rx)
     }
@@ -321,6 +328,7 @@ async fn run_client(
     mut out_rx: mpsc::UnboundedReceiver<String>,
     cmd_tx: mpsc::UnboundedSender<RelayCommand>,
     connected: Arc<AtomicBool>,
+    catalog: Arc<Mutex<serde_json::Value>>,
 ) {
     let mut backoff = Duration::from_secs(1);
     let mut queue: Vec<String> = Vec::new();
@@ -333,14 +341,22 @@ async fn run_client(
                 backoff = Duration::from_secs(1);
                 let (mut write, mut read) = ws.split();
                 // Announce session to viewers (relay also emits executor.online).
+                let catalog =
+                    catalog.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let mut open_payload = serde_json::json!({
+                    "sessionId": session_id,
+                    "deviceId": device_id,
+                    "role": "engine",
+                });
+                if let Some(obj) = catalog.as_object() {
+                    for (key, value) in obj {
+                        open_payload[key] = value.clone();
+                    }
+                }
                 let open = serde_json::json!({
                     "type": "event",
                     "kind": "session.open",
-                    "payload": {
-                        "sessionId": session_id,
-                        "deviceId": device_id,
-                        "role": "engine",
-                    },
+                    "payload": open_payload,
                 })
                 .to_string();
                 let _ = write.send(Message::Text(open)).await;

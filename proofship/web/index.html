@@ -61,6 +61,13 @@
         <span id="token-label">Viewer token</span> <span class="hint">(optional)</span>
         <input id="viewer-token" type="password" placeholder="when VIEWER_TOKEN is set" spellcheck="false" autocomplete="off"/>
       </label>
+      <label class="field" id="agent-field">
+        Code agent
+        <select id="agent-lane">
+          <option value="">Waiting for desktop catalog…</option>
+        </select>
+        <span class="hint">Installed and enabled on this machine (desktop Settings → Agents).</span>
+      </label>
       <fieldset id="executor-fieldset" class="executor">
         <legend>Executor</legend>
         <label class="radio"><input type="radio" name="executor" value="user" checked/> My desktop / VPS</label>

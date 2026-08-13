@@ -17,6 +17,7 @@ export type EventKind =
   | "executor.refused"
   | "deploy.done"
   | "session.comment"
+  | "harness.catalog"
   | "note";
 
 export interface EngineEventMessage {
@@ -91,6 +92,13 @@ export interface SessionState {
   deployment?: unknown;
   transcript?: unknown[];
   notes?: unknown[];
+  harnesses?: Array<{
+    id?: string;
+    name?: string;
+    installed?: boolean;
+    enabled?: boolean | null;
+  }>;
+  preferredLane?: string;
 }
 
 /** Subset of Worker env used for device/engine token checks. */
@@ -297,6 +305,10 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
   switch (event.kind) {
     case "session.open":
       next.launch = event.payload;
+      applyHarnessCatalog(next, event.payload);
+      break;
+    case "harness.catalog":
+      applyHarnessCatalog(next, event.payload);
       break;
     case "session.user":
     case "session.agent":
@@ -306,6 +318,14 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
       const transcript = Array.isArray(next.transcript) ? [...next.transcript] : [];
       transcript.push({ kind: event.kind, payload: event.payload, ts: event.ts });
       next.transcript = transcript.slice(-MAX_TRANSCRIPT);
+      if (
+        event.kind === "session.user" &&
+        isRecord(event.payload) &&
+        typeof event.payload.harness === "string" &&
+        event.payload.harness
+      ) {
+        next.preferredLane = event.payload.harness;
+      }
       break;
     }
     case "draft.ready":
@@ -358,6 +378,16 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
       break;
   }
   return next;
+}
+
+function applyHarnessCatalog(state: SessionState, payload: unknown): void {
+  if (!isRecord(payload)) return;
+  if (Array.isArray(payload.harnesses)) {
+    state.harnesses = payload.harnesses.filter((row) => isRecord(row)) as SessionState["harnesses"];
+  }
+  if (typeof payload.defaultId === "string" && payload.defaultId) {
+    state.preferredLane = payload.defaultId;
+  }
 }
 
 /** Live sockets win over persisted online flags (stale after a missed close). */

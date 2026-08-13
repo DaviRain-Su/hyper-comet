@@ -13,6 +13,7 @@
   --sans: "Avenir Next", "Segoe UI", sans-serif;
 }
 
+body.share-mode #agent-field,
 body.share-mode #executor-fieldset,
 body.share-mode #deploy-panel,
 body.share-mode #account-panel,
