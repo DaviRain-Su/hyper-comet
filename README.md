@@ -2,6 +2,8 @@
 
 **AI drafts the contract. The gate decides if it ships.**
 
+![Zeron driving a Claude Code session with a live branch diff sidebar](apps/landing/public/assets/app-screenshot.jpg)
+
 ProofShip is a local-first desktop app for building and deploying Web3 products:
 you describe a contract in natural language, a coding agent of your choice
 drafts it as a [ProofForge](https://github.com/DaviRain-Su/proof_forge)
