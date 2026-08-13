@@ -1660,6 +1660,7 @@ async fn real_claude_sees_uploaded_image_inline() {
         auto_approve: false,
         attachments: vec![path],
         resume: None,
+        mcp_servers: Vec::new(),
     };
     core.doc_host
         .queue_command(

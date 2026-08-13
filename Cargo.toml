@@ -6,6 +6,7 @@ members = [
     "crates/sync",
     "crates/harness",
     "crates/engine",
+    "crates/pf-mcp",
     "crates/rpc",
     "crates/update",
     "crates/ui",
@@ -96,6 +97,7 @@ alloy = { version = "1.0", default-features = false, features = [
     "providers",
     "signer-local",
     "rpc-types",
+    "dyn-abi",
 ] }
 notify = "7"
 portable-pty = "0.8"

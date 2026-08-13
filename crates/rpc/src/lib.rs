@@ -127,6 +127,10 @@ pub mod methods {
     pub const STUDIO_WALLET_IMPORT: &str = "StudioWalletImport";
     pub const STUDIO_WC_START: &str = "StudioWalletConnectStart";
     pub const STUDIO_WC_STOP: &str = "StudioWalletConnectStop";
+    /// One-click deploy of sealed gate artifacts (proto `deploy.rs`).
+    pub const DEPLOY_SCAN: &str = "DeployScan";
+    pub const DEPLOY_SEND: &str = "DeploySend";
+    pub const DEPLOYMENTS: &str = "Deployments";
 }
 
 #[derive(Debug, thiserror::Error)]

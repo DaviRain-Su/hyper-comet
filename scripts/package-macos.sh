@@ -19,11 +19,13 @@ DMG="$OUT_DIR/comet-$VERSION-macos-$ARCH.dmg"
 APP_TARBALL="$OUT_DIR/comet-$VERSION-macos-$ARCH-app.tar.gz"
 
 cd "$ROOT"
-cargo build --release -p comet
+cargo build --release -p comet -p proofship-pf-mcp
 
 rm -rf "$APP" "$DMG" "$APP_TARBALL"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 755 "$ROOT/target/release/comet" "$APP/Contents/MacOS/comet"
+# ProofForge MCP gate: the engine resolves it as a sibling of the comet binary.
+install -m 755 "$ROOT/target/release/proofship-pf-mcp" "$APP/Contents/MacOS/proofship-pf-mcp"
 sed "s/__VERSION__/$VERSION/" "$ROOT/dist/macos/Info.plist" >"$APP/Contents/Info.plist"
 
 # Icon: iconset from dist/comet.png — the comet mark from the original app

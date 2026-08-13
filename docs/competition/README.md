@@ -8,8 +8,8 @@
 
 | 要求 | 状态 | 证据/动作 |
 |---|---|---|
-| 产品包含 AI 元素 | ✅ | 7 个 code agent lanes(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode)在 Sessions 中经 ACP 层驱动; ProofForge skill 草稿在 `.agents/skills/`(MCP 接线后续) |
-| 部署于 X Layer(赛期测试网) | 🔄 待执行 | Settings → Networks / Wallets; 操作者在本机用自己的 key 部署;需要 funded 测试网 key(水龙头在比赛页有链接) |
+| 产品包含 AI 元素 | ✅ | 7 个 code agent lanes(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode)在 Sessions 中经 ACP 层驱动; ProofForge skill 内嵌引擎,检测到工具链时自动注入 + 挂载 MCP 门禁(`crates/engine/src/proofforge.rs`);MCP 门禁是本仓库自维护的 `proofship-pf-mcp`(`crates/pf-mcp`,官方 rmcp SDK) |
+| 部署于 X Layer(赛期测试网) | 🔄 待执行 | 应用内一键部署:session 标题栏 Deploy 按钮扫描门禁产物(`.bin` + digest),用 Settings → Wallets 的签名钱包发 create tx(`crates/engine/src/deploy.rs`);需要 funded 测试网 key(水龙头在比赛页有链接) |
 | 后续主网上线 | ⏳ 承诺 | 同一脚本换 RPC/chainId 即可;README 路线声明 |
 | 独立 X 账号 + 持续运营 | ⏳ 用户动作 | 建号;首发帖文案见 `launch-copy.md` |
 | 官方 X 账号发帖 @XLayerOfficial | ⏳ 用户动作 | `launch-copy.md` 的 X 主帖(EN 主推 + 中文) |

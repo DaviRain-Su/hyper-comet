@@ -20,16 +20,20 @@ TARBALL="$STAGE.tar.gz"
 
 cd "$ROOT"
 if [[ "$PROFILE" == "release" ]]; then
-  cargo build --release -p comet
+  cargo build --release -p comet -p proofship-pf-mcp
   BIN="$ROOT/target/release/comet"
+  PF_MCP_BIN="$ROOT/target/release/proofship-pf-mcp"
 else
-  cargo build -p comet
+  cargo build -p comet -p proofship-pf-mcp
   BIN="$ROOT/target/debug/comet"
+  PF_MCP_BIN="$ROOT/target/debug/proofship-pf-mcp"
 fi
 
 rm -rf "$STAGE" "$TARBALL"
 mkdir -p "$STAGE"
 install -m 755 "$BIN" "$STAGE/comet"
+# ProofForge MCP gate: the engine resolves it as a sibling of the comet binary.
+install -m 755 "$PF_MCP_BIN" "$STAGE/proofship-pf-mcp"
 install -m 644 "$ROOT/dist/comet.desktop" "$STAGE/comet.desktop"
 install -m 644 "$ROOT/dist/comet.png" "$STAGE/comet.png"
 
@@ -39,6 +43,7 @@ cat >"$STAGE/install.sh" <<'INSTALL'
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install -Dm755 "$HERE/comet" "$HOME/.local/bin/comet"
+install -Dm755 "$HERE/proofship-pf-mcp" "$HOME/.local/bin/proofship-pf-mcp"
 install -Dm644 "$HERE/comet.desktop" "$HOME/.local/share/applications/comet.desktop"
 install -Dm644 "$HERE/comet.png" "$HOME/.local/share/icons/hicolor/1024x1024/apps/comet.png"
 command -v update-desktop-database >/dev/null 2>&1 \

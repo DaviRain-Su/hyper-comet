@@ -1017,7 +1017,7 @@ fn finish_segment<'a>(
 }
 
 /// `~` / `~/…` → this host's home directory. Anything else passes through.
-fn expand_home(cwd: &str) -> String {
+pub(crate) fn expand_home(cwd: &str) -> String {
     match cwd.strip_prefix("~") {
         Some("") => crate::repos::home_dir().to_string_lossy().into_owned(),
         Some(rest) if rest.starts_with('/') => crate::repos::home_dir()
@@ -1055,6 +1055,10 @@ async fn drive_run(
     let harness_id = harness.id();
     let user_prompt = request.prompt.clone();
     let run_cwd = request.cwd.clone();
+    // ProofForge ship lane: when a toolchain is present on this host, the
+    // harness gets the ProgramV1 skill + the MCP gate. The doc already stored
+    // the raw user prompt above — enrichment is harness-only.
+    let request = crate::proofforge::enrich_run_request(request);
     // Kept whole for the failed-resume retry (fresh session, same user entry).
     // Option so the retry branch (inside the event loop) can take ownership.
     let mut retry_request = Some(RunRequest {

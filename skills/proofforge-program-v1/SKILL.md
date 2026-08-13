@@ -18,10 +18,21 @@ skill.
 
 ## How this skill is used
 
-This file is a **skill draft**. ProofForge MCP (`pf_check` / `pf_build` /
-`pf_artifacts`) is not wired into the desktop app yet — attach it yourself
-when you have a ProofForge checkout (`PROOF_FORGE_ROOT` +
-`tools/mcp/proof_forge_mcp_server.py`), or call the CLI below by hand.
+This skill ships inside the ProofShip engine: when a ProofForge toolchain is
+detected on the host, every Session run gets this text prepended and the
+ProofForge MCP gate (`pf_doctor` / `pf_check` / `pf_build` / `pf_artifacts`)
+attached automatically. The gate server is `proofship-pf-mcp` — an MCP server
+maintained in this repo (`crates/pf-mcp`, official `rmcp` SDK, stdio) that
+wraps the `proof-forge-next` product CLI. Tool results are a JSON wrap
+`{ok, exitCode, stdout, stderr, parsed, error}`; on failure read
+`parsed.diagnostics[]` and repair in order.
+
+Detection is env-driven — `PF_CLI` / `PROOF_FORGE_CLI`, `proof-forge-next`
+on PATH, or `$PROOF_FORGE_ROOT/.lake/build/bin/proof-forge-next`;
+`PROOFSHIP_PF_MCP` overrides the gate server (a binary, or a `.py` run via
+python3), `PROOFSHIP_PF_MCP_URL` points at a hosted gate. Opt out with
+`PROOFSHIP_DISABLE_PF_MCP=1` / `PROOFSHIP_DISABLE_PF_SKILL=1`. Without a
+toolchain, call the CLI below by hand.
 
 Chain / RPC / WalletConnect details: use skill `proofship-evm` (X Layer first).
 

@@ -56,7 +56,8 @@ use tokio::sync::watch;
 
 use comet_doc::{MessagePart, SessionCommandPayload};
 use comet_proto::{
-    ChatConfig, CreateLocalWalletRequest, CreateLocalWalletResponse, HarnessId,
+    ChatConfig, CreateLocalWalletRequest, CreateLocalWalletResponse, DeployScanRequest,
+    DeployScanResponse, DeploySendRequest, DeploySendResponse, DeploymentsResponse, HarnessId,
     ImportLocalWalletRequest, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
     RemoveNetworkRequest, RemoveWalletRequest, ToolCall, UpsertNetworkRequest, UpsertWalletRequest,
     WalletConnectStartRequest, WalletConnectStartResponse, WalletsResponse,
@@ -65,6 +66,7 @@ use comet_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params
 
 use crate::agent_accounts::AgentAccounts;
 use crate::auth::Auth;
+use crate::deploy::DeployStore;
 use crate::diff_sync::CheckoutDiffSync;
 use crate::doc_host::DocHost;
 use crate::registry::HarnessRegistry;
@@ -388,6 +390,7 @@ pub struct EngineRpc {
     network_store: NetworkStore,
     wallet_store: WalletStore,
     wallet_connect: WalletConnectBridge,
+    deploy_store: DeployStore,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -408,6 +411,7 @@ impl EngineRpc {
         network_store: NetworkStore,
         wallet_store: WalletStore,
         wallet_connect: WalletConnectBridge,
+        deploy_store: DeployStore,
     ) -> Self {
         Self {
             sessions,
@@ -422,6 +426,7 @@ impl EngineRpc {
             network_store,
             wallet_store,
             wallet_connect,
+            deploy_store,
             auth: None,
             links: None,
             updater: None,
@@ -816,6 +821,11 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_WALLET_IMPORT
             | methods::STUDIO_WC_START
             | methods::STUDIO_WC_STOP
+            // Deploy reads artifacts + signs on the device holding the
+            // checkout and the wallet keys.
+            | methods::DEPLOY_SCAN
+            | methods::DEPLOY_SEND
+            | methods::DEPLOYMENTS
     )
 }
 
@@ -1213,6 +1223,54 @@ impl RpcService for EngineRpc {
             methods::STUDIO_WC_STOP => {
                 self.wallet_connect.stop().await;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
+            }
+            methods::DEPLOY_SCAN => {
+                let p: DeployScanRequest = parse_params(params)?;
+                let cwd = crate::sessions::expand_home(&p.cwd);
+                // Bounded filesystem walk — off the async reactor.
+                let artifacts = tokio::task::spawn_blocking(move || {
+                    crate::deploy::scan_artifacts(std::path::Path::new(&cwd))
+                })
+                .await
+                .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&DeployScanResponse { artifacts })
+            }
+            methods::DEPLOY_SEND => {
+                let p: DeploySendRequest = parse_params(params)?;
+                let networks = self
+                    .network_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                let network = networks
+                    .into_iter()
+                    .find(|n| n.id == p.network_id)
+                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
+                let wallets = self
+                    .wallet_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                let wallet = wallets
+                    .into_iter()
+                    .find(|w| w.id == p.wallet_id)
+                    .ok_or_else(|| RpcError::Failed(format!("unknown wallet {}", p.wallet_id)))?;
+                let record = crate::deploy::deploy(
+                    &p,
+                    &network,
+                    &wallet,
+                    self.wallet_store.secrets(),
+                    &self.wallet_connect,
+                    &self.deploy_store,
+                )
+                .await
+                .map_err(RpcError::Failed)?;
+                RpcReply::value(&DeploySendResponse { record })
+            }
+            methods::DEPLOYMENTS => {
+                let deployments = self
+                    .deploy_store
+                    .load()
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&DeploymentsResponse { deployments })
             }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {

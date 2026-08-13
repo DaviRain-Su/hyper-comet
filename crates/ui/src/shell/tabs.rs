@@ -188,6 +188,12 @@ impl Shell {
                     })
                     .when(!has_controls, |el| el.child(div().flex_1()))
                     .child(header_icon_button(
+                        "open-deploy",
+                        icons::GLOBAL,
+                        &theme,
+                        cx.listener(|this, _, _, cx| this.open_deploy(cx)),
+                    ))
+                    .child(header_icon_button(
                         "expand-changes",
                         icons::EXPAND_ARROWS,
                         &theme,
@@ -203,13 +209,24 @@ impl Shell {
             )
         } else {
             Some(
-                header_icon_button(
-                    "toggle-changes",
-                    icons::SIDEBAR_MINIMALISTIC,
-                    &theme,
-                    cx.listener(|this, _, _, cx| this.toggle_right_pane(cx)),
-                )
-                .into_any_element(),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(header_icon_button(
+                        "open-deploy",
+                        icons::GLOBAL,
+                        &theme,
+                        cx.listener(|this, _, _, cx| this.open_deploy(cx)),
+                    ))
+                    .child(header_icon_button(
+                        "toggle-changes",
+                        icons::SIDEBAR_MINIMALISTIC,
+                        &theme,
+                        cx.listener(|this, _, _, cx| this.toggle_right_pane(cx)),
+                    ))
+                    .into_any_element(),
             )
         };
 

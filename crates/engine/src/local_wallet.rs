@@ -127,7 +127,19 @@ pub async fn send_with_local(
     data: &str,
 ) -> Result<SendOutcome, String> {
     let hex_key = secrets.get(wallet_id).map_err(|e| e.to_string())?;
-    let signer = signer_from_hex(&hex_key).map_err(|e| e.to_string())?;
+    send_with_key(&hex_key, rpc_url, chain_id, to, data).await
+}
+
+/// Sign and broadcast with a caller-held hex key (DevEnvKey wallets — the key
+/// value lives in an env var, never in app storage).
+pub async fn send_with_key(
+    hex_key: &str,
+    rpc_url: &str,
+    chain_id: u64,
+    to: Option<&str>,
+    data: &str,
+) -> Result<SendOutcome, String> {
+    let signer = signer_from_hex(hex_key).map_err(|e| e.to_string())?;
     let wallet = EthereumWallet::from(signer);
     let url: reqwest::Url = rpc_url
         .parse()

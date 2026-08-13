@@ -15,6 +15,7 @@ use comet_sync::DocsStore;
 pub mod agent_accounts;
 pub mod auth;
 pub mod chat2_host;
+pub mod deploy;
 pub mod diff_sync;
 pub mod doc_host;
 pub mod instance_lock;
@@ -26,6 +27,7 @@ pub mod sessions;
 pub mod spaces;
 pub mod local_wallet;
 pub mod networks;
+pub mod proofforge;
 pub mod walletconnect;
 pub mod wallets;
 pub mod terminals;
@@ -35,6 +37,7 @@ pub mod workspace_host;
 
 pub use agent_accounts::{AgentAccounts, AgentAccountsConfig};
 pub use auth::{Auth, AuthConfig, AuthState, AuthUser, OrgMembership};
+pub use deploy::{DeployStore, scan_artifacts};
 pub use diff_sync::{
     CheckoutDiffSync, DiffSidecar, DiffSnapshot, TurnSnapshot, capture_diff, capture_diff_against,
     capture_turn_diff, merge_base, snapshot_tree,
@@ -351,6 +354,7 @@ impl EngineCore {
             self.network_store.clone(),
             self.wallet_store.clone(),
             self.wallet_connect.clone(),
+            DeployStore::new(&self.data_dir),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {

@@ -486,6 +486,8 @@ pub struct Shell {
     rename_dialog: Option<RenameChatDialog>,
     /// Chat id awaiting delete confirmation.
     delete_confirm: Option<String>,
+    /// One-click deploy dialog for the selected session's gate artifacts.
+    deploy_dialog: Option<(Entity<crate::deploy::DeployPanel>, Subscription)>,
     /// Space-row context menu (dropdown rows): (space id, window position).
     space_menu: popover::Popup<(String, Point<Pixels>)>,
     rename_space_dialog: Option<RenameSpaceDialog>,
@@ -715,6 +717,7 @@ impl Shell {
             chat_menu: popover::Popup::default(),
             rename_dialog: None,
             delete_confirm: None,
+            deploy_dialog: None,
             space_menu: popover::Popup::default(),
             rename_space_dialog: None,
             delete_space_confirm: None,
@@ -1045,6 +1048,26 @@ impl Shell {
             let changes = self.changes_pane(cx);
             changes.update(cx, |changes, cx| changes.ensure_watch(cx));
         }
+        cx.notify();
+    }
+
+    /// Open the deploy dialog for the selected session's cwd. The panel
+    /// scans that tree for sealed gate artifacts and drives the deploy RPCs.
+    pub(super) fn open_deploy(&mut self, cx: &mut Context<Self>) {
+        let cwd = self
+            .state
+            .read(cx)
+            .selected_chat_row()
+            .and_then(|c| c.cwd.clone())
+            .unwrap_or_else(|| "~".into());
+        let panel = cx.new(|cx| crate::deploy::DeployPanel::new(self.state.clone(), cwd, cx));
+        let sub = cx.subscribe(&panel, |this: &mut Self, _, event, cx| match event {
+            crate::deploy::DeployEvent::Dismiss => {
+                this.deploy_dialog = None;
+                cx.notify();
+            }
+        });
+        self.deploy_dialog = Some((panel, sub));
         cx.notify();
     }
 
@@ -2977,6 +3000,14 @@ impl Shell {
                 )
                 .into_any_element();
             overlays.push(popover::modal("delete-chat-dialog", viewport, card));
+        }
+
+        if let Some((panel, _)) = &self.deploy_dialog {
+            overlays.push(popover::modal(
+                "deploy-dialog",
+                viewport,
+                div().child(panel.clone()).into_any_element(),
+            ));
         }
 
         overlays

@@ -30,8 +30,9 @@ apps/comet            the desktop binary (headed + headless engine daemon)
 apps/landing          marketing site
 apps/ios              iOS companion
 crates/               proto · doc · sync · harness · engine · rpc · ui (gpui)
+crates/pf-mcp/        proofship-pf-mcp — ProofForge gate as an MCP server (rmcp, stdio)
 edge/                 TypeScript Worker + Durable Objects (sync edge)
-.agents/skills/       ProofForge skill drafts (MCP wiring comes later)
+skills/               agent skills (proofforge-program-v1 is embedded into the engine)
 docs/                 architecture + competition materials
 ```
 

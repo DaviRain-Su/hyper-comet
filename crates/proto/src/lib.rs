@@ -5,6 +5,7 @@
 //! harness-level passthrough (rate-limit meters), never persisted into docs.
 
 pub mod agent;
+pub mod deploy;
 pub mod entities;
 pub mod motion;
 pub mod networks;
@@ -13,6 +14,7 @@ pub mod walletconnect;
 pub mod wallets;
 
 pub use agent::*;
+pub use deploy::*;
 pub use entities::*;
 pub use networks::*;
 pub use walletconnect::*;
