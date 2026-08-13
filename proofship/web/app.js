@@ -666,7 +666,8 @@ function updateExecutorPresence(state) {
   if (isShareMode) {
     copy = "Read-only share mode — writer WebSocket disabled.";
   } else if (unknown) {
-    copy = "Enter the session id from desktop Settings → Networks (desktop-{deviceId}).";
+    copy =
+      "No session id. On the machine run `comet agent url` (or `./target/debug/comet agent url`) and open that link.";
   } else if (connected && online) {
     copy =
       want === "platform"
@@ -690,7 +691,26 @@ function updateExecutorPresence(state) {
     copy =
       want === "platform"
         ? `Platform is offline${seen ? ` (last seen ${seen})` : ""}.`
-        : `Desktop is offline${seen ? ` (last seen ${seen})` : ""}. Open ProofShip on that machine.`;
+        : `This room has no desktop attached${seen ? ` (last seen ${seen})` : ""}. The daemon uses session desktop-{deviceId} — run \`comet agent url\` and open that exact link.`;
+  }
+  const hint = document.getElementById("room-hint");
+  if (hint) {
+    if (unknown) {
+      hint.textContent =
+        "Daemon is not found by this blank form. Open the printed Web Sessions URL.";
+      hint.className = "status err";
+    } else if (!sessionId.startsWith("desktop-") && want === "user") {
+      hint.textContent =
+        "This session id is not a device room. Daemon rooms look like desktop-ba8835a2-…";
+      hint.className = "status err";
+    } else if (!userOn && want === "user") {
+      hint.textContent =
+        "Wrong room, or the daemon is down. Check: systemctl --user status comet-native.service";
+      hint.className = "status err";
+    } else {
+      hint.textContent = "";
+      hint.className = "status";
+    }
   }
   if (extras.length) copy += ` · ${extras.join(" · ")}`;
   els.executorStatus.textContent = copy;
@@ -1462,4 +1482,8 @@ if (isShareMode && els.relay.value.trim() && els.session.value.trim()) {
   fetchShare();
 } else if (!isShareMode) {
   startPresencePoll();
+  const sid = els.session?.value.trim() ?? "";
+  if (sid.startsWith("desktop-") && !wsOpen()) {
+    queueMicrotask(() => els.connect.click());
+  }
 }

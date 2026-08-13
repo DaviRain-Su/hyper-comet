@@ -41,9 +41,11 @@
     <section class="panel">
       <h1>Session</h1>
       <p class="lede">
-        Same shape as desktop Sessions: watch the transcript and enqueue prompts.
-        Without an online executor this page stays read-only.
+        This page talks to the <strong>daemon on your machine</strong> through the
+        Cloudflare relay. Open the URL from <code>comet agent url</code> —
+        the session id must be <code>desktop-{deviceId}</code>, not a new blank room.
       </p>
+      <p id="room-hint" class="status"></p>
 
       <label class="field">
         Relay base URL
