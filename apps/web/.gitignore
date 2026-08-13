@@ -1,0 +1,10 @@
+node_modules
+.tanstack
+.vercel
+dist
+*.local
+.env
+.env.*
+!.env.example
+pglite-data
+.pglite

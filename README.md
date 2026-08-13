@@ -61,9 +61,13 @@ The desktop app (Rust + gpui): `cargo run -p comet` — sidebar **Sessions** run
 
 ```text
 apps/comet            the desktop binary (headed + headless engine daemon)
+apps/web              Sessions companion (TanStack landing + local gate demo)
+apps/landing          marketing site (proofship.pages.dev)
+apps/ios              iOS companion
 crates/               proto · doc · sync · harness · engine · rpc · ui (gpui)
 proofship/            platform pieces: toolchain installer, gate + deploy
                       scripts, local bridge reference, Cloudflare relay
+proofship/web         live Sessions viewer (proofship-web.pages.dev)
 edge/                 TypeScript Worker + Durable Objects (sync edge)
 docs/                 architecture, studio spec, competition materials
 ```

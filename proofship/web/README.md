@@ -4,6 +4,10 @@ Static Cloudflare Pages front end: **Sessions-shaped** observe + command surface
 over [`../relay/`](../relay/). Executors run code and gate; this page never holds
 deploy keys.
 
+The polished landing + local gate demo lives in
+[`apps/web`](../../apps/web) (TanStack Start). Do not replace this
+folder with that app — this is the live relay viewer.
+
 ## Surfaces
 
 - Connection + **executor picker** (UserExecutor desktop/VPS vs Platform Sandbox)
