@@ -17,6 +17,7 @@ body.share-mode #executor-fieldset,
 body.share-mode #deploy-panel,
 body.share-mode #account-panel,
 body.share-mode #room-list,
+body.share-mode #invite-list,
 body.share-mode #cancel,
 body.share-mode #disconnect {
   display: none !important;
@@ -162,6 +163,19 @@ button.tiny {
   font: 12px/1 var(--mono);
 }
 .room-chip.live { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+.invite-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.invite-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font: 12px/1.3 var(--mono);
+  color: var(--muted);
+}
 .tag {
   margin: 10px 0 0;
   color: var(--muted);

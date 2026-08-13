@@ -247,6 +247,36 @@ describe("SIWE auth routes", () => {
     expect(peek?.status).toBe(200);
     const peekBody = (await peek!.json()) as { orgName: string };
     expect(peekBody.orgName).toBe("Personal");
+
+    const listed = await handleAuth(
+      new Request(`http://relay.test/api/orgs/${orgId}/invites`, {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    const listedBody = (await listed!.json()) as {
+      invites: { tokenHash: string; address: string }[];
+    };
+    expect(listedBody.invites).toHaveLength(1);
+    const hash = listedBody.invites[0]?.tokenHash;
+    expect(hash).toBeTruthy();
+
+    const revoked = await handleAuth(
+      new Request(`http://relay.test/api/orgs/${orgId}/invites/${hash}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    expect(revoked?.status).toBe(200);
+    const peekGone = await handleAuth(
+      new Request(`http://relay.test/api/invites/${inviteBody.token}`),
+      {},
+      store,
+    );
+    expect(peekGone?.status).toBe(404);
   });
 
   it("lists claimed rooms for an org member", async () => {

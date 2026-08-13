@@ -92,7 +92,7 @@ export interface AccountStore {
   putInvite(tokenHash: string, invite: OrgInvite): Promise<void>;
   getInvite(tokenHash: string): Promise<OrgInvite | null>;
   deleteInvite(tokenHash: string): Promise<void>;
-  listInvitesForOrg(orgId: string): Promise<OrgInvite[]>;
+  listInvitesForOrg(orgId: string): Promise<Array<OrgInvite & { tokenHash: string }>>;
   listInvitesForAddress(address: string): Promise<Array<OrgInvite & { tokenHash: string }>>;
 }
 
@@ -226,8 +226,10 @@ export class MemoryAccountStore implements AccountStore {
     this.invites.delete(tokenHash);
   }
 
-  async listInvitesForOrg(orgId: string): Promise<OrgInvite[]> {
-    return [...this.invites.values()].filter((i) => i.orgId === orgId);
+  async listInvitesForOrg(orgId: string): Promise<Array<OrgInvite & { tokenHash: string }>> {
+    return [...this.invites.entries()]
+      .filter(([, invite]) => invite.orgId === orgId)
+      .map(([tokenHash, invite]) => ({ ...invite, tokenHash }));
   }
 
   async listInvitesForAddress(

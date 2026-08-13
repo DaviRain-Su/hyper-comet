@@ -486,6 +486,26 @@ async function handleOrgRoutes(
     }
   }
 
+  const inviteOne = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites\/([^/]+)$/u);
+  if (inviteOne && request.method === "DELETE") {
+    const orgId = decodeURIComponent(inviteOne[1] ?? "");
+    const tokenHash = decodeURIComponent(inviteOne[2] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    const self = await store.getMember(orgId, session.userId);
+    if (!self) return json({ ok: false, error: "not a member of that org" }, 403);
+    if (!canManageMembers(self.role)) {
+      return json({ ok: false, error: "only owner/admin can revoke invites" }, 403);
+    }
+    if (!tokenHash) return json({ ok: false, error: "missing invite" }, 400);
+    const invite = await store.getInvite(tokenHash);
+    if (!invite || invite.orgId !== orgId) {
+      return json({ ok: false, error: "invite not found" }, 404);
+    }
+    await store.deleteInvite(tokenHash);
+    return json({ ok: true });
+  }
+
   const invitePeek = url.pathname.match(/^\/api\/invites\/([^/]+)$/u);
   if (request.method === "GET" && invitePeek) {
     const raw = decodeURIComponent(invitePeek[1] ?? "");

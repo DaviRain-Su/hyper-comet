@@ -355,14 +355,14 @@ export class D1AccountStore implements AccountStore {
     await this.db.prepare("DELETE FROM org_invites WHERE token_hash = ?").bind(tokenHash).run();
   }
 
-  async listInvitesForOrg(orgId: string): Promise<OrgInvite[]> {
+  async listInvitesForOrg(orgId: string): Promise<Array<OrgInvite & { tokenHash: string }>> {
     await this.ensure();
     const { results } = await this.db
       .prepare(
-        "SELECT org_id AS orgId, role, address, invited_by AS invitedBy, expires_at AS expiresAt, created_at AS createdAt FROM org_invites WHERE org_id = ?",
+        "SELECT token_hash AS tokenHash, org_id AS orgId, role, address, invited_by AS invitedBy, expires_at AS expiresAt, created_at AS createdAt FROM org_invites WHERE org_id = ?",
       )
       .bind(orgId)
-      .all<OrgInvite>();
+      .all<OrgInvite & { tokenHash: string }>();
     return results ?? [];
   }
 

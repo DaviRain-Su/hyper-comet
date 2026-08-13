@@ -45,6 +45,7 @@ const els = {
   deviceLine: document.getElementById("device-line"),
   deviceId: document.getElementById("device-id"),
   roomList: document.getElementById("room-list"),
+  inviteList: document.getElementById("invite-list"),
   lampDesktop: document.getElementById("lamp-desktop"),
   lampPlatform: document.getElementById("lamp-platform"),
   lampRelay: document.getElementById("lamp-relay"),
@@ -277,6 +278,7 @@ async function refreshOrgs() {
       }
     }
     await refreshRooms();
+    await refreshInvites();
   } catch {
     /* relay offline */
   }
@@ -770,6 +772,67 @@ async function refreshRooms() {
       });
       els.roomList.appendChild(button);
       void decorateRoomChip(base, room.sessionId, button);
+    }
+  } catch {
+    /* relay offline */
+  }
+}
+
+async function refreshInvites() {
+  if (!els.inviteList || isShareMode) return;
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const session = loadSession();
+  const orgId = els.orgSelect?.value;
+  if (!base || !session?.token || !orgId) {
+    els.inviteList.hidden = true;
+    els.inviteList.innerHTML = "";
+    return;
+  }
+  try {
+    const res = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/invites`, {
+      headers: await authHeaders(),
+    });
+    const body = await res.json();
+    const invites = body.invites ?? [];
+    if (!res.ok || invites.length === 0) {
+      els.inviteList.hidden = true;
+      els.inviteList.innerHTML = "";
+      return;
+    }
+    els.inviteList.hidden = false;
+    els.inviteList.innerHTML = "";
+    const heading = document.createElement("div");
+    heading.className = "hint";
+    heading.textContent = "Pending invites";
+    els.inviteList.appendChild(heading);
+    for (const invite of invites) {
+      const row = document.createElement("div");
+      row.className = "invite-row";
+      const who = invite.address || "open link";
+      const expMs = Date.parse(invite.expiresAt);
+      const expired = !Number.isFinite(expMs) || expMs <= Date.now();
+      const exp = expired ? "expired" : `expires ${new Date(expMs).toISOString().slice(0, 10)}`;
+      row.innerHTML = `<span>${escapeHtml(who)} · ${escapeHtml(invite.role)} · ${escapeHtml(exp)}</span>`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "ghost tiny";
+      btn.textContent = "Revoke";
+      if (!invite.tokenHash) continue;
+      btn.addEventListener("click", async () => {
+        const del = await fetch(
+          `${base}/api/orgs/${encodeURIComponent(orgId)}/invites/${encodeURIComponent(invite.tokenHash)}`,
+          { method: "DELETE", headers: await authHeaders() },
+        );
+        const delBody = await del.json().catch(() => ({}));
+        setAccountStatus(
+          del.ok ? "Invite revoked." : delBody.error || "revoke failed",
+          del.ok ? "live" : "err",
+        );
+        if (del.ok && els.inviteUrl) els.inviteUrl.value = "";
+        await refreshInvites();
+      });
+      row.appendChild(btn);
+      els.inviteList.appendChild(row);
     }
   } catch {
     /* relay offline */
