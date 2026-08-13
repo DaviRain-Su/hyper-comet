@@ -33,9 +33,15 @@ Query params:
 
 ## Deploy (Pages)
 
+Live (2026-08-13): `https://proofship-web.pages.dev`  
+(Do **not** overwrite `proofship.pages.dev` — that is the marketing site.)
+
 ```sh
-npx wrangler pages deploy proofship/web --project-name proofship-web
+npx wrangler pages deploy proofship/web --project-name proofship-web --branch main
 ```
+
+Default relay in the page is `https://proofship-relay.davirain-yin.workers.dev`.
+SIWE only verifies when the site is served from `proofship-web.pages.dev`.
 
 ## Honest degradation
 

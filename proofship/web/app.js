@@ -41,8 +41,10 @@ const els = {
   sendComment: document.getElementById("send-comment"),
 };
 
+const DEFAULT_RELAY = "https://proofship-relay.davirain-yin.workers.dev";
 const params = new URLSearchParams(location.search);
 if (params.get("relay")) els.relay.value = params.get("relay");
+else if (els.relay && !els.relay.value.trim()) els.relay.value = DEFAULT_RELAY;
 if (params.get("session") || params.get("launch")) {
   els.session.value = params.get("session") || params.get("launch");
 }

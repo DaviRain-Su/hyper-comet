@@ -115,11 +115,17 @@ npm run dev
 
 ## Deploy
 
+Live (2026-08-13):
+
+- Worker: `https://proofship-relay.davirain-yin.workers.dev`
+- D1: `proofship-accounts` bound as `DB`
+- SIWE domain: `proofship-web.pages.dev`
+
 ```sh
 cd proofship/relay
-wrangler secret put DEVICE_TOKENS   # '{"laptop":"…"}' preferred
-# or: wrangler secret put ENGINE_TOKEN
-npm run deploy
+# wrangler secret put DEVICE_TOKENS   # '{"laptop":"…"}' for executors
+npx wrangler d1 execute proofship-accounts --remote --file=schema.sql
+npx wrangler deploy
 ```
 
 ## Follow-on
