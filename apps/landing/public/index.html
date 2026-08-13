@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ProofShip — AI drafts the contract. The gate decides if it ships.</title>
-<meta name="description" content="ProofShip is a local-first smart contract ship engine. AI drafts ProgramV1 contracts across 7 ACP lanes, gated by ProofForge before deployment to X Layer." />
+<meta name="description" content="ProofShip: AI drafts ProgramV1 contracts, a machine gate decides if they ship. This is the product site — there is no in-browser coding workspace." />
 <meta property="og:title" content="ProofShip" />
 <meta property="og:description" content="AI drafts the contract. The gate decides if it ships." />
 <meta property="og:image" content="/assets/app-screenshot.jpg" />
@@ -337,7 +337,8 @@
         <a class="gh-icon" href="https://github.com/DaviRain-Su/proofship" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         </a>
-        <a class="btn small" id="nav-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
+        <a class="btn small" id="nav-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
+        <button type="button" class="btn ghost small" id="lang-toggle" aria-label="Language">中文</button>
       </div>
     </div>
   </nav>
@@ -345,14 +346,13 @@
   <header class="hero">
     <div class="wrap hero-grid">
       <div>
-        <h1>AI drafts the contract.<br/>The gate decides if it ships.</h1>
-        <p class="sub">
-          ProofShip combines local Sessions with 7 ACP lanes and a machine gate.
-          Your agent drafts ProgramV1 contracts; ProofForge checks, builds, and inspects before deployment to X Layer.
+        <h1 data-i="h1">AI drafts the contract.<br/>The gate decides if it ships.</h1>
+        <p class="sub" data-i="sub">
+          This page is the product site. There is no in-browser coding workspace and no web Sessions.
+          ProofForge is a skill — drafting and the gate do not run here. First chain: X Layer.
         </p>
         <div class="cta-row">
-          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
-          <span class="cta-ver" id="ver">v0.1.48</span>
+          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
         </div>
         <div class="agents" aria-label="Supported agents">
           <span class="agent-icon" title="Claude Code" style="--icon: url('/assets/icons/claude-mark.svg')"></span>
@@ -416,41 +416,41 @@
     <div class="dither dither-left" aria-hidden="true"><canvas></canvas></div>
     <div class="dither dither-right" aria-hidden="true"><canvas></canvas></div>
     <div class="wrap">
-      <img src="/assets/app-screenshot.jpg" alt="ProofShip Sessions driving an ACP contract drafting run with ProofForge gate checks" />
+      <img src="/assets/app-screenshot.jpg" alt="ProofShip product — agent drafting with a ProofForge gate. Not a live coding workspace." />
     </div>
   </section>
 
   <section class="wrap features">
     <div class="cell">
-      <div class="idx">Sessions & ACP</div>
-      <h3>Sessions + 7 ACP lanes</h3>
-      <p>Draft ProgramV1 smart contracts using Claude Code, Codex, Grok, Hermes, Pi, Cursor, or OpenCode in local Sessions over one ACP layer.</p>
+      <div class="idx" data-i="f1i">ProofForge</div>
+      <h3 data-i="f1h">Skill, not a browser IDE</h3>
+      <p data-i="f1p">Drafting happens in the agent you already use. This site does not open a web coding session or a remote desktop panel.</p>
     </div>
     <div class="cell">
-      <div class="idx">ProofForge Gate</div>
-      <h3>Check, build & inspect gate</h3>
-      <p>Automated engineering-grade machine gate. Enforces strict check, build, and inspect checks fail-closed before shipping.</p>
+      <div class="idx" data-i="f2i">ProofForge Gate</div>
+      <h3 data-i="f2h">Check, build & inspect</h3>
+      <p data-i="f2p">A fail-closed machine gate sits between the draft and the chain. No pass, no artifacts, no deploy.</p>
     </div>
     <div class="cell">
-      <div class="idx">X Layer First</div>
-      <h3>Multi-EVM deployment</h3>
-      <p>Target X Layer testnet first and multi-EVM networks. Sealed artifacts, ABIs, and deployment records persist locally.</p>
+      <div class="idx" data-i="f3i">X Layer First</div>
+      <h3 data-i="f3h">Ship to X Layer</h3>
+      <p data-i="f3p">First target is X Layer testnet, then other EVM networks. Sealed artifacts stay with you.</p>
     </div>
     <div class="cell">
-      <div class="idx">Local First</div>
-      <h3>Keys stay user-side</h3>
-      <p>Deploy keys stay in your environment or wallet — never in the app, repo, or relay. The desktop app works offline.</p>
+      <div class="idx" data-i="f4i">Keys stay yours</div>
+      <h3 data-i="f4h">Nothing sensitive on this page</h3>
+      <p data-i="f4p">Deploy keys stay in your environment or wallet — never in this page, the repo, or a relay.</p>
     </div>
   </section>
 
   <section class="closing">
     <canvas class="hand-ascii hand-down" aria-hidden="true"></canvas>
     <div class="wrap">
-      <h2>Draft safely. Ship with proof.</h2>
-      <p>Local-first agent session workflows, ProofForge machine gating, and X Layer smart contract deployment.</p>
+      <h2 data-i="closeH">Draft safely. Ship with proof.</h2>
+      <p data-i="closeP">The product story is agent drafting + a ProofForge gate + X Layer. This page does not run that loop in the browser.</p>
       <div class="cta-row">
-        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
-        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship">View on GitHub ↗</a>
+        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
+        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="gh">Repository ↗</a>
       </div>
     </div>
   </section>
@@ -468,6 +468,73 @@
     </div>
   </footer>
 
+<script>
+  (() => {
+    const copy = {
+      en: {
+        h1: "AI drafts the contract.<br/>The gate decides if it ships.",
+        sub: "This page is the product site. There is no in-browser coding workspace and no web Sessions. ProofForge is a skill — drafting and the gate do not run here. First chain: X Layer.",
+        cta: "View on GitHub",
+        gh: "Repository ↗",
+        f1i: "ProofForge",
+        f1h: "Skill, not a browser IDE",
+        f1p: "Drafting happens in the agent you already use. This site does not open a web coding session or a remote desktop panel.",
+        f2i: "ProofForge Gate",
+        f2h: "Check, build & inspect",
+        f2p: "A fail-closed machine gate sits between the draft and the chain. No pass, no artifacts, no deploy.",
+        f3i: "X Layer First",
+        f3h: "Ship to X Layer",
+        f3p: "First target is X Layer testnet, then other EVM networks. Sealed artifacts stay with you.",
+        f4i: "Keys stay yours",
+        f4h: "Nothing sensitive on this page",
+        f4p: "Deploy keys stay in your environment or wallet — never in this page, the repo, or a relay.",
+        closeH: "Draft safely. Ship with proof.",
+        closeP: "The product story is agent drafting + a ProofForge gate + X Layer. This page does not run that loop in the browser.",
+        lang: "中文",
+      },
+      zh: {
+        h1: "AI 起草合约。<br/>过了门禁，才能上链。",
+        sub: "这一页只是产品落地页。浏览器里不能写代码，也没有网页 Sessions。ProofForge 作为 skill 接入，起草和门禁都不在这个页面上跑。首发链：X Layer。",
+        cta: "查看仓库",
+        gh: "GitHub 仓库 ↗",
+        f1i: "ProofForge",
+        f1h: "是 skill，不是网页 IDE",
+        f1p: "起草发生在你已有的 agent 里。这个站点不会打开网页写代码，也不会连远程桌面面板。",
+        f2i: "ProofForge 门禁",
+        f2h: "检查、构建、核验",
+        f2p: "门禁是 fail-closed：过不了就没有制品，也不能部署。",
+        f3i: "先上 X Layer",
+        f3h: "部署到 X Layer",
+        f3p: "首发 X Layer 测试网，再扩到其他 EVM。密封制品留在你这边。",
+        f4i: "密钥在你手里",
+        f4h: "这个页面不碰敏感信息",
+        f4p: "部署密钥只在你的环境或钱包里，不会进这个页面、仓库或中继。",
+        closeH: "安全起草。有证明再上链。",
+        closeP: "产品故事是 agent 起草 + ProofForge 门禁 + X Layer。这个循环不在浏览器里跑。",
+        lang: "EN",
+      },
+    };
+    const apply = (lang) => {
+      const pack = copy[lang] || copy.en;
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.querySelectorAll("[data-i]").forEach((el) => {
+        const key = el.getAttribute("data-i");
+        if (key && pack[key]) el.innerHTML = pack[key];
+      });
+      const btn = document.getElementById("lang-toggle");
+      if (btn) btn.textContent = pack.lang;
+      try { localStorage.setItem("proofship.lang", lang); } catch {}
+    };
+    const start = (() => {
+      try { return localStorage.getItem("proofship.lang") || "zh"; } catch { return "zh"; }
+    })();
+    apply(start);
+    document.getElementById("lang-toggle")?.addEventListener("click", () => {
+      const next = document.documentElement.lang.startsWith("zh") ? "en" : "zh";
+      apply(next);
+    });
+  })();
+</script>
 <script>
   // Edge ascii: a slow-warping noise field mapped through a glyph density
   // ramp — organic clusters of characters hugging each page edge, dense at
