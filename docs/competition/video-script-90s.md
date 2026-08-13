@@ -2,7 +2,7 @@
 
 > 目标：评审在 90 秒内相信三件事——① AI 真的在写合约；② 门禁真的能拦住，
 > 而且失败会被**自动修复**；③ 它真的部署在 X Layer 上。
-> 载体是**桌面 app（gpui Sessions + 引擎服务）+ 部署脚本**；web app 是后续里程碑，不入镜。
+> 载体是**桌面 app（gpui Sessions + 引擎服务）**；不拍 web Sessions。
 > 纪律：说 *machine-checked gate*，**不**说 formal verification / 字节码已证。
 
 ## 分镜与口播
@@ -35,8 +35,8 @@
 
 ### 0:54–1:08 · 部署与预览交互
 
-**画面**：运行部署命令（终端执行 `proofship/scripts/deploy-xlayer-testnet.sh …` 或应用内 StudioDeploy）成功输出 `contract=0x…`、`chainId=1952`，切至 OKX explorer 查合约，切 3 秒 Preview / interact 交互界面。
-**口播**：Deploy straight to X Layer testnet — keys stay in environment, never in the app. Chain 1952 live explorer, plus instant ABI Preview & interact.
+**画面**：在终端用本机 key 部署到 X Layer testnet，成功输出 `contract=0x…`、`chainId=1952`，切至 OKX explorer 查合约。
+**口播**：Deploy straight to X Layer testnet — keys stay in environment, never in the app. Chain 1952 live explorer.
 
 ### 1:08–1:22 · 收口 + 生态
 

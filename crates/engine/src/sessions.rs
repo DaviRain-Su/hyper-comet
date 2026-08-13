@@ -1055,10 +1055,6 @@ async fn drive_run(
     let harness_id = harness.id();
     let user_prompt = request.prompt.clone();
     let run_cwd = request.cwd.clone();
-    // ProofShip ship lane: Sessions chat gets PF skill + MCP. Doc already
-    // stored the raw user prompt above; only the harness sees the enriched
-    // prompt (Cursor-shaped: one conversation + tools).
-    let request = crate::studio::enrich_sessions_run_request(request);
     // Kept whole for the failed-resume retry (fresh session, same user entry).
     // Option so the retry branch (inside the event loop) can take ownership.
     let mut retry_request = Some(RunRequest {

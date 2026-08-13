@@ -1,15 +1,11 @@
 //! Settings → Networks: built-in X Layer presets plus custom EVM RPC entries.
 
-use std::time::Duration;
-
 use gpui::{
     AnyElement, Context, Entity, Render, SharedString, Subscription, Task, Window, div, prelude::*,
     px,
 };
 
-use comet_proto::{
-    EvmNetwork, NetworksResponse, StudioRelayStatus, UpsertNetworkRequest,
-};
+use comet_proto::{EvmNetwork, NetworksResponse, UpsertNetworkRequest};
 use comet_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
@@ -34,12 +30,10 @@ struct NetworkDialog {
 pub struct NetworksPage {
     state: Entity<AppState>,
     networks: Loadable<Vec<EvmNetwork>>,
-    relay: Option<StudioRelayStatus>,
     dialog: Option<NetworkDialog>,
     error: Option<String>,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
-    relay_watch: Option<Task<()>>,
 }
 
 impl NetworksPage {
@@ -47,15 +41,12 @@ impl NetworksPage {
         let mut page = Self {
             state,
             networks: Loadable::Idle,
-            relay: None,
             dialog: None,
             error: None,
             load_task: None,
             action_task: None,
-            relay_watch: None,
         };
         page.load(cx);
-        page.start_relay_watch(cx);
         page
     }
 
@@ -69,10 +60,6 @@ impl NetworksPage {
                 .client()
                 .call(methods::STUDIO_NETWORKS, serde_json::json!({}))
                 .await;
-            let relay = engine
-                .client()
-                .call(methods::STUDIO_RELAY_STATUS, serde_json::json!({}))
-                .await;
             this.update(cx, |page, cx| {
                 page.networks = match result {
                     Ok(value) => match serde_json::from_value::<NetworksResponse>(value) {
@@ -81,144 +68,10 @@ impl NetworksPage {
                     },
                     Err(err) => Loadable::Error(err.to_string()),
                 };
-                if let Ok(value) = relay {
-                    page.relay = serde_json::from_value::<StudioRelayStatus>(value).ok();
-                }
                 cx.notify();
             })
             .ok();
         }));
-    }
-
-    fn start_relay_watch(&mut self, cx: &mut Context<Self>) {
-        let Some(engine) = self.state.read(cx).engine().cloned() else {
-            return;
-        };
-        self.relay_watch = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_secs(4))
-                    .await;
-                let relay = engine
-                    .client()
-                    .call(methods::STUDIO_RELAY_STATUS, serde_json::json!({}))
-                    .await;
-                if this
-                    .update(cx, |page, cx| {
-                        if let Ok(value) = relay {
-                            page.relay = serde_json::from_value::<StudioRelayStatus>(value).ok();
-                            cx.notify();
-                        }
-                    })
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        }));
-    }
-
-    fn render_relay_card(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let relay = self.relay.as_ref()?;
-        let session = relay.session_id.clone();
-        let device = relay.device_id.clone();
-        let web = relay.web_url.clone().unwrap_or_default();
-        let base = relay.base.clone().unwrap_or_default();
-        let (status, lamp) = if !relay.enabled {
-            (
-                SharedString::from(
-                    "Web relay is off (PROOFSHIP_RELAY=off). Web Sessions cannot reach this desktop.",
-                ),
-                theme.text_dim,
-            )
-        } else if relay.connected {
-            (
-                SharedString::from(format!("Online as UserExecutor on {base}.")),
-                theme.success,
-            )
-        } else {
-            (
-                SharedString::from(format!("Connecting to {base}…")),
-                theme.warning,
-            )
-        };
-        Some(
-            div()
-                .mb(px(16.0))
-                .p(px(14.0))
-                .rounded(px(10.0))
-                .border_1()
-                .border_color(theme.border)
-                .flex()
-                .flex_col()
-                .gap(px(8.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .child(
-                            div()
-                                .size(px(8.0))
-                                .rounded_full()
-                                .bg(lamp),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(13.0))
-                                .font_weight(gpui::FontWeight::MEDIUM)
-                                .text_color(theme.text)
-                                .child("Web relay"),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(theme.text_muted)
-                        .child(status),
-                )
-                .when(relay.enabled, |el| {
-                    el.child(
-                        div()
-                            .font_family("Geist Mono")
-                            .text_size(px(11.0))
-                            .text_color(theme.text_dim)
-                            .child(SharedString::from(format!("Device  {device}"))),
-                    )
-                    .child(
-                        div()
-                            .font_family("Geist Mono")
-                            .text_size(px(11.0))
-                            .text_color(theme.text_dim)
-                            .child(SharedString::from(format!("Session  {session}"))),
-                    )
-                })
-                .when(relay.enabled && !web.is_empty(), |el| {
-                    let web_open = web.clone();
-                    el.child(
-                        div()
-                            .flex()
-                            .gap(px(8.0))
-                            .child(
-                                widgets::ghost_action(theme)
-                                    .id("relay-open-web")
-                                    .hover(|s| widgets::ghost_hover(theme, s))
-                                    .on_click(cx.listener(move |_, _, _, cx| {
-                                        cx.open_url(&web_open);
-                                    }))
-                                    .child(SharedString::from("Open web Sessions")),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .font_family("Geist Mono")
-                            .text_size(px(11.0))
-                            .text_color(theme.text_dim)
-                            .child(SharedString::from(web)),
-                    )
-                })
-                .into_any_element(),
-        )
     }
 
     fn open_add(&mut self, cx: &mut Context<Self>) {
@@ -652,11 +505,9 @@ impl Render for NetworksPage {
                     )
                     .child(widgets::page_subtitle(
                         &theme,
-                        "EVM RPC endpoints for Launch Studio deploys. Built-in X Layer presets \
-                         can be edited but not removed.",
+                        "EVM RPC endpoints. Built-in X Layer presets can be edited but not removed.",
                     ))
                     .children(error)
-                    .children(self.render_relay_card(&theme, cx))
                     .child(body),
             )
             .when_some(dialog, |el, dialog| el.child(dialog))

@@ -115,14 +115,6 @@ pub mod methods {
     /// Download + apply the newest release on the target device (symlink-managed
     /// installs; the service restart is scheduled after the reply flushes).
     pub const APPLY_UPDATE: &str = "ApplyUpdate";
-    // ProofShip Launch Studio (local engine gate + launch store).
-    pub const STUDIO_STATUS: &str = "StudioStatus";
-    pub const STUDIO_RELAY_STATUS: &str = "StudioRelayStatus";
-    pub const STUDIO_DRAFT: &str = "StudioDraft";
-    pub const STUDIO_GATE: &str = "StudioGate";
-    pub const STUDIO_LAUNCH_RUN: &str = "StudioLaunchRun";
-    pub const STUDIO_LAUNCHES: &str = "StudioLaunches";
-    pub const STUDIO_PUT_LAUNCHES: &str = "StudioPutLaunches";
     pub const STUDIO_NETWORKS: &str = "StudioNetworks";
     pub const STUDIO_PUT_NETWORKS: &str = "StudioPutNetworks";
     pub const STUDIO_UPSERT_NETWORK: &str = "StudioUpsertNetwork";
@@ -133,19 +125,8 @@ pub mod methods {
     pub const STUDIO_REMOVE_WALLET: &str = "StudioRemoveWallet";
     pub const STUDIO_WALLET_CREATE: &str = "StudioWalletCreate";
     pub const STUDIO_WALLET_IMPORT: &str = "StudioWalletImport";
-    pub const STUDIO_DEPLOYMENTS: &str = "StudioDeployments";
-    pub const STUDIO_CANDIDATES: &str = "StudioCandidates";
-    pub const STUDIO_DEPLOY: &str = "StudioDeploy";
-    pub const STUDIO_ABI: &str = "StudioAbi";
-    pub const STUDIO_CALL: &str = "StudioCall";
-    pub const STUDIO_LOGS: &str = "StudioLogs";
-    pub const STUDIO_PREVIEW_START: &str = "StudioPreviewStart";
-    pub const STUDIO_PREVIEW_STOP: &str = "StudioPreviewStop";
-    pub const STUDIO_PREVIEW_STATUS: &str = "StudioPreviewStatus";
     pub const STUDIO_WC_START: &str = "StudioWalletConnectStart";
     pub const STUDIO_WC_STOP: &str = "StudioWalletConnectStop";
-    pub const STUDIO_TEMPLATES: &str = "StudioTemplates";
-    pub const STUDIO_TEMPLATE: &str = "StudioTemplate";
 }
 
 #[derive(Debug, thiserror::Error)]

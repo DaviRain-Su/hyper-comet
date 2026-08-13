@@ -8,8 +8,8 @@
 
 | 要求 | 状态 | 证据/动作 |
 |---|---|---|
-| 产品包含 AI 元素 | ✅ | 7 个 code agent lanes(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode)在 Sessions 中经 ACP 层驱动 + 自动注入 ProofForge skill 与 stdio MCP(`pf_check`/`pf_build`/`pf_artifacts`); `crates/harness` + `proofship/mcp` |
-| 部署于 X Layer(赛期测试网) | 🔄 待执行 | `proofship/scripts/deploy-xlayer-testnet.sh`(gate→`cast send --create`,env 持钥);需要 funded 测试网 key(水龙头在比赛页有链接) |
+| 产品包含 AI 元素 | ✅ | 7 个 code agent lanes(Claude Code/Codex/Grok/Hermes/Pi/Cursor/OpenCode)在 Sessions 中经 ACP 层驱动; ProofForge skill 草稿在 `.agents/skills/`(MCP 接线后续) |
+| 部署于 X Layer(赛期测试网) | 🔄 待执行 | Settings → Networks / Wallets; 操作者在本机用自己的 key 部署;需要 funded 测试网 key(水龙头在比赛页有链接) |
 | 后续主网上线 | ⏳ 承诺 | 同一脚本换 RPC/chainId 即可;README 路线声明 |
 | 独立 X 账号 + 持续运营 | ⏳ 用户动作 | 建号;首发帖文案见 `launch-copy.md` |
 | 官方 X 账号发帖 @XLayerOfficial | ⏳ 用户动作 | `launch-copy.md` 的 X 主帖(EN 主推 + 中文) |
@@ -17,9 +17,9 @@
 
 ## 演示主线(评审 90 秒理解)
 
-`video-script-90s.md` 分镜:在 Sessions 中输入 NL 需求 → agent (skill + MCP) 起草 ProgramV1 → 机器门禁
-`pf_check → pf_build → pf_artifacts`(真实 digest)→ **修复环**(故意触发 PF-* 诊断,agent 读取诊断自动修复)
-→ 部署 X Layer testnet → 浏览器查合约 → Preview / interact 节点交互(Phase 2.4 已完成,入镜 3–5 秒)。
+`video-script-90s.md` 分镜:在 Sessions 中输入 NL 需求 → agent (skill) 起草 ProgramV1 → 机器门禁
+check / build / inspect(真实 digest)→ **修复环**(故意触发 PF-* 诊断,agent 读取诊断自动修复)
+→ 部署 X Layer testnet → 浏览器查合约。
 
 核心叙事:**"AI drafts the contract. The gate decides if it ships."**
 AI 写得快,门禁决定它能不能上链——fail closed,不过门禁没有制品、没有部署。
@@ -28,7 +28,7 @@ AI 写得快,门禁决定它能不能上链——fail closed,不过门禁没有�
 
 - **Liquidity Grant(5 万 USDT)面向 AI-RWA 赛道**:综合评估产品表现/创新性/
   用户价值/生态贡献。我们的演示用例就是 AI 起草 RWA 受限份额登记
-  (回归样本 `crates/engine/tests/fixtures/rwa_share_registry.lean`)——产品故事
+  (演示用例:受限份额登记)——产品故事
   自然覆盖该赛道。
 - Launch Grant(20 万)需 1000 万 USDT DEX 交易额——面向发币项目,不适用于
   开发工具,不作目标。

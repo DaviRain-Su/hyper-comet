@@ -177,7 +177,7 @@ pub struct RunRequest {
     /// content blocks. Additive + serde-defaulted for wire compat.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
-    /// MCP servers attached to the ACP `session/new` (Studio ProofForge lane).
+/// MCP servers attached to the ACP `session/new`.
     /// Empty means none — additive wire field.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServerConfig>,

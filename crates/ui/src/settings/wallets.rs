@@ -1,4 +1,4 @@
-//! Settings → Wallets: device-local address book for Launch Studio deploys.
+//! Settings → Wallets: device-local address book for deploy signers.
 
 use gpui::{
     AnyElement, Context, Entity, Render, SharedString, Subscription, Task, Window, div, prelude::*,

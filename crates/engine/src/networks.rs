@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 
 use comet_proto::{EvmNetwork, builtin_networks};
 
-use super::store::StoreError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
     #[error("io: {0}")]
@@ -32,7 +30,7 @@ impl NetworkStore {
         &self.file
     }
 
-    pub fn load(&self) -> Result<Vec<EvmNetwork>, StoreError> {
+    pub fn load(&self) -> Result<Vec<EvmNetwork>, NetworkError> {
         match std::fs::read_to_string(&self.file) {
             Ok(raw) => {
                 let networks: Vec<EvmNetwork> = serde_json::from_str(&raw)?;
@@ -43,7 +41,7 @@ impl NetworkStore {
         }
     }
 
-    pub fn save(&self, networks: &[EvmNetwork]) -> Result<Vec<EvmNetwork>, StoreError> {
+    pub fn save(&self, networks: &[EvmNetwork]) -> Result<Vec<EvmNetwork>, NetworkError> {
         let merged = ensure_builtins(networks.to_vec());
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
@@ -137,15 +135,6 @@ fn invalid_input(message: impl Into<String>) -> NetworkError {
         std::io::ErrorKind::InvalidInput,
         message.into(),
     ))
-}
-
-impl From<StoreError> for NetworkError {
-    fn from(err: StoreError) -> Self {
-        match err {
-            StoreError::Io(err) => NetworkError::Io(err),
-            StoreError::Json(err) => NetworkError::Json(err),
-        }
-    }
 }
 
 #[cfg(test)]

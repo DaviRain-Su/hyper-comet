@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// One EVM network the Studio can deploy to / call.
+/// One EVM network the operator can deploy to / call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EvmNetwork {
@@ -88,7 +88,7 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
     ]
 }
 
-/// Default network id for new Studio sessions / templates without an override.
+/// Default network id when the operator has not picked one.
 pub fn default_network_id() -> &'static str {
     "xlayer-testnet"
 }

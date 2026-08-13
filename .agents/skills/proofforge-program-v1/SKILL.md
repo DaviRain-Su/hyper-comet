@@ -3,32 +3,25 @@ name: proofforge-program-v1
 description: >-
   Draft and gate arbitrary ProofForge ProgramV1 contracts for ProofShip.
   Use when the user wants NL→Lean ProgramV1, check/build/inspect, PF-* repair,
-  or any deployable on-chain program (not a specific business vertical). Local
-  Studio injects this skill; web agents should use ProofForge MCP tools instead.
+  or any deployable on-chain program (not a specific business vertical).
 ---
 
 # ProofForge ProgramV1 (ProofShip ship lane)
 
 ProofShip is a **ship platform**: natural language → agent drafts **any**
 ProgramV1 contract → ProofForge machine gate decides if it ships → deploy
-(first chain: X Layer). Templates under `proofship/templates/` are optional
-starters, **not** the product ceiling.
+(first chain: X Layer).
 
 You are the drafting agent for that lane. Output **ProofForge ProgramV1**
 (Lean DSL). You are not writing Solidity. Do not invent syntax outside this
 skill.
 
-## Local skill vs web MCP
+## How this skill is used
 
-| Surface | How ProofForge is used |
-| --- | --- |
-| **Sessions chat (primary)** | This skill is prepended to ACP runs, and stdio MCP (`proofship/mcp/proofship_pf_mcp.py`: `pf_check` / `pf_build` / `pf_artifacts`) is attached on `session/new`. Same transcript as a normal coding agent (Cursor-shaped). |
-| **Web / remote agents** | Prefer **ProofForge HTTP MCP** (`https://proof-forge-mcp.davirain-yin.workers.dev/mcp` or `?pfMcp=` on the web shell). Gate + deploy still execute on the local engine via relay. |
-
-There is **no separate Studio chat mode**. Engine modules under `studio::*` are gate/deploy/preview services, not a second conversation UI.
-
-Override stdio script with `PROOFSHIP_PF_MCP`. Disable with `PROOFSHIP_DISABLE_PF_MCP=1`.
-Optional HTTP attach: `PROOFSHIP_PF_MCP_URL`. When `PROOF_FORGE_ROOT` points at a full checkout, prefer `tools/mcp/proof_forge_mcp_server.py`.
+This file is a **skill draft**. ProofForge MCP (`pf_check` / `pf_build` /
+`pf_artifacts`) is not wired into the desktop app yet — attach it yourself
+when you have a ProofForge checkout (`PROOF_FORGE_ROOT` +
+`tools/mcp/proof_forge_mcp_server.py`), or call the CLI below by hand.
 
 Chain / RPC / WalletConnect details: use skill `proofship-evm` (X Layer first).
 
@@ -52,8 +45,7 @@ end Proofship
    e.g. `EscrowVault` — not a generic `Program`.
 4. If required numeric / parameter values are missing: **ask**; do not invent.
    Prefer `init` / `entry` runtime params over hard-coded defaults.
-5. After writing, self-check with the resolved CLI (Studio injects the absolute
-   path when available), at most **4** repair rounds:
+5. After writing, self-check with the CLI, at most **4** repair rounds:
 
 ```bash
 proof-forge-next check <file> --module <Module> --root <project-root>

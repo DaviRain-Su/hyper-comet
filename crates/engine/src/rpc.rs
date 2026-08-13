@@ -58,13 +58,8 @@ use comet_doc::{MessagePart, SessionCommandPayload};
 use comet_proto::{
     ChatConfig, CreateLocalWalletRequest, CreateLocalWalletResponse, HarnessId,
     ImportLocalWalletRequest, NetworksResponse, PutNetworksRequest, PutWalletsRequest,
-    RemoveNetworkRequest, RemoveWalletRequest, StudioAbiRequest, StudioCallKind, StudioCallRequest,
-    StudioCandidatesResponse, StudioDeployRequest, StudioDraftRequest, StudioGateRequest,
-    StudioLaunchRunRequest, StudioLaunchesResponse, StudioLogsRequest, StudioPreviewStartRequest,
-    StudioPreviewStatus,
-    StudioPutLaunchesRequest, StudioTemplateRequest, StudioTemplatesResponse, ToolCall,
-    UpsertNetworkRequest, UpsertWalletRequest, WalletConnectStartRequest,
-    WalletConnectStartResponse, WalletsResponse,
+    RemoveNetworkRequest, RemoveWalletRequest, ToolCall, UpsertNetworkRequest, UpsertWalletRequest,
+    WalletConnectStartRequest, WalletConnectStartResponse, WalletsResponse,
 };
 use comet_rpc::{LinkCache, RpcError, RpcReply, RpcService, methods, parse_params};
 
@@ -75,11 +70,9 @@ use crate::doc_host::DocHost;
 use crate::registry::HarnessRegistry;
 use crate::repos::{Repos, home_dir};
 use crate::sessions::SessionsEngine;
-use crate::studio::{
-    DeployStore, DraftRunner, NetworkStore, StudioDeployer, StudioGate, StudioInteract,
-    StudioLaunchRunner, StudioPreview, StudioRelay, StudioStore, TemplateStore,
-    WalletConnectBridge, WalletStore, resolve_project_id,
-};
+use crate::networks::NetworkStore;
+use crate::walletconnect::{WalletConnectBridge, resolve_project_id};
+use crate::wallets::WalletStore;
 use crate::terminals::Terminals;
 use crate::uploads::Uploads;
 use crate::workspace_host::WorkspaceHost;
@@ -392,19 +385,9 @@ pub struct EngineRpc {
     diff_sync: CheckoutDiffSync,
     uploads: Uploads,
     agent_accounts: AgentAccounts,
-    studio_gate: StudioGate,
-    studio_draft: DraftRunner,
-    studio_launch: StudioLaunchRunner,
-    studio_store: StudioStore,
     network_store: NetworkStore,
     wallet_store: WalletStore,
-    deploy_store: DeployStore,
-    studio_deploy: StudioDeployer,
-    studio_interact: StudioInteract,
-    studio_preview: StudioPreview,
     wallet_connect: WalletConnectBridge,
-    studio_relay: StudioRelay,
-    template_store: TemplateStore,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -422,19 +405,9 @@ impl EngineRpc {
         diff_sync: CheckoutDiffSync,
         uploads: Uploads,
         agent_accounts: AgentAccounts,
-        studio_gate: StudioGate,
-        studio_draft: DraftRunner,
-        studio_launch: StudioLaunchRunner,
-        studio_store: StudioStore,
         network_store: NetworkStore,
         wallet_store: WalletStore,
-        deploy_store: DeployStore,
-        studio_deploy: StudioDeployer,
-        studio_interact: StudioInteract,
-        studio_preview: StudioPreview,
         wallet_connect: WalletConnectBridge,
-        studio_relay: StudioRelay,
-        template_store: TemplateStore,
     ) -> Self {
         Self {
             sessions,
@@ -446,19 +419,9 @@ impl EngineRpc {
             diff_sync,
             uploads,
             agent_accounts,
-            studio_gate,
-            studio_draft,
-            studio_launch,
-            studio_store,
             network_store,
             wallet_store,
-            deploy_store,
-            studio_deploy,
-            studio_interact,
-            studio_preview,
             wallet_connect,
-            studio_relay,
-            template_store,
             auth: None,
             links: None,
             updater: None,
@@ -841,15 +804,6 @@ fn forwardable(method: &str) -> bool {
             // Updates report/apply on the device whose binary they concern.
             | methods::UPDATE_STATUS
             | methods::APPLY_UPDATE
-            // Studio is device-local: the gate runs against the target device's
-            // local vendored toolchain and launch store.
-            | methods::STUDIO_STATUS
-            | methods::STUDIO_RELAY_STATUS
-            | methods::STUDIO_DRAFT
-            | methods::STUDIO_GATE
-            | methods::STUDIO_LAUNCH_RUN
-            | methods::STUDIO_LAUNCHES
-            | methods::STUDIO_PUT_LAUNCHES
             | methods::STUDIO_NETWORKS
             | methods::STUDIO_PUT_NETWORKS
             | methods::STUDIO_UPSERT_NETWORK
@@ -860,19 +814,8 @@ fn forwardable(method: &str) -> bool {
             | methods::STUDIO_REMOVE_WALLET
             | methods::STUDIO_WALLET_CREATE
             | methods::STUDIO_WALLET_IMPORT
-            | methods::STUDIO_DEPLOYMENTS
-            | methods::STUDIO_CANDIDATES
-            | methods::STUDIO_DEPLOY
-            | methods::STUDIO_ABI
-            | methods::STUDIO_CALL
-            | methods::STUDIO_LOGS
-            | methods::STUDIO_PREVIEW_START
-            | methods::STUDIO_PREVIEW_STOP
-            | methods::STUDIO_PREVIEW_STATUS
             | methods::STUDIO_WC_START
             | methods::STUDIO_WC_STOP
-            | methods::STUDIO_TEMPLATES
-            | methods::STUDIO_TEMPLATE
     )
 }
 
@@ -884,10 +827,6 @@ fn is_stream_method(method: &str) -> bool {
             | methods::SUBSCRIBE_TERMINAL
             | methods::WATCH_CHECKOUT_DIFFS
             | methods::UPDATE_STATUS
-            | methods::STUDIO_DRAFT
-            | methods::STUDIO_GATE
-            | methods::STUDIO_LAUNCH_RUN
-            | methods::STUDIO_DEPLOY
     )
 }
 
@@ -1171,120 +1110,6 @@ impl RpcService for EngineRpc {
             methods::LOCAL_DEVICE => {
                 RpcReply::value(&serde_json::json!({ "deviceId": self.doc_host.device_id() }))
             }
-            methods::STUDIO_STATUS => RpcReply::value(&self.studio_gate.status()),
-            methods::STUDIO_RELAY_STATUS => RpcReply::value(&self.studio_relay.status()),
-            methods::STUDIO_DRAFT => {
-                let p: StudioDraftRequest = parse_params(params)?;
-                let stream = self
-                    .studio_draft
-                    .draft(p.nl, p.harness)
-                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
-                Ok(RpcReply::Stream(stream.boxed()))
-            }
-            methods::STUDIO_LAUNCH_RUN => {
-                let p: StudioLaunchRunRequest = parse_params(params)?;
-                let relay = self.studio_relay.clone();
-                let interact = self.studio_interact.clone();
-                relay.publish(
-                    "session.open",
-                    serde_json::json!({
-                        "nl": p.nl,
-                        "harness": p.harness,
-                    }),
-                );
-                let stream = self
-                    .studio_launch
-                    .launch_run(p.nl, p.harness)
-                    .inspect(move |event| match event {
-                        comet_proto::StudioLaunchRunEvent::Draft { event, .. } => {
-                            if let comet_proto::StudioDraftEvent::Done {
-                                ok: true,
-                                module,
-                                source,
-                                lane,
-                                ..
-                            } = event
-                            {
-                                relay.publish(
-                                    "draft.ready",
-                                    serde_json::json!({
-                                        "lane": lane,
-                                        "module": module,
-                                        "source": source,
-                                    }),
-                                );
-                            }
-                        }
-                        comet_proto::StudioLaunchRunEvent::Gate { event, .. } => {
-                            match event {
-                                comet_proto::StudioGateEvent::Started { .. } => {
-                                    relay.publish("gate.start", serde_json::json!({}));
-                                }
-                                comet_proto::StudioGateEvent::Done { ok, digest, .. } => {
-                                    relay.publish(
-                                        "gate.done",
-                                        serde_json::json!({
-                                            "ok": ok,
-                                            "digests": digest,
-                                        }),
-                                    );
-                                }
-                                _ => {}
-                            }
-                        }
-                        comet_proto::StudioLaunchRunEvent::Done {
-                            ok,
-                            module,
-                            artifacts,
-                            digest,
-                            exhausted,
-                            ..
-                        } => {
-                            if *ok {
-                                let mut payload = if let Some(name) = module.as_deref() {
-                                    interact.sealed_for_relay(
-                                        name,
-                                        digest.output_set_digest.as_deref(),
-                                        None,
-                                    )
-                                } else {
-                                    serde_json::json!({
-                                        "outputSetDigest": digest.output_set_digest,
-                                        "files": artifacts,
-                                    })
-                                };
-                                // Prefer live event file list when present.
-                                if !artifacts.is_empty() {
-                                    payload["files"] = serde_json::to_value(artifacts)
-                                        .unwrap_or_else(|_| serde_json::json!([]));
-                                }
-                                if let Some(name) = module {
-                                    payload["module"] = serde_json::json!(name);
-                                }
-                                relay.publish("artifact.sealed", payload);
-                            } else if *exhausted {
-                                relay.note("repair exhausted");
-                            }
-                        }
-                    })
-                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
-                Ok(RpcReply::Stream(stream.boxed()))
-            }
-            methods::STUDIO_LAUNCHES => {
-                let launches = self
-                    .studio_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&StudioLaunchesResponse { launches })
-            }
-            methods::STUDIO_PUT_LAUNCHES => {
-                let p: StudioPutLaunchesRequest = parse_params(params)?;
-                let launches = self
-                    .studio_store
-                    .save(&p.launches)
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&StudioLaunchesResponse { launches })
-            }
             methods::STUDIO_NETWORKS => {
                 let networks = self
                     .network_store
@@ -1367,151 +1192,6 @@ impl RpcService for EngineRpc {
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&WalletsResponse { wallets })
             }
-            methods::STUDIO_DEPLOYMENTS => {
-                let deployments = self
-                    .deploy_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&comet_proto::DeploymentsResponse { deployments })
-            }
-            methods::STUDIO_CANDIDATES => {
-                let launches = self
-                    .studio_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                let mut roots = Vec::new();
-                if let Some(root) = self.studio_gate.project_root() {
-                    roots.push(root);
-                }
-                let candidates = crate::studio::discover_candidates(&roots, &launches);
-                RpcReply::value(&StudioCandidatesResponse { candidates })
-            }
-            methods::STUDIO_DEPLOY => {
-                let p: StudioDeployRequest = parse_params(params)?;
-                let network = self
-                    .network_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .into_iter()
-                    .find(|n| n.id == p.network_id)
-                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
-                let wallet = self
-                    .wallet_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .into_iter()
-                    .find(|w| w.id == p.wallet_id)
-                    .ok_or_else(|| RpcError::Failed(format!("unknown wallet {}", p.wallet_id)))?;
-                let stream = self
-                    .studio_deploy
-                    .deploy(p, network, wallet)
-                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
-                Ok(RpcReply::Stream(stream.boxed()))
-            }
-            methods::STUDIO_ABI => {
-                let p: StudioAbiRequest = parse_params(params)?;
-                let resp = self
-                    .studio_interact
-                    .load_abi(&p.module)
-                    .await
-                    .map_err(RpcError::Failed)?;
-                RpcReply::value(&resp)
-            }
-            methods::STUDIO_CALL => {
-                let p: StudioCallRequest = parse_params(params)?;
-                let network = self
-                    .network_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .into_iter()
-                    .find(|n| n.id == p.network_id)
-                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
-                let wallet = match p.kind {
-                    StudioCallKind::Send => {
-                        let wallet_id = p
-                            .wallet_id
-                            .clone()
-                            .ok_or_else(|| RpcError::Failed("walletId required for send".into()))?;
-                        Some(
-                            self.wallet_store
-                                .load()
-                                .map_err(|e| RpcError::Failed(e.to_string()))?
-                                .into_iter()
-                                .find(|w| w.id == wallet_id)
-                                .ok_or_else(|| {
-                                    RpcError::Failed(format!("unknown wallet {wallet_id}"))
-                                })?,
-                        )
-                    }
-                    StudioCallKind::View => None,
-                };
-                let resp = self.studio_interact.call(p, network, wallet).await;
-                RpcReply::value(&resp)
-            }
-            methods::STUDIO_LOGS => {
-                let p: StudioLogsRequest = parse_params(params)?;
-                let network = self
-                    .network_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .into_iter()
-                    .find(|n| n.id == p.network_id)
-                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
-                let resp = self.studio_interact.logs(p, network).await;
-                RpcReply::value(&resp)
-            }
-            methods::STUDIO_PREVIEW_START => {
-                let p: StudioPreviewStartRequest = parse_params(params)?;
-                let network = self
-                    .network_store
-                    .load()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?
-                    .into_iter()
-                    .find(|n| n.id == p.network_id)
-                    .ok_or_else(|| RpcError::Failed(format!("unknown network {}", p.network_id)))?;
-                let abi = self
-                    .studio_interact
-                    .load_abi(&p.module)
-                    .await
-                    .map_err(RpcError::Failed)?;
-                let html = comet_abi::render_dapp_html(&comet_abi::DappPreviewConfig {
-                    title: p.module.clone(),
-                    module: p.module.clone(),
-                    address: p.address.clone(),
-                    chain_id: network.chain_id,
-                    rpc_url: network.rpc_url.clone(),
-                    explorer_url: network.explorer_url.clone(),
-                    currency_symbol: network.currency_symbol.clone(),
-                    abi_json: abi.abi_json,
-                })
-                .map_err(RpcError::Failed)?;
-                let status = self
-                    .studio_preview
-                    .start(html, p.module, p.address)
-                    .await
-                    .map_err(RpcError::Failed)?;
-                RpcReply::value(&StudioPreviewStatus {
-                    url: Some(status.url),
-                    module: Some(status.module),
-                    address: Some(status.address),
-                })
-            }
-            methods::STUDIO_PREVIEW_STOP => {
-                self.studio_preview.stop().await;
-                RpcReply::value(&StudioPreviewStatus {
-                    url: None,
-                    module: None,
-                    address: None,
-                })
-            }
-            methods::STUDIO_PREVIEW_STATUS => {
-                let status = self.studio_preview.status().await;
-                RpcReply::value(&StudioPreviewStatus {
-                    url: status.as_ref().map(|s| s.url.clone()),
-                    module: status.as_ref().map(|s| s.module.clone()),
-                    address: status.as_ref().map(|s| s.address.clone()),
-                })
-            }
             methods::STUDIO_WC_START => {
                 let p: WalletConnectStartRequest = parse_params(params)?;
                 let project_id = resolve_project_id(p.project_id.as_deref()).ok_or_else(|| {
@@ -1533,29 +1213,6 @@ impl RpcService for EngineRpc {
             methods::STUDIO_WC_STOP => {
                 self.wallet_connect.stop().await;
                 RpcReply::value(&serde_json::json!({ "ok": true }))
-            }
-            methods::STUDIO_TEMPLATES => {
-                let templates = self
-                    .template_store
-                    .list()
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&StudioTemplatesResponse { templates })
-            }
-            methods::STUDIO_TEMPLATE => {
-                let p: StudioTemplateRequest = parse_params(params)?;
-                let template = self
-                    .template_store
-                    .get(&p.id)
-                    .map_err(|e| RpcError::Failed(e.to_string()))?;
-                RpcReply::value(&template)
-            }
-            methods::STUDIO_GATE => {
-                let p: StudioGateRequest = parse_params(params)?;
-                let stream = self
-                    .studio_gate
-                    .run_gate(p.module, p.source)
-                    .filter_map(|event| async move { serde_json::to_value(&event).ok() });
-                Ok(RpcReply::Stream(stream.boxed()))
             }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {

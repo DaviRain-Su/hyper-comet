@@ -42,8 +42,8 @@
 | 字段 | 内容 |
 |---|---|
 | Project Name | **ProofShip** |
-| Description | ProofShip is a local-first desktop app for building and deploying Web3 products. Describe a contract in natural language in Sessions; any coding agent you already use (Claude Code / Codex / Grok / Hermes / Pi / Cursor / OpenCode, unified over ACP + ProofForge skill & MCP) drafts the ProgramV1 source; the ProofForge machine gate runs semantic checks and same-file theorem certification — fail-closed, zero artifacts on reject, with a bounded auto-repair loop feeding PF-* diagnostics back to the agent; passing programs deploy to X Layer (chain 1952) with instant Preview & contract interact; keys stay in the user's environment. Demo case: an RWA onchain share registry with allowlist + per-tx cap + rolling window cap. Engineering-grade gate; no bytecode-proven or full-formal-verification claims. |
-| URL | （GitHub 仓库链接；web app 上线前不用 pages.dev） |
+| Description | ProofShip is a local-first desktop app for building and deploying Web3 products. Describe a contract in natural language in Sessions; any coding agent you already use (Claude Code / Codex / Grok / Hermes / Pi / Cursor / OpenCode, unified over ACP) drafts the ProgramV1 source; the ProofForge machine gate runs semantic checks and same-file theorem certification — fail-closed, zero artifacts on reject, with a bounded auto-repair loop feeding PF-* diagnostics back to the agent; passing programs deploy to X Layer (chain 1952); keys stay in the user's environment. Demo case: an RWA onchain share registry with allowlist + per-tx cap + rolling window cap. Engineering-grade gate; no bytecode-proven or full-formal-verification claims. |
+| URL | （GitHub 仓库链接） |
 | GitHub | （仓库链接，提交前确认可见性） |
 | X handle | @（待定） |
 | X 帖 URL | （发布后回填） |

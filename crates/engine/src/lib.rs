@@ -24,7 +24,10 @@ pub mod rpc;
 pub mod run_journal;
 pub mod sessions;
 pub mod spaces;
-pub mod studio;
+pub mod local_wallet;
+pub mod networks;
+pub mod walletconnect;
+pub mod wallets;
 pub mod terminals;
 pub mod titles;
 pub mod uploads;
@@ -44,12 +47,10 @@ pub use rpc::EngineRpc;
 pub use run_journal::{JournalError, RunJournal};
 pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
-pub use studio::{
-    DEFAULT_PROOFSHIP_RELAY, DEFAULT_PROOFSHIP_WEB, DeployStore, DraftRunner, NetworkStore,
-    StudioDeployer, StudioGate, StudioInteract, StudioLaunchRunner, StudioPreview, StudioRelay,
-    StudioStore, TemplateStore, WalletConnectBridge, WalletStore, device_room_id, hosted_web_base,
-    resolve_device_token, resolve_relay_base, resolve_relay_identity,
-};
+pub use local_wallet::{WalletSecrets, send_with_local};
+pub use networks::{NetworkError, NetworkStore};
+pub use walletconnect::{WalletConnectBridge, resolve_project_id};
+pub use wallets::{WalletError, WalletStore};
 pub use terminals::Terminals;
 pub use titles::TitleGenerator;
 pub use uploads::{AttachmentChunk, Uploads};
@@ -82,334 +83,6 @@ pub(crate) fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn parse_relay_harness(lane: Option<&str>) -> HarnessId {
-    let raw = lane.unwrap_or("codex").trim();
-    let quoted = format!("\"{raw}\"");
-    serde_json::from_str(&quoted).unwrap_or(HarnessId::Codex)
-}
-
-/// Agents the web picker should offer: installed + enabled, else all installed.
-fn relay_harness_catalog(
-    registry: &HarnessRegistry,
-    default: HarnessId,
-) -> serde_json::Value {
-    let all: Vec<_> = registry
-        .descriptors()
-        .into_iter()
-        .filter(|d| d.id != HarnessId::Mock)
-        .collect();
-    let offered: Vec<_> = all
-        .iter()
-        .filter(|d| d.installed && crate::registry::descriptor_enabled(d))
-        .cloned()
-        .collect();
-    let list = if offered.is_empty() {
-        all.into_iter().filter(|d| d.installed).collect()
-    } else {
-        offered
-    };
-    let default_id = if list.iter().any(|d| d.id == default) {
-        default
-    } else {
-        list.first().map(|d| d.id).unwrap_or(default)
-    };
-    serde_json::json!({
-        "harnesses": list.iter().map(|d| serde_json::json!({
-            "id": d.id,
-            "name": d.name,
-            "installed": d.installed,
-            "enabled": d.enabled,
-        })).collect::<Vec<_>>(),
-        "defaultId": default_id,
-    })
-}
-
-fn mirror_agent_event(relay: &StudioRelay, event: &comet_proto::AgentEvent) {
-    match event {
-        comet_proto::AgentEvent::TextDelta { text } => {
-            relay.publish("session.agent", serde_json::json!({ "text": text }));
-        }
-        comet_proto::AgentEvent::ToolCall { id, call } => {
-            relay.publish(
-                "session.tool",
-                serde_json::json!({ "id": id, "call": call }),
-            );
-        }
-        comet_proto::AgentEvent::Done {
-            status, error, ..
-        } => {
-            relay.publish(
-                "session.done",
-                serde_json::json!({
-                    "status": status,
-                    "error": error,
-                }),
-            );
-        }
-        comet_proto::AgentEvent::Error { message } => {
-            relay.publish(
-                "session.done",
-                serde_json::json!({ "ok": false, "error": message }),
-            );
-        }
-        _ => {}
-    }
-}
-
-fn relay_module_source(module: &str) -> Option<String> {
-    let file = format!("{module}.lean");
-    let mut candidates = Vec::new();
-    if let Ok(cwd) = std::env::var("PROOFSHIP_RELAY_CWD") {
-        candidates.push(std::path::PathBuf::from(cwd).join(&file));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join(&file));
-        candidates.push(cwd.join("proofship").join("inbox").join(&file));
-    }
-    candidates.push(crate::repos::home_dir().join("proofship").join("inbox").join(&file));
-    for path in candidates {
-        if let Ok(src) = std::fs::read_to_string(&path)
-            && !src.trim().is_empty()
-        {
-            return Some(src);
-        }
-    }
-    None
-}
-
-async fn handle_relay_deploy(
-    relay: &StudioRelay,
-    network_store: &NetworkStore,
-    wallet_store: &WalletStore,
-    studio_deploy: &StudioDeployer,
-    studio_interact: &StudioInteract,
-    network_id: Option<&str>,
-    module: Option<&str>,
-    digest: Option<&str>,
-) {
-    use futures::StreamExt;
-    let Some(network_id) = network_id else {
-        relay.publish(
-            "executor.refused",
-            serde_json::json!({ "reason": "missing_network_id" }),
-        );
-        return;
-    };
-    let Some(module) = module else {
-        relay.publish(
-            "executor.refused",
-            serde_json::json!({ "reason": "missing_module" }),
-        );
-        return;
-    };
-    let networks = match network_store.load() {
-        Ok(n) => n,
-        Err(err) => {
-            relay.note(&format!("deploy networks: {err}"));
-            return;
-        }
-    };
-    let Some(network) = networks.into_iter().find(|n| n.id == network_id) else {
-        relay.publish(
-            "executor.refused",
-            serde_json::json!({ "reason": "unknown_network", "networkId": network_id }),
-        );
-        return;
-    };
-    let wallets = match wallet_store.load() {
-        Ok(w) => w,
-        Err(err) => {
-            relay.note(&format!("deploy wallets: {err}"));
-            return;
-        }
-    };
-    let Some(wallet) = wallets
-        .into_iter()
-        .find(|w| !matches!(w.source, comet_proto::WalletSource::Watch))
-    else {
-        relay.publish(
-            "executor.refused",
-            serde_json::json!({
-                "reason": "no_signing_wallet",
-                "hint": "Add WalletConnect or DevEnvKey on the desktop executor",
-            }),
-        );
-        return;
-    };
-    let Some(source) = relay_module_source(module) else {
-        relay.publish(
-            "executor.refused",
-            serde_json::json!({
-                "reason": "missing_module_source",
-                "module": module,
-                "hint": "Place a gated {Module}.lean under PROOFSHIP_RELAY_CWD or proofship/inbox",
-            }),
-        );
-        return;
-    };
-    let expected_digest = digest.map(str::to_string);
-    let req = comet_proto::StudioDeployRequest {
-        module: module.into(),
-        source,
-        network_id: network_id.into(),
-        wallet_id: wallet.id.clone(),
-        ctor_sig: "-".into(),
-        ctor_args: Vec::new(),
-        launch_id: None,
-        project_id: None,
-    };
-    relay.publish("gate.start", serde_json::json!({ "phase": "deploy" }));
-    let mut stream = studio_deploy.deploy(req, network, wallet);
-    let mut digest_ok = true;
-    let mut sealed_digest: Option<String> = None;
-    while let Some(ev) = stream.next().await {
-        match ev {
-            comet_proto::StudioDeployEvent::Done {
-                ok,
-                record,
-                error,
-            } => {
-                if !digest_ok {
-                    relay.publish(
-                        "deploy.done",
-                        serde_json::json!({
-                            "ok": false,
-                            "error": "digest_mismatch_after_gate",
-                            "record": record,
-                        }),
-                    );
-                    continue;
-                }
-                let deployed_addr = record.as_ref().map(|r| r.address.clone());
-                relay.publish(
-                    "deploy.done",
-                    serde_json::json!({
-                        "ok": ok,
-                        "record": record,
-                        "error": error,
-                    }),
-                );
-                // Attach deployed address onto sealed artifact for Fill-from-snapshot.
-                if ok {
-                    relay.publish(
-                        "artifact.sealed",
-                        studio_interact.sealed_for_relay(
-                            module,
-                            sealed_digest.as_deref(),
-                            deployed_addr.as_deref(),
-                        ),
-                    );
-                }
-            }
-            comet_proto::StudioDeployEvent::Gate { ok, output } => {
-                if ok
-                    && let Some(expected) = expected_digest.as_deref()
-                    && output != expected
-                {
-                    digest_ok = false;
-                    relay.publish(
-                        "executor.refused",
-                        serde_json::json!({
-                            "reason": "digest_mismatch",
-                            "expected": expected,
-                            "got": output,
-                        }),
-                    );
-                }
-                let digests = if ok {
-                    serde_json::json!({
-                        "outputSetDigest": output,
-                        "raw": output,
-                        "certified": true,
-                    })
-                } else {
-                    serde_json::json!({
-                        "raw": output,
-                        "certified": false,
-                    })
-                };
-                relay.publish(
-                    "gate.done",
-                    serde_json::json!({
-                        "ok": ok,
-                        "output": output,
-                        "digests": digests,
-                    }),
-                );
-                if ok && digest_ok {
-                    sealed_digest = Some(output.clone());
-                    relay.publish(
-                        "artifact.sealed",
-                        studio_interact.sealed_for_relay(module, Some(&output), None),
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn mirror_launch_event(relay: &StudioRelay, event: &comet_proto::StudioLaunchRunEvent) {
-    match event {
-        comet_proto::StudioLaunchRunEvent::Draft { event, .. } => {
-            if let comet_proto::StudioDraftEvent::Done {
-                ok: true,
-                module,
-                source,
-                lane,
-                ..
-            } = event
-            {
-                relay.publish(
-                    "draft.ready",
-                    serde_json::json!({
-                        "lane": lane,
-                        "module": module,
-                        "source": source,
-                    }),
-                );
-            }
-        }
-        comet_proto::StudioLaunchRunEvent::Gate { event, .. } => match event {
-            comet_proto::StudioGateEvent::Started { .. } => {
-                relay.publish("gate.start", serde_json::json!({}));
-            }
-            comet_proto::StudioGateEvent::Done { ok, digest, .. } => {
-                relay.publish(
-                    "gate.done",
-                    serde_json::json!({
-                        "ok": ok,
-                        "digests": digest,
-                    }),
-                );
-            }
-            _ => {}
-        },
-        comet_proto::StudioLaunchRunEvent::Done {
-            ok,
-            module,
-            artifacts,
-            digest,
-            exhausted,
-            ..
-        } => {
-            if *ok {
-                relay.publish(
-                    "artifact.sealed",
-                    serde_json::json!({
-                        "module": module,
-                        "outputSetDigest": digest.output_set_digest,
-                        "files": artifacts,
-                    }),
-                );
-            } else if *exhausted {
-                relay.note("repair exhausted");
-            }
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
     /// Data directory (default `~/.comet-native`, dev `~/.comet-native-dev`).
@@ -440,20 +113,10 @@ pub struct EngineCore {
     pub terminals: Terminals,
     pub diff_sync: CheckoutDiffSync,
     pub spaces_sync: SpacesSync,
-    pub studio_gate: StudioGate,
-    pub studio_draft: DraftRunner,
-    pub studio_launch: StudioLaunchRunner,
-    pub studio_store: StudioStore,
     pub network_store: NetworkStore,
     pub wallet_store: WalletStore,
-    pub deploy_store: DeployStore,
-    pub studio_deploy: StudioDeployer,
-    pub studio_interact: StudioInteract,
-    pub studio_preview: StudioPreview,
     pub wallet_connect: WalletConnectBridge,
-    pub studio_relay: StudioRelay,
     pub data_dir: PathBuf,
-    pub template_store: TemplateStore,
     pub uploads: Uploads,
     pub agent_accounts: AgentAccounts,
     pub device_id: String,
@@ -555,38 +218,9 @@ impl EngineCore {
             turn_diff.note_turn_start(chat_id, cwd);
         }));
         let spaces_sync = SpacesSync::start(repos.clone(), workspace.clone(), &device_id);
-        let studio_config = crate::studio::GateConfig {
-            paths: crate::studio::StudioPaths {
-                inbox_root: Some(data_dir.join("studio").join("inbox")),
-                ..crate::studio::StudioPaths::default()
-            },
-            ..crate::studio::GateConfig::default()
-        };
-        let studio_gate = StudioGate::new(studio_config.clone());
-        let studio_draft = DraftRunner::new(registry.clone(), studio_config);
-        let studio_launch = StudioLaunchRunner::new(studio_draft.clone(), studio_gate.clone());
-        let studio_store = StudioStore::new(data_dir);
         let network_store = NetworkStore::new(data_dir);
         let wallet_store = WalletStore::new(data_dir);
-        let deploy_store = DeployStore::new(data_dir);
-        let inbox_root = data_dir.join("studio").join("inbox");
         let wallet_connect = WalletConnectBridge::new();
-        let studio_deploy = StudioDeployer::new(
-            studio_gate.clone(),
-            inbox_root.clone(),
-            deploy_store.clone(),
-            wallet_connect.clone(),
-            wallet_store.secrets().clone(),
-        );
-        let studio_interact = StudioInteract::new(
-            inbox_root,
-            wallet_connect.clone(),
-            wallet_store.secrets().clone(),
-        );
-        let studio_preview = StudioPreview::new();
-        let studio_relay = StudioRelay::new();
-        studio_relay.set_default_device(&device_id);
-        let template_store = TemplateStore::new(Vec::<PathBuf>::new());
         Ok(Self {
             sessions,
             doc_host,
@@ -596,20 +230,10 @@ impl EngineCore {
             terminals,
             diff_sync,
             spaces_sync,
-            studio_gate,
-            studio_draft,
-            studio_launch,
-            studio_store,
             network_store,
             wallet_store,
-            deploy_store,
-            studio_deploy,
-            studio_interact,
-            studio_preview,
             wallet_connect,
-            studio_relay,
             data_dir: data_dir.to_path_buf(),
-            template_store,
             uploads,
             agent_accounts,
             device_id,
@@ -713,136 +337,7 @@ impl EngineCore {
         comet_rpc::HostRelay::spawn(config, self.rpc_service(), on_nudge)
     }
 
-    /// Start the Cloudflare relay client (hosted Worker by default).
-    /// Web prompts become Sessions runs (skill + MCP via enrich_sessions_run_request).
-    pub fn boot_studio_relay(&self) {
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            if let Some(mut cmds) = self.studio_relay.start_from_env(&self.device_id, &self.data_dir)
-            {
-                let relay = self.studio_relay.clone();
-                let sessions = self.sessions.clone();
-                let doc_host = self.doc_host.clone();
-                let default_harness = std::env::var("PROOFSHIP_DEFAULT_HARNESS")
-                    .ok()
-                    .map(|s| parse_relay_harness(Some(&s)))
-                    .unwrap_or(HarnessId::Codex);
-                relay.set_harness_catalog(relay_harness_catalog(
-                    &self.registry,
-                    default_harness,
-                ));
-                let network_store = self.network_store.clone();
-                let wallet_store = self.wallet_store.clone();
-                let studio_deploy = self.studio_deploy.clone();
-                let studio_interact = self.studio_interact.clone();
-                tokio::spawn(async move {
-                    while let Some(cmd) = cmds.recv().await {
-                        if let Some(id) = cmd.id.as_deref() {
-                            relay.ack(id);
-                        }
-                        let chat_id = cmd
-                            .chat_id
-                            .clone()
-                            .or_else(|| std::env::var("PROOFSHIP_RELAY_CHAT_ID").ok())
-                            .unwrap_or_else(|| "proofship-relay".into());
-                        match cmd.kind {
-                            crate::studio::RelayCommandKind::Prompt => {
-                                let nl = cmd.nl.unwrap_or_default();
-                                let harness = cmd
-                                    .lane
-                                    .as_deref()
-                                    .map(|l| parse_relay_harness(Some(l)))
-                                    .unwrap_or(default_harness);
-                                if let Err(err) = doc_host.open(&chat_id) {
-                                    relay.note(&format!("relay open chat failed: {err}"));
-                                    continue;
-                                }
-                                relay.publish(
-                                    "session.user",
-                                    serde_json::json!({ "text": nl, "chatId": chat_id, "harness": harness }),
-                                );
-                                let cwd = std::env::var("PROOFSHIP_RELAY_CWD").unwrap_or_else(|_| {
-                                    crate::repos::home_dir().to_string_lossy().into_owned()
-                                });
-                                let request = comet_proto::RunRequest {
-                                    prompt: nl,
-                                    harness: Some(harness),
-                                    model: None,
-                                    reasoning: Some(comet_proto::ReasoningLevel::High),
-                                    model_options: serde_json::Map::new(),
-                                    cwd,
-                                    sandbox: comet_proto::SandboxLevel::WorkspaceWrite,
-                                    auto_approve: true,
-                                    resume: None,
-                                    attachments: Vec::new(),
-                                    mcp_servers: Vec::new(),
-                                };
-                                let Ok((_hist, mut rx)) = sessions.subscribe(&chat_id, 0) else {
-                                    relay.note("relay subscribe failed");
-                                    continue;
-                                };
-                                match sessions
-                                    .dispatch(&chat_id, harness, request, None)
-                                    .await
-                                {
-                                    Ok(_run_id) => {
-                                        while let Ok(ev) = rx.recv().await {
-                                            mirror_agent_event(&relay, &ev.event);
-                                            if matches!(
-                                                ev.event,
-                                                comet_proto::AgentEvent::Done { .. }
-                                            ) {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    Err(err) => {
-                                        relay.publish(
-                                            "session.done",
-                                            serde_json::json!({
-                                                "ok": false,
-                                                "error": err.to_string(),
-                                            }),
-                                        );
-                                    }
-                                }
-                            }
-                            crate::studio::RelayCommandKind::Steer => {
-                                let nl = cmd.nl.unwrap_or_default();
-                                match sessions.steer(&chat_id, &nl, None).await {
-                                    Ok(_) => relay.note("steer delivered"),
-                                    Err(err) => relay.note(&format!("steer failed: {err}")),
-                                }
-                            }
-                            crate::studio::RelayCommandKind::Cancel => {
-                                match sessions.interrupt(&chat_id).await {
-                                    Ok(true) => relay.note("run interrupted"),
-                                    Ok(false) => relay.note("no live run to cancel"),
-                                    Err(err) => relay.note(&format!("cancel failed: {err}")),
-                                }
-                            }
-                            crate::studio::RelayCommandKind::Deploy => {
-                                handle_relay_deploy(
-                                    &relay,
-                                    &network_store,
-                                    &wallet_store,
-                                    &studio_deploy,
-                                    &studio_interact,
-                                    cmd.network_id.as_deref(),
-                                    cmd.module.as_deref(),
-                                    cmd.digest.as_deref(),
-                                )
-                                .await;
-                            }
-                        }
-                    }
-                });
-            }
-        });
-    }
-
     pub fn rpc_service(&self) -> Arc<EngineRpc> {
-        self.boot_studio_relay();
         let mut rpc = EngineRpc::new(
             self.sessions.clone(),
             self.doc_host.clone(),
@@ -853,19 +348,9 @@ impl EngineCore {
             self.diff_sync.clone(),
             self.uploads.clone(),
             self.agent_accounts.clone(),
-            self.studio_gate.clone(),
-            self.studio_draft.clone(),
-            self.studio_launch.clone(),
-            self.studio_store.clone(),
             self.network_store.clone(),
             self.wallet_store.clone(),
-            self.deploy_store.clone(),
-            self.studio_deploy.clone(),
-            self.studio_interact.clone(),
-            self.studio_preview.clone(),
             self.wallet_connect.clone(),
-            self.studio_relay.clone(),
-            self.template_store.clone(),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {
@@ -884,7 +369,6 @@ impl EngineCore {
         self.sessions.shutdown().await;
         self.terminals.shutdown();
         self.agent_accounts.shutdown();
-        self.studio_preview.stop().await;
         self.wallet_connect.stop().await;
         self.doc_host.flush_all();
         self.workspace.shutdown();

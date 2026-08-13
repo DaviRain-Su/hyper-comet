@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use comet_proto::WalletAccount;
 
-use crate::studio::wallets::WalletStore;
+use crate::wallets::WalletStore;
 
 const SIGN_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -232,7 +232,7 @@ fn session_html(project_id: &str, label: &str) -> String {
     <p>Label: <strong>{label}</strong>. Keep this tab open so ProofShip can request signatures.</p>
     <button id="connect" type="button">Connect with WalletConnect</button>
     <div id="status" class="status">Ready</div>
-    <div class="banner">After connect, leave this page open. Deploy / send from Studio will prompt here.</div>
+    <div class="banner">After connect, leave this page open. Signing requests from ProofShip will prompt here.</div>
   </div>
 <script type="module">
 const PROJECT_ID = '{pid}';
@@ -315,7 +315,7 @@ btn.addEventListener('click', async () => {{
       events: ['chainChanged', 'accountsChanged'],
       metadata: {{
         name: 'ProofShip',
-        description: 'Local-first web3 contract studio',
+        description: 'Local-first desktop for shipping Web3 products',
         url: 'https://proofship.dev',
         icons: ['https://avatars.githubusercontent.com/u/37784886']
       }}
@@ -326,7 +326,7 @@ btn.addEventListener('click', async () => {{
     account = accounts[0];
     if (!account) throw new Error('No account returned');
     await postSession(account);
-    setStatus('Connected: ' + account + ' — listening for Studio txs');
+    setStatus('Connected: ' + account + ' — listening for txs');
     btn.textContent = 'Connected';
     pollPending();
     provider.on('accountsChanged', async (accs) => {{

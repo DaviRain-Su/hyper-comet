@@ -131,19 +131,6 @@ pub async fn status(config: EngineConfig) -> anyhow::Result<()> {
         },
         config.ipc_port
     );
-    match comet_engine::resolve_relay_base(std::env::var("PROOFSHIP_RELAY").ok().as_deref()) {
-        Some(base) => {
-            let device = std::fs::read_to_string(config.data_dir.join("device-id"))
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "desktop".into());
-            let id = comet_engine::resolve_relay_identity(&base, &device, None, None);
-            println!("Relay:    {}", id.base);
-            println!("Web:      {}", id.web_url());
-        }
-        None => println!("Relay:    off"),
-    }
     if !signed_in {
         std::process::exit(1);
     }

@@ -8,7 +8,3 @@ node_modules
 .wrangler
 build/
 edge/dist/
-proofship/toolchain/
-proofship/inbox/
-proofship/relay/node_modules/
-proofship/relay/.wrangler/

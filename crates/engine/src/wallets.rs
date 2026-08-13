@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use comet_proto::{WalletAccount, WalletSource};
 
-use super::local_wallet::{self, WalletSecrets};
+use crate::local_wallet::{self, WalletSecrets};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalletError {
@@ -344,7 +344,7 @@ mod tests {
     fn create_local_keeps_secret_out_of_address_book() {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = WalletStore::new(dir.path());
-        let (wallets, wallet, backup) = store.create_local("Studio").expect("create");
+        let (wallets, wallet, backup) = store.create_local("Local").expect("create");
         assert_eq!(wallets.len(), 1);
         assert_eq!(wallet.source, WalletSource::Local);
         assert!(wallet.address.starts_with("0x"));
