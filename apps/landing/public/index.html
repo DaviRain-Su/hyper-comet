@@ -3,12 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ProofShip — AI drafts the contract. The gate decides if it ships.</title>
-<meta name="description" content="ProofShip: AI drafts ProgramV1 contracts, a machine gate decides if they ship. This is the product site — there is no in-browser coding workspace." />
+<title>ProofShip — AI 起草合约。过了门禁，才能上链。</title>
+<meta name="description" content="ProofShip 用 ProofForge 做内核：一份 ProgramV1 源码，机器门禁决定能不能上 X Layer。" />
 <meta property="og:title" content="ProofShip" />
-<meta property="og:description" content="AI drafts the contract. The gate decides if it ships." />
+<meta property="og:description" content="AI 起草合约。过了门禁，才能上链。内核是 ProofForge。" />
 <meta property="og:image" content="/assets/app-screenshot.jpg" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   @font-face {
     font-family: "Geist";
@@ -33,7 +36,7 @@
     --purple: #8b5cf6;
     --purple-hi: #b79df9;
     --purple-deep: #5b34b8;
-    --sans: "Geist", system-ui, -apple-system, sans-serif;
+    --sans: "Geist", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -63,7 +66,32 @@
     color: var(--ink);
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  html[lang="zh-CN"] {
+    font-family: "Noto Sans SC", "Geist", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  html[lang="zh-CN"] body { font-family: inherit; }
+  html[lang="zh-CN"] h1,
+  html[lang="zh-CN"] h2,
+  html[lang="zh-CN"] h3 {
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  html[lang="zh-CN"] h1 { line-height: 1.32; }
+  html[lang="zh-CN"] h2 { line-height: 1.38; }
+  html[lang="zh-CN"] p,
+  html[lang="zh-CN"] .hero p.sub,
+  html[lang="zh-CN"] .cell p,
+  html[lang="zh-CN"] .closing p,
+  html[lang="zh-CN"] .kernel-lead,
+  html[lang="zh-CN"] .point p {
+    letter-spacing: 0.06em;
+    line-height: 1.9;
+    font-weight: 400;
+  }
+  html[lang="zh-CN"] .cell h3 { letter-spacing: 0.06em; }
+  html[lang="zh-CN"] .kicker { letter-spacing: 0.16em; }
   ::selection { background: var(--purple-deep); color: #fff; }
   a { color: inherit; text-decoration: none; }
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 32px; }
@@ -246,6 +274,72 @@
   @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; gap: 36px; } }
 
+  .kernel { padding: 112px 0 0; }
+  .kernel-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 48px;
+    align-items: start;
+    min-width: 0;
+  }
+  .kicker {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: var(--purple-hi);
+    margin-bottom: 16px;
+  }
+  .kernel h2 {
+    font-size: clamp(26px, 3.4vw, 36px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+  }
+  .kernel-lead {
+    margin-top: 18px;
+    max-width: 48ch;
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--dim);
+    text-wrap: pretty;
+  }
+  .lean {
+    margin: 0;
+    padding: 22px 22px 20px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-raise);
+    color: #c9b8f2;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    overflow-x: auto;
+    white-space: pre;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .lean .kw { color: var(--purple-hi); }
+  .lean .ty { color: #ece7f7; }
+  .points {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px 32px;
+    margin-top: 48px;
+  }
+  .point h3 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin-bottom: 8px;
+  }
+  .point p { font-size: 13.5px; line-height: 1.65; color: var(--dim); }
+  @media (max-width: 900px) {
+    .kernel-grid { grid-template-columns: 1fr; gap: 28px; }
+    .points { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; gap: 36px; } }
+
   /* ── closing ─────────────────────────────────────────── */
   .closing {
     margin: 140px 0 80px;
@@ -308,6 +402,8 @@
   @media (max-width: 640px) {
     .wrap { padding: 0 20px; }
     .nav-inner { height: 56px; }
+    nav .navlink { display: none; }
+    #nav-download { display: none; }
     .hero-grid { padding: 36px 20px 32px; gap: 44px; }
     h1 { font-size: clamp(32px, 9vw, 38px); }
     .hero p.sub { font-size: 15px; }
@@ -317,6 +413,8 @@
     .shot { padding: 28px 0 0; }
     .shot img { border-radius: 4px; }
     .features { padding: 64px 20px 0; gap: 36px; }
+    .kernel { padding-top: 72px; }
+    .lean { font-size: 11.5px; padding: 16px; }
     .closing { margin: 80px 0 56px; }
     .closing p { font-size: 14px; }
     .closing .cta-row { margin-top: 28px; }
@@ -334,6 +432,7 @@
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="ProofShip home">ProofShip</a>
       <div class="links">
+        <a class="navlink" href="#kernel" data-i="navKernel">ProofForge</a>
         <a class="gh-icon" href="https://github.com/DaviRain-Su/proofship" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         </a>
@@ -348,11 +447,12 @@
       <div>
         <h1 data-i="h1">AI drafts the contract.<br/>The gate decides if it ships.</h1>
         <p class="sub" data-i="sub">
-          This page is the product site. There is no in-browser coding workspace and no web Sessions.
-          ProofForge is a skill — drafting and the gate do not run here. First chain: X Layer.
+          ProofShip 把自然语言变成能上链的合约。你选的 agent 起草一份 ProofForge ProgramV1；
+          内核做检查、构建、核验。门禁不过，就不能上 X Layer。
         </p>
         <div class="cta-row">
-          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
+          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
+          <a class="btn ghost" href="https://github.com/DaviRain-Su/proof_forge" data-i="ctaKernel">ProofForge 内核</a>
         </div>
         <div class="agents" aria-label="Supported agents">
           <span class="agent-icon" title="Claude Code" style="--icon: url('/assets/icons/claude-mark.svg')"></span>
@@ -422,35 +522,82 @@
 
   <section class="wrap features">
     <div class="cell">
-      <div class="idx" data-i="f1i">ProofForge</div>
-      <h3 data-i="f1h">Skill, not a browser IDE</h3>
-      <p data-i="f1p">Drafting happens in the agent you already use. This site does not open a web coding session or a remote desktop panel.</p>
+      <div class="idx" data-i="f1i">Kernel</div>
+      <h3 data-i="f1h">ProofForge 是内核</h3>
+      <p data-i="f1p">一份 portable ProgramV1 源码，Lean 4 编译器推导语义再物化。改 target 只能改制品，不能改业务语义。</p>
     </div>
     <div class="cell">
-      <div class="idx" data-i="f2i">ProofForge Gate</div>
-      <h3 data-i="f2h">Check, build & inspect</h3>
-      <p data-i="f2p">A fail-closed machine gate sits between the draft and the chain. No pass, no artifacts, no deploy.</p>
+      <div class="idx" data-i="f2i">Gate</div>
+      <h3 data-i="f2h">检查、构建、核验</h3>
+      <p data-i="f2p">门禁 fail-closed。过不了就没有制品，也不能部署。不允许降级，也不走旧路径。</p>
     </div>
     <div class="cell">
-      <div class="idx" data-i="f3i">X Layer First</div>
-      <h3 data-i="f3h">Ship to X Layer</h3>
-      <p data-i="f3p">First target is X Layer testnet, then other EVM networks. Sealed artifacts stay with you.</p>
+      <div class="idx" data-i="f3i">Agents</div>
+      <h3 data-i="f3h">你已有的 agent</h3>
+      <p data-i="f3p">Claude Code、Codex、Cursor、Grok、Hermes、Pi。ProofForge 作为 skill 接入，起草发生在 agent 里。</p>
     </div>
     <div class="cell">
-      <div class="idx" data-i="f4i">Keys stay yours</div>
-      <h3 data-i="f4h">Nothing sensitive on this page</h3>
-      <p data-i="f4p">Deploy keys stay in your environment or wallet — never in this page, the repo, or a relay.</p>
+      <div class="idx" data-i="f4i">X Layer</div>
+      <h3 data-i="f4h">先上这一条链</h3>
+      <p data-i="f4p">首发 X Layer。密钥留在你的环境或钱包，不会进页面、仓库或中继。</p>
+    </div>
+  </section>
+
+  <section class="kernel" id="kernel">
+    <div class="wrap kernel-grid">
+      <div>
+        <p class="kicker" data-i="kKicker">KERNEL</p>
+        <h2 data-i="kH">内核是 ProofForge</h2>
+        <p class="kernel-lead" data-i="kLead">
+          ProofShip 站在 ProofForge 上面。作者只写统一的 program … where；
+          编译器从源码推导 requirements，再由 --target 选择物化。
+          它是代码生成和语义检查工具，不是链上 VM，也不托管密钥。
+        </p>
+        <div class="kernel-links">
+          <a class="btn" href="https://github.com/DaviRain-Su/proof_forge" data-i="kBtn">打开 ProofForge</a>
+          <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
+        </div>
+      </div>
+      <pre class="lean" aria-label="ProofForge ProgramV1"><span class="kw">import</span> ProofForgeV2
+<span class="kw">open</span> ProofForgeV2.Language
+
+<span class="kw">program</span> <span class="ty">StateCell</span> <span class="kw">where</span>
+  <span class="kw">state</span> count : UInt64
+
+  <span class="kw">init</span>(initial : UInt64) <span class="kw">do</span>
+    count := initial
+
+  <span class="kw">entry</span> increment(delta : UInt64) : UInt64 <span class="kw">do</span>
+    count := count + delta
+    <span class="kw">return</span> count
+
+  <span class="kw">view</span> get() : UInt64 <span class="kw">do</span>
+    <span class="kw">return</span> count</pre>
+    </div>
+    <div class="wrap points">
+      <div class="point">
+        <h3 data-i="p1h">一份源码，多条链</h3>
+        <p data-i="p1p">工程面已有 EVM、Solana、NEAR、Noir 等物化。ProofShip 首发走 EVM，目标链是 X Layer。</p>
+      </div>
+      <div class="point">
+        <h3 data-i="p2h">保不住语义就拒绝</h3>
+        <p data-i="p2p">改链不能改整数语义、状态迁移、回滚、调用顺序或授权。无法保持语义时必须拒绝。</p>
+      </div>
+      <div class="point">
+        <h3 data-i="p3h">和上次不一样</h3>
+        <p data-i="p3p">不再做网页 Sessions，也不把 Studio 嵌进浏览器。ProofForge 以 skill / 内核接入，门禁仍是权威。</p>
+      </div>
     </div>
   </section>
 
   <section class="closing">
     <canvas class="hand-ascii hand-down" aria-hidden="true"></canvas>
     <div class="wrap">
-      <h2 data-i="closeH">Draft safely. Ship with proof.</h2>
-      <p data-i="closeP">The product story is agent drafting + a ProofForge gate + X Layer. This page does not run that loop in the browser.</p>
+      <h2 data-i="closeH">先过内核，再上链。</h2>
+      <p data-i="closeP">Agent 起草，ProofForge 判定，X Layer 承接。密钥始终在你这边。</p>
       <div class="cta-row">
-        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
-        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="gh">Repository ↗</a>
+        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proof_forge" data-i="kBtn">打开 ProofForge</a>
+        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
       </div>
     </div>
   </section>
@@ -473,44 +620,66 @@
     const copy = {
       en: {
         h1: "AI drafts the contract.<br/>The gate decides if it ships.",
-        sub: "This page is the product site. There is no in-browser coding workspace and no web Sessions. ProofForge is a skill — drafting and the gate do not run here. First chain: X Layer.",
-        cta: "View on GitHub",
-        gh: "Repository ↗",
-        f1i: "ProofForge",
-        f1h: "Skill, not a browser IDE",
-        f1p: "Drafting happens in the agent you already use. This site does not open a web coding session or a remote desktop panel.",
-        f2i: "ProofForge Gate",
-        f2h: "Check, build & inspect",
-        f2p: "A fail-closed machine gate sits between the draft and the chain. No pass, no artifacts, no deploy.",
-        f3i: "X Layer First",
-        f3h: "Ship to X Layer",
-        f3p: "First target is X Layer testnet, then other EVM networks. Sealed artifacts stay with you.",
-        f4i: "Keys stay yours",
-        f4h: "Nothing sensitive on this page",
-        f4p: "Deploy keys stay in your environment or wallet — never in this page, the repo, or a relay.",
-        closeH: "Draft safely. Ship with proof.",
-        closeP: "The product story is agent drafting + a ProofForge gate + X Layer. This page does not run that loop in the browser.",
+        sub: "ProofShip turns a sentence into a contract that can ship. Your agent drafts a ProofForge ProgramV1. The kernel checks, builds, and inspects. Nothing reaches X Layer unless the gate passes.",
+        cta: "ProofShip repo",
+        ctaKernel: "ProofForge kernel",
+        navKernel: "ProofForge",
+        f1i: "Kernel",
+        f1h: "ProofForge is the kernel",
+        f1p: "One portable ProgramV1 source. A Lean 4 compiler infers semantics, then materializes. Changing target can change artifacts — not business meaning.",
+        f2i: "Gate",
+        f2h: "Check, build, inspect",
+        f2p: "The gate is fail-closed. No pass, no artifacts, no deploy. No best-effort downgrade, no legacy fallback.",
+        f3i: "Agents",
+        f3h: "The agent you already use",
+        f3p: "Claude Code, Codex, Cursor, Grok, Hermes, Pi. ProofForge plugs in as a skill. Drafting stays in the agent.",
+        f4i: "X Layer",
+        f4h: "This chain first",
+        f4p: "First ship target is X Layer. Keys stay in your environment or wallet — never this page, the repo, or a relay.",
+        kKicker: "KERNEL",
+        kH: "The kernel is ProofForge",
+        kLead: "ProofShip sits on ProofForge. Authors write one program … where. The compiler derives requirements, then --target selects materialization. It is a codegen and semantics checker — not an on-chain VM, and not a key custodian.",
+        kBtn: "Open ProofForge",
+        p1h: "One source, many chains",
+        p1p: "Engineering targets include EVM, Solana, NEAR, and Noir. ProofShip ships EVM first, on X Layer.",
+        p2h: "Refuse if semantics slip",
+        p2p: "A new target cannot change integer meaning, state transition, rollback, call order, or auth. If it cannot keep them, it must refuse.",
+        p3h: "Different from last time",
+        p3p: "No web Sessions. No Studio inside the browser. ProofForge enters as skill and kernel. The gate stays the authority.",
+        closeH: "Kernel first. Then the chain.",
+        closeP: "The agent drafts. ProofForge decides. X Layer receives. Keys stay with you.",
         lang: "中文",
       },
       zh: {
         h1: "AI 起草合约。<br/>过了门禁，才能上链。",
-        sub: "这一页只是产品落地页。浏览器里不能写代码，也没有网页 Sessions。ProofForge 作为 skill 接入，起草和门禁都不在这个页面上跑。首发链：X Layer。",
-        cta: "查看仓库",
-        gh: "GitHub 仓库 ↗",
-        f1i: "ProofForge",
-        f1h: "是 skill，不是网页 IDE",
-        f1p: "起草发生在你已有的 agent 里。这个站点不会打开网页写代码，也不会连远程桌面面板。",
-        f2i: "ProofForge 门禁",
+        sub: "ProofShip 把自然语言变成能上链的合约。你选的 agent 起草一份 ProofForge ProgramV1；内核做检查、构建、核验。门禁不过，就不能上 X Layer。",
+        cta: "ProofShip 仓库",
+        ctaKernel: "ProofForge 内核",
+        navKernel: "内核",
+        f1i: "内核",
+        f1h: "ProofForge 是内核",
+        f1p: "一份 portable ProgramV1 源码，Lean 4 编译器推导语义再物化。改 target 只能改制品，不能改业务语义。",
+        f2i: "门禁",
         f2h: "检查、构建、核验",
-        f2p: "门禁是 fail-closed：过不了就没有制品，也不能部署。",
-        f3i: "先上 X Layer",
-        f3h: "部署到 X Layer",
-        f3p: "首发 X Layer 测试网，再扩到其他 EVM。密封制品留在你这边。",
-        f4i: "密钥在你手里",
-        f4h: "这个页面不碰敏感信息",
-        f4p: "部署密钥只在你的环境或钱包里，不会进这个页面、仓库或中继。",
-        closeH: "安全起草。有证明再上链。",
-        closeP: "产品故事是 agent 起草 + ProofForge 门禁 + X Layer。这个循环不在浏览器里跑。",
+        f2p: "门禁 fail-closed。过不了就没有制品，也不能部署。不允许降级，也不走旧路径。",
+        f3i: "Agent",
+        f3h: "你已有的 agent",
+        f3p: "Claude Code、Codex、Cursor、Grok、Hermes、Pi。ProofForge 作为 skill 接入，起草发生在 agent 里。",
+        f4i: "X Layer",
+        f4h: "先上这一条链",
+        f4p: "首发 X Layer。密钥留在你的环境或钱包，不会进页面、仓库或中继。",
+        kKicker: "内核",
+        kH: "内核是 ProofForge",
+        kLead: "ProofShip 站在 ProofForge 上面。作者只写统一的 program … where；编译器从源码推导 requirements，再由 --target 选择物化。它是代码生成和语义检查工具，不是链上 VM，也不托管密钥。",
+        kBtn: "打开 ProofForge",
+        p1h: "一份源码，多条链",
+        p1p: "工程面已有 EVM、Solana、NEAR、Noir 等物化。ProofShip 首发走 EVM，目标链是 X Layer。",
+        p2h: "保不住语义就拒绝",
+        p2p: "改链不能改整数语义、状态迁移、回滚、调用顺序或授权。无法保持语义时必须拒绝。",
+        p3h: "和上次不一样",
+        p3p: "不再做网页 Sessions，也不把 Studio 嵌进浏览器。ProofForge 以 skill / 内核接入，门禁仍是权威。",
+        closeH: "先过内核，再上链。",
+        closeP: "Agent 起草，ProofForge 判定，X Layer 承接。密钥始终在你这边。",
         lang: "EN",
       },
     };
