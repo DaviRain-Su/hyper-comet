@@ -27,6 +27,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
   const { locale } = useLocale();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { relay?: string; session?: string };
+  const keep = { relay: search.relay, session: search.session };
   const link = useDesktopLink(undefined, {
     relay: search.relay,
     session: search.session,
@@ -87,7 +88,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
       await navigate({
         to: "/sessions/$sessionId",
         params: { sessionId: created.id },
-        search: { relay: search.relay, session: search.session },
+        search: keep,
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed");
@@ -135,10 +136,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
         await navigate({
           to: "/sessions/$sessionId",
           params: { sessionId: id },
-          search: {
-            relay: search.relay,
-            session: search.session,
-          },
+          search: keep,
         });
       }
       try {
@@ -175,10 +173,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
         await navigate({
           to: "/sessions/$sessionId",
           params: { sessionId: id },
-          search: {
-            relay: search.relay,
-            session: search.session,
-          },
+          search: keep,
         });
       }
       const bundle = await applyTemplate({ data: { sessionId: id, templateId, locale } });
@@ -273,7 +268,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
           onMenu={() => setNavOpen(true)}
           onRail={() => setRailOpen(true)}
         />
-        <DesktopLinkBar link={link} sessionId={sessionId} />
+        <DesktopLinkBar link={link} />
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {empty ? (
@@ -281,7 +276,6 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
               onTemplate={(id) => void handleTemplate(id)}
               busy={busy}
               link={link}
-              sessionId={sessionId}
             />
           ) : (
             <Transcript messages={merged} running={busy && link.desktopOnline} />

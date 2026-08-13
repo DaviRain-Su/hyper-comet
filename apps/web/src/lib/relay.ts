@@ -191,8 +191,12 @@ export function unwrapRelayPayload(raw: unknown): RelaySnapshot {
   const executors = hoisted.executors ?? rec.presence ?? inner?.executors;
   return {
     ...hoisted,
-    state: rec.state ?? rec,
-    tail: Array.isArray(rec.tail) ? (rec.tail as RelayEvent[]) : hoisted.tail,
+    state: asRecord(rec.state) ?? rec,
+    tail: Array.isArray(rec.tail)
+      ? (rec.tail as RelayEvent[])
+      : Array.isArray(hoisted.tail)
+        ? (hoisted.tail as RelayEvent[])
+        : undefined,
     executors: (executors as RelaySnapshot["executors"]) ?? undefined,
     launch: (hoisted.launch ?? inner?.launch) as RelaySnapshot["launch"],
   };

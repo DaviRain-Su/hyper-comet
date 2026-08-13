@@ -7,12 +7,10 @@ export function EmptySession({
   onTemplate,
   busy,
   link,
-  sessionId,
 }: {
   onTemplate: (id: string) => void;
   busy?: boolean;
   link: ReturnType<typeof useDesktopLink>;
-  sessionId?: string;
 }) {
   const { locale } = useLocale();
   return (
@@ -30,7 +28,7 @@ export function EmptySession({
       </p>
 
       <div className="mt-8">
-        <PairingCard link={link} sessionId={sessionId} />
+        <PairingCard link={link} />
       </div>
 
       <p className="mt-10 text-[11px] font-semibold uppercase tracking-[0.1em] text-fg-subtle">

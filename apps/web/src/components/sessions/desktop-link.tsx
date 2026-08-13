@@ -1,8 +1,8 @@
-import { useEffect } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { pick, useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
+import { looksLikeDeviceRoom } from "@/lib/relay";
 import { PROOFSHIP_RELEASES } from "@/lib/links";
 import type { useDesktopLink } from "@/lib/use-desktop-link";
 
@@ -39,22 +39,41 @@ function Lamp({
   );
 }
 
-export function DesktopLinkBar({
-  link,
-  sessionId,
-}: {
-  link: Link;
-  sessionId?: string;
-}) {
+function roomHint(
+  locale: "en" | "zh",
+  roomId: string,
+  desktopOnline: boolean,
+  status: Link["status"],
+  executor: Link["executor"],
+): string | null {
+  const room = roomId.trim();
+  if (!room) {
+    return pick(
+      locale,
+      "No device room. On the machine run `comet agent url` and open that exact link.",
+      "还没有设备房间。在那台机器上运行 `comet agent url`，打开打印出的链接。",
+    );
+  }
+  if (!looksLikeDeviceRoom(room) && executor === "user") {
+    return pick(
+      locale,
+      "This is not a device room. Daemon rooms look like desktop-ba8835a2-… — local chat ids will not light the lamp.",
+      "这不是设备房间。守护进程房间号长这样：desktop-ba8835a2-… 本地会话 id 不会点亮桌面灯。",
+    );
+  }
+  if (!desktopOnline && status === "live" && executor === "user") {
+    return pick(
+      locale,
+      "This room has no desktop attached. Wrong room, or the daemon is down (`systemctl --user status comet-native.service`).",
+      "这个房间没有桌面接入。房间号不对，或守护进程没起来（systemctl --user status comet-native.service）。",
+    );
+  }
+  return null;
+}
+
+export function DesktopLinkBar({ link }: { link: Link }) {
   const { locale } = useLocale();
-
-  const setRoomId = link.setRoomId;
-  const roomId = link.roomId;
-
-  useEffect(() => {
-    if (sessionId && !roomId) setRoomId(sessionId);
-  }, [sessionId, roomId, setRoomId]);
-
+  const hint = roomHint(locale, link.roomId, link.desktopOnline, link.status, link.executor);
   const desktopTone = link.desktopOnline ? "on" : link.status === "connecting" ? "run" : "off";
   const platformTone = link.platformOnline ? "on" : "off";
   const relayTone =
@@ -133,8 +152,8 @@ export function DesktopLinkBar({
           <Input
             value={link.roomId}
             onChange={(e) => link.setRoomId(e.target.value)}
-            placeholder={sessionId || "desktop-…"}
-            className="h-8 w-[min(100%,160px)] font-mono text-[11px]"
+            placeholder="desktop-…"
+            className="h-8 w-[min(100%,180px)] font-mono text-[11px]"
             aria-label={pick(locale, "Room", "房间")}
           />
           {link.status === "live" ? (
@@ -150,12 +169,17 @@ export function DesktopLinkBar({
               type="button"
               className="h-8 rounded-[var(--radius-md)] bg-accent px-3 text-[12px] font-semibold text-accent-fg hover:bg-accent-hover"
               onClick={() => {
-                const room = link.roomId || sessionId;
-                if (!room) {
-                  toast.error(pick(locale, "Open or paste a room id first.", "先打开会话或粘贴房间 id。"));
+                const room = link.roomId.trim();
+                if (!looksLikeDeviceRoom(room)) {
+                  toast.error(
+                    pick(
+                      locale,
+                      "Room must be desktop-{deviceId}. Run `comet agent url` and open that link.",
+                      "房间必须是 desktop-{deviceId}。运行 `comet agent url` 并打开那条链接。",
+                    ),
+                  );
                   return;
                 }
-                if (!link.roomId && sessionId) link.setRoomId(sessionId);
                 link.connect(room);
               }}
             >
@@ -164,20 +188,15 @@ export function DesktopLinkBar({
           )}
         </div>
       </div>
+      {hint && <p className="mt-2 font-mono text-[11px] text-accent">{hint}</p>}
       {link.lastError && <p className="mt-2 font-mono text-[11px] text-red-300">{link.lastError}</p>}
     </div>
   );
 }
 
-export function PairingCard({
-  link,
-  sessionId,
-}: {
-  link: Link;
-  sessionId?: string;
-}) {
+export function PairingCard({ link }: { link: Link }) {
   const { locale } = useLocale();
-  const room = link.roomId || sessionId || "—";
+  const room = link.roomId || "—";
   return (
     <div className="rounded-[var(--radius-2xl)] border border-border bg-surface p-5 sm:p-6">
       <p className="text-[11px] font-semibold tracking-[0.14em] text-accent">
@@ -189,8 +208,8 @@ export function PairingCard({
       <p className="mt-2 max-w-[52ch] text-[13.5px] leading-relaxed text-fg-muted">
         {pick(
           locale,
-          "Same shape as desktop Sessions: watch the transcript and enqueue prompts. Without an online executor this page stays read-only. Code and keys stay on the machine.",
-          "和桌面 Sessions 同一套形状：看记录、排队提示。没有在线执行器时页面只读。代码和密钥留在那台机器上。",
+          "This page talks to the daemon on your machine through the Cloudflare relay. Open the URL from `comet agent url` — the session id must be desktop-{deviceId}, not a new blank room.",
+          "这个页面通过 Cloudflare 中继连到你机器上的守护进程。打开 `comet agent url` 打印的链接 — session 必须是 desktop-{deviceId}，不要新建空白房间。",
         )}
       </p>
       <ol className="mt-4 space-y-2 text-[13px] text-fg-muted">

@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { Download, Plus, Trash2 } from "lucide-react";
 import { Wordmark } from "@/components/brand/logo";
 import { LocaleToggle } from "@/components/brand/locale-toggle";
@@ -23,6 +23,8 @@ export function SessionSidebar({
 }) {
   const { locale } = useLocale();
   const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as { relay?: string; session?: string };
+  const keep = { relay: search.relay, session: search.session };
 
   return (
     <aside className="flex h-full min-h-0 w-full flex-col border-r border-border bg-surface">
@@ -53,7 +55,7 @@ export function SessionSidebar({
                 <Link
                   to="/sessions/$sessionId"
                   params={{ sessionId: s.id }}
-                  search={{}}
+                  search={keep}
                   className={cn(
                     "block rounded-[var(--radius-md)] px-3 py-2.5 pr-9 text-[13px] leading-snug",
                     activeId === s.id
@@ -86,7 +88,7 @@ export function SessionSidebar({
                   onClick={(e) => {
                     e.preventDefault();
                     onDelete(s.id);
-                    if (activeId === s.id) void navigate({ to: "/sessions", search: {} });
+                    if (activeId === s.id) void navigate({ to: "/sessions", search: keep });
                   }}
                 >
                   <Trash2 className="size-3.5" />

@@ -36,6 +36,10 @@ function normalizeExecutors(raw) {
   return [];
 }
 
+function looksLikeDeviceRoom(id) {
+  return /^desktop-[a-z0-9-]+$/i.test(String(id).trim());
+}
+
 test("GET /state wrap hoists userOnline so Desktop lamp can turn on", () => {
   const wrapped = {
     state: {
@@ -59,6 +63,12 @@ test("inner WS snapshot still reads executors", () => {
   };
   const snap = unwrapRelayPayload(inner);
   assert.equal(normalizeExecutors(snap.executors)[0].online, true);
+});
+
+test("local chat UUIDs are not device rooms", () => {
+  assert.equal(looksLikeDeviceRoom("desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78"), true);
+  assert.equal(looksLikeDeviceRoom("3f2c1b90-1111-2222-3333-444444444444"), false);
+  assert.equal(looksLikeDeviceRoom(""), false);
 });
 
 void createRequire;
