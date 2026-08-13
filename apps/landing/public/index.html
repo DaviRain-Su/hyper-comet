@@ -3,12 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ProofShip — AI drafts the contract. The gate decides if it ships.</title>
-<meta name="description" content="ProofShip is a local-first desktop app for shipping Web3 products. AI drafts ProgramV1 contracts across 7 ACP lanes, gated by ProofForge before deployment to X Layer. Free and open source." />
+<title>ProofShip — AI 起草合约。过了门禁，才能上链。</title>
+<meta name="description" content="ProofShip 用 ProofForge 做内核：一份 ProgramV1 源码，机器门禁决定能不能上 X Layer。" />
 <meta property="og:title" content="ProofShip" />
-<meta property="og:description" content="AI drafts the contract. The gate decides if it ships." />
+<meta property="og:description" content="AI 起草合约。过了门禁，才能上链。内核是 ProofForge。" />
 <meta property="og:image" content="/assets/app-screenshot.jpg" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   @font-face {
     font-family: "Geist";
@@ -33,7 +36,7 @@
     --purple: #8b5cf6;
     --purple-hi: #b79df9;
     --purple-deep: #5b34b8;
-    --sans: "Geist", system-ui, -apple-system, sans-serif;
+    --sans: "Geist", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
     --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -63,7 +66,32 @@
     color: var(--ink);
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  html[lang="zh-CN"] {
+    font-family: "Noto Sans SC", "Geist", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  html[lang="zh-CN"] body { font-family: inherit; }
+  html[lang="zh-CN"] h1,
+  html[lang="zh-CN"] h2,
+  html[lang="zh-CN"] h3 {
+    letter-spacing: 0.04em;
+    font-weight: 600;
+  }
+  html[lang="zh-CN"] h1 { line-height: 1.32; }
+  html[lang="zh-CN"] h2 { line-height: 1.38; }
+  html[lang="zh-CN"] p,
+  html[lang="zh-CN"] .hero p.sub,
+  html[lang="zh-CN"] .cell p,
+  html[lang="zh-CN"] .closing p,
+  html[lang="zh-CN"] .kernel-lead,
+  html[lang="zh-CN"] .point p {
+    letter-spacing: 0.06em;
+    line-height: 1.9;
+    font-weight: 400;
+  }
+  html[lang="zh-CN"] .cell h3 { letter-spacing: 0.06em; }
+  html[lang="zh-CN"] .kicker { letter-spacing: 0.16em; }
   ::selection { background: var(--purple-deep); color: #fff; }
   a { color: inherit; text-decoration: none; }
   .wrap { max-width: 1140px; margin: 0 auto; padding: 0 32px; }
@@ -246,27 +274,85 @@
   @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; gap: 36px; } }
 
-  /* ── section scaffold (today / roadmap / pricing) ────── */
-  .sec { padding: 130px 32px 0; }
-  .sec-label {
+  .kernel { padding: 112px 0 0; }
+  .kernel-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+    gap: 48px;
+    align-items: start;
+    min-width: 0;
+  }
+  .kicker {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.14em;
     color: var(--purple-hi);
-    text-transform: uppercase;
+    margin-bottom: 16px;
   }
-  .sec h2 {
-    margin-top: 14px;
+  .kernel h2 {
     font-size: clamp(26px, 3.4vw, 36px);
     font-weight: 600;
     letter-spacing: -0.03em;
     text-wrap: balance;
   }
-  .sec > p.lede {
-    margin-top: 14px;
-    max-width: 520px;
-    font-size: 14.5px;
+  .kernel-lead {
+    margin-top: 18px;
+    max-width: 48ch;
+    font-size: 15.5px;
+    line-height: 1.7;
+    color: var(--dim);
+    text-wrap: pretty;
+  }
+  .lean {
+    margin: 0;
+    padding: 22px 22px 20px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-raise);
+    color: #c9b8f2;
+    font-family: var(--mono);
+    font-size: 12.5px;
     line-height: 1.65;
+    overflow-x: auto;
+    white-space: pre;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .lean .kw { color: var(--purple-hi); }
+  .lean .ty { color: #ece7f7; }
+  .points {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 28px 32px;
+    margin-top: 48px;
+  }
+  .point h3 {
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin-bottom: 8px;
+  }
+  .point p { font-size: 13.5px; line-height: 1.65; color: var(--dim); }
+  @media (max-width: 900px) {
+    .kernel-grid { grid-template-columns: 1fr; gap: 28px; }
+    .points { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 980px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; gap: 36px; } }
+
+  /* ── section scaffold (today / roadmap / pricing) ────── */
+  .sec { padding: 130px 32px 0; }
+  .sec h2 {
+    font-size: clamp(26px, 3.4vw, 36px);
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+  }
+  .sec > .lede {
+    margin-top: 16px;
+    max-width: 52ch;
+    font-size: 14.5px;
+    line-height: 1.7;
     color: var(--dim);
   }
 
@@ -302,7 +388,7 @@
       center / 11px no-repeat,
       var(--purple-deep);
   }
-  .today-item p { margin-top: 8px; font-size: 12.5px; line-height: 1.6; color: var(--dim); }
+  .today-item p { margin-top: 8px; font-size: 12.5px; line-height: 1.65; color: var(--dim); }
   @media (max-width: 980px) { .today-grid { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .today-grid { grid-template-columns: 1fr; } }
 
@@ -337,14 +423,14 @@
     position: relative;
     padding: 5px 0 5px 18px;
     font-size: 13px;
-    line-height: 1.55;
+    line-height: 1.6;
     color: var(--dim);
   }
   .road-col li::before {
     content: "";
     position: absolute;
     left: 2px;
-    top: 12px;
+    top: 13px;
     width: 5px;
     height: 5px;
     border-radius: 50%;
@@ -375,6 +461,7 @@
     gap: 10px;
     font-size: 15px;
     font-weight: 600;
+    flex-wrap: wrap;
   }
   .price-tag {
     font-family: var(--mono);
@@ -392,7 +479,7 @@
     position: relative;
     padding: 5px 0 5px 20px;
     font-size: 13px;
-    line-height: 1.55;
+    line-height: 1.6;
     color: var(--dim);
   }
   .price-card li::before {
@@ -409,11 +496,16 @@
     border: 1px solid var(--line);
     cursor: default;
   }
-  .price-note { margin-top: 18px; font-size: 12px; color: var(--faint); max-width: 640px; line-height: 1.6; }
+  .price-note { margin-top: 18px; font-size: 12px; color: var(--faint); max-width: 640px; line-height: 1.7; }
   @media (max-width: 760px) { .price-grid { grid-template-columns: 1fr; } }
 
-  @media (max-width: 640px) {
-    .sec { padding: 84px 20px 0; }
+  html[lang="zh-CN"] .today-item p,
+  html[lang="zh-CN"] .road-col li,
+  html[lang="zh-CN"] .price-card li,
+  html[lang="zh-CN"] .sec > .lede,
+  html[lang="zh-CN"] .price-note {
+    letter-spacing: 0.06em;
+    line-height: 1.85;
   }
 
   /* ── closing ─────────────────────────────────────────── */
@@ -478,7 +570,8 @@
   @media (max-width: 640px) {
     .wrap { padding: 0 20px; }
     .nav-inner { height: 56px; }
-    .navlink { display: none; }
+    nav .navlink { display: none; }
+    #nav-download { display: none; }
     .hero-grid { padding: 36px 20px 32px; gap: 44px; }
     h1 { font-size: clamp(32px, 9vw, 38px); }
     .hero p.sub { font-size: 15px; }
@@ -488,6 +581,9 @@
     .shot { padding: 28px 0 0; }
     .shot img { border-radius: 4px; }
     .features { padding: 64px 20px 0; gap: 36px; }
+    .kernel { padding-top: 72px; }
+    .sec { padding: 84px 20px 0; }
+    .lean { font-size: 11.5px; padding: 16px; }
     .closing { margin: 80px 0 56px; }
     .closing p { font-size: 14px; }
     .closing .cta-row { margin-top: 28px; }
@@ -505,13 +601,14 @@
     <div class="wrap nav-inner">
       <a class="logo" href="/" aria-label="ProofShip home">ProofShip</a>
       <div class="links">
-        <a class="navlink" href="#today">Features</a>
-        <a class="navlink" href="#roadmap">Roadmap</a>
-        <a class="navlink" href="#pricing">Pricing</a>
+        <a class="navlink" href="#kernel" data-i="navKernel">ProofForge</a>
+        <a class="navlink" href="#roadmap" data-i="navRoadmap">路线图</a>
+        <a class="navlink" href="#pricing" data-i="navPricing">定价</a>
         <a class="gh-icon" href="https://github.com/DaviRain-Su/proofship" aria-label="GitHub">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         </a>
-        <a class="btn small" id="nav-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
+        <a class="btn small" id="nav-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">View on GitHub</a>
+        <button type="button" class="btn ghost small" id="lang-toggle" aria-label="Language">中文</button>
       </div>
     </div>
   </nav>
@@ -519,14 +616,14 @@
   <header class="hero">
     <div class="wrap hero-grid">
       <div>
-        <h1>AI drafts the contract.<br/>The gate decides if it ships.</h1>
-        <p class="sub">
-          ProofShip combines local Sessions with 7 ACP lanes and a machine gate.
-          Your agent drafts ProgramV1 contracts; ProofForge checks, builds, and inspects before deployment to X Layer.
+        <h1 data-i="h1">AI drafts the contract.<br/>The gate decides if it ships.</h1>
+        <p class="sub" data-i="sub">
+          ProofShip 把自然语言变成能上链的合约。你选的 agent 起草一份 ProofForge ProgramV1；
+          内核做检查、构建、核验。门禁不过，就不能上 X Layer。
         </p>
         <div class="cta-row">
-          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
-          <span class="cta-ver" id="ver">v0.1.52 · macOS &amp; Linux desktop</span>
+          <a class="btn" id="hero-download" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
+          <a class="btn ghost" href="https://github.com/DaviRain-Su/proof_forge" data-i="ctaKernel">ProofForge 内核</a>
         </div>
         <div class="agents" aria-label="Supported agents">
           <span class="agent-icon" title="Claude Code" style="--icon: url('/assets/icons/claude-mark.svg')"></span>
@@ -590,143 +687,190 @@
     <div class="dither dither-left" aria-hidden="true"><canvas></canvas></div>
     <div class="dither dither-right" aria-hidden="true"><canvas></canvas></div>
     <div class="wrap">
-      <img src="/assets/app-screenshot.jpg" alt="ProofShip Sessions driving an ACP contract drafting run with ProofForge gate checks" />
+      <img src="/assets/app-screenshot.jpg" alt="ProofShip product — agent drafting with a ProofForge gate. Not a live coding workspace." />
     </div>
   </section>
 
   <section class="wrap features">
     <div class="cell">
-      <div class="idx">Sessions & ACP</div>
-      <h3>Sessions + 7 ACP lanes</h3>
-      <p>Draft ProgramV1 smart contracts using Claude Code, Codex, Grok, Hermes, Pi, Cursor, or OpenCode in local Sessions over one ACP layer.</p>
+      <div class="idx" data-i="f1i">Kernel</div>
+      <h3 data-i="f1h">ProofForge 是内核</h3>
+      <p data-i="f1p">一份 portable ProgramV1 源码，Lean 4 编译器推导语义再物化。改 target 只能改制品，不能改业务语义。</p>
     </div>
     <div class="cell">
-      <div class="idx">ProofForge Gate</div>
-      <h3>Check, build & inspect gate</h3>
-      <p>Automated engineering-grade machine gate. Enforces strict check, build, and inspect checks fail-closed before shipping.</p>
+      <div class="idx" data-i="f2i">Gate</div>
+      <h3 data-i="f2h">检查、构建、核验</h3>
+      <p data-i="f2p">门禁 fail-closed。过不了就没有制品，也不能部署。不允许降级，也不走旧路径。</p>
     </div>
     <div class="cell">
-      <div class="idx">X Layer First</div>
-      <h3>Multi-EVM deployment</h3>
-      <p>Target X Layer testnet first and multi-EVM networks. Sealed artifacts, ABIs, and deployment records persist locally.</p>
+      <div class="idx" data-i="f3i">Agents</div>
+      <h3 data-i="f3h">你已有的 agent</h3>
+      <p data-i="f3p">Claude Code、Codex、Cursor、Grok、Hermes、Pi。ProofForge 作为 skill 接入，起草发生在 agent 里。</p>
     </div>
     <div class="cell">
-      <div class="idx">Local First</div>
-      <h3>Keys stay user-side</h3>
-      <p>Deploy keys stay in your environment or wallet — never in the app, repo, or relay. The desktop app works offline.</p>
+      <div class="idx" data-i="f4i">X Layer</div>
+      <h3 data-i="f4h">先上这一条链</h3>
+      <p data-i="f4p">首发 X Layer。密钥留在你的环境或钱包，不会进页面、仓库或中继。</p>
+    </div>
+  </section>
+
+  <section class="kernel" id="kernel">
+    <div class="wrap kernel-grid">
+      <div>
+        <p class="kicker" data-i="kKicker">KERNEL</p>
+        <h2 data-i="kH">内核是 ProofForge</h2>
+        <p class="kernel-lead" data-i="kLead">
+          ProofShip 站在 ProofForge 上面。作者只写统一的 program … where；
+          编译器从源码推导 requirements，再由 --target 选择物化。
+          它是代码生成和语义检查工具，不是链上 VM，也不托管密钥。
+        </p>
+        <div class="kernel-links">
+          <a class="btn" href="https://github.com/DaviRain-Su/proof_forge" data-i="kBtn">打开 ProofForge</a>
+          <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
+        </div>
+      </div>
+      <pre class="lean" aria-label="ProofForge ProgramV1"><span class="kw">import</span> ProofForgeV2
+<span class="kw">open</span> ProofForgeV2.Language
+
+<span class="kw">program</span> <span class="ty">StateCell</span> <span class="kw">where</span>
+  <span class="kw">state</span> count : UInt64
+
+  <span class="kw">init</span>(initial : UInt64) <span class="kw">do</span>
+    count := initial
+
+  <span class="kw">entry</span> increment(delta : UInt64) : UInt64 <span class="kw">do</span>
+    count := count + delta
+    <span class="kw">return</span> count
+
+  <span class="kw">view</span> get() : UInt64 <span class="kw">do</span>
+    <span class="kw">return</span> count</pre>
+    </div>
+    <div class="wrap points">
+      <div class="point">
+        <h3 data-i="p1h">一份源码，多条链</h3>
+        <p data-i="p1p">工程面已有 EVM、Solana、NEAR、Noir 等物化。ProofShip 首发走 EVM，目标链是 X Layer。</p>
+      </div>
+      <div class="point">
+        <h3 data-i="p2h">保不住语义就拒绝</h3>
+        <p data-i="p2p">改链不能改整数语义、状态迁移、回滚、调用顺序或授权。无法保持语义时必须拒绝。</p>
+      </div>
+      <div class="point">
+        <h3 data-i="p3h">和上次不一样</h3>
+        <p data-i="p3p">不再做网页 Sessions，也不把 Studio 嵌进浏览器。ProofForge 以 skill / 内核接入，门禁仍是权威。</p>
+      </div>
     </div>
   </section>
 
   <section class="wrap sec" id="today">
-    <div class="sec-label">In the app today</div>
-    <h2>What ships in the current build</h2>
-    <p class="lede">A local-first desktop app. Your agents, your keys, your machine — nothing is locked behind a hosted platform.</p>
+    <p class="kicker" data-i="tKicker">当前版本</p>
+    <h2 data-i="tH">当前构建里已经有什么</h2>
+    <p class="lede" data-i="tLead">一个本地优先的桌面 app。你的 agent、你的密钥、你的机器——没有任何东西锁在托管平台里。</p>
     <div class="today-grid">
       <div class="today-item">
-        <h3>Sessions with 7 coding agents</h3>
-        <p>Claude Code, Codex, Cursor, Grok, Hermes, Pi, and OpenCode drive local Sessions over one ACP layer. Bring the agent subscriptions you already pay for.</p>
+        <h3 data-i="t1h">7 个 coding agent 的 Sessions</h3>
+        <p data-i="t1p">Claude Code、Codex、Cursor、Grok、Hermes、Pi、OpenCode 通过一层 ACP 驱动本地 Sessions。用你已经在付费的 agent 订阅。</p>
       </div>
       <div class="today-item">
-        <h3>ProofForge drafting skill</h3>
-        <p>Natural language to ProgramV1 (Lean DSL): the skill teaches your agent the language surface, forbidden patterns, and the PF-* diagnostic repair loop.</p>
+        <h3 data-i="t2h">ProofForge 起草 skill</h3>
+        <p data-i="t2p">自然语言到 ProgramV1（Lean DSL）：skill 教会 agent 语言边界、禁忌写法和 PF-* 诊断修复环。</p>
       </div>
       <div class="today-item">
-        <h3>X Layer network presets</h3>
-        <p>X Layer testnet (1952) and mainnet (196) built in, plus Sepolia and Base Sepolia. Add any custom EVM RPC in Settings → Networks.</p>
+        <h3 data-i="t3h">X Layer 网络预设</h3>
+        <p data-i="t3p">内置 X Layer 测试网（1952）与主网（196），另有 Sepolia 与 Base Sepolia；Settings → Networks 可添加任意 EVM RPC。</p>
       </div>
       <div class="today-item">
-        <h3>Wallets without key juggling</h3>
-        <p>Create an in-app signer (key stored locally, mode 0600, never synced), reference an env key, watch an address, or sign through WalletConnect.</p>
+        <h3 data-i="t4h">不折腾私钥的钱包</h3>
+        <p data-i="t4p">应用内生成本地签名器（密钥 0600 权限存本机、绝不同步），或引用 env key、watch 地址、走 WalletConnect 签名。</p>
       </div>
       <div class="today-item">
-        <h3>Git-aware workspace</h3>
-        <p>Branch diff panel, integrated terminal, and per-project sessions. Multi-device remote control through a self-hosted sync edge.</p>
+        <h3 data-i="t5h">Git 工作区</h3>
+        <p data-i="t5p">分支 diff 面板、内置终端、按项目组织的 sessions；通过自托管 sync edge 做多设备远程控制。</p>
       </div>
       <div class="today-item">
-        <h3>Open source, offline-capable</h3>
-        <p>MIT licensed. The whole drafting and gating loop runs on your machine — no account, no server, no telemetry required.</p>
+        <h3 data-i="t6h">开源、可离线</h3>
+        <p data-i="t6p">MIT 协议。起草与门禁闭环全部在本机运行——不需要账号、服务器或遥测。</p>
       </div>
     </div>
   </section>
 
   <section class="wrap sec" id="roadmap">
-    <div class="sec-label">Roadmap</div>
-    <h2>Local first, then the cloud</h2>
-    <p class="lede">The order is deliberate: prove the gate on your machine, then remove the remaining friction with hosted services.</p>
+    <p class="kicker" data-i="rKicker">路线图</p>
+    <h2 data-i="rH">先本地，后云端</h2>
+    <p class="lede" data-i="rLead">顺序是有意的：先在你的机器上证明门禁，再用托管服务消掉剩下的摩擦。</p>
     <div class="road-grid">
       <div class="road-col now">
-        <span class="road-when">Now</span>
-        <h3>Draft &amp; gate on X Layer</h3>
+        <span class="road-when" data-i="rNowTag">现在</span>
+        <h3 data-i="rNowH">在 X Layer 上起草与门禁</h3>
         <ul>
-          <li>Desktop app: Sessions + 7 ACP agent lanes</li>
-          <li>ProofForge ProgramV1 skill injection</li>
-          <li>Networks &amp; Wallets settings, X Layer first</li>
-          <li>Local signer + WalletConnect signing</li>
+          <li data-i="rNow1">桌面 app：Sessions + 7 条 ACP agent 通道</li>
+          <li data-i="rNow2">ProofForge ProgramV1 skill 注入</li>
+          <li data-i="rNow3">Networks 与 Wallets 设置，X Layer 优先</li>
+          <li data-i="rNow4">本地签名器 + WalletConnect 签名</li>
         </ul>
       </div>
       <div class="road-col">
-        <span class="road-when">Next</span>
-        <h3>The gate as a native tool</h3>
+        <span class="road-when" data-i="rNextTag">下一步</span>
+        <h3 data-i="rNextH">门禁变成原生工具</h3>
         <ul>
-          <li>ProofForge MCP auto-attached to every session — check, build, inspect as real tool calls</li>
-          <li>One-click deploy from sealed gate artifacts</li>
-          <li>Source verification on the OKX explorer</li>
-          <li>OKX Wallet flows polished end to end</li>
+          <li data-i="rNext1">ProofForge MCP 自动挂载到每个 session——check、build、inspect 成为真实工具调用</li>
+          <li data-i="rNext2">门禁制品一键部署</li>
+          <li data-i="rNext3">OKX 浏览器上的合约源码验证</li>
+          <li data-i="rNext4">打磨 OKX Wallet 端到端流程</li>
         </ul>
       </div>
       <div class="road-col">
-        <span class="road-when">Later</span>
-        <h3>Hosted where it helps</h3>
+        <span class="road-when" data-i="rLaterTag">之后</span>
+        <h3 data-i="rLaterH">该托管的才托管</h3>
         <ul>
-          <li>Hosted gate service — no local Lean toolchain install</li>
-          <li>Web UI on the same local engine</li>
-          <li>Team workspaces and cloud sync</li>
-          <li>More chains through ProofForge backends</li>
+          <li data-i="rLater1">托管门禁服务——无需本地安装 Lean 工具链</li>
+          <li data-i="rLater2">同一引擎之上的 Web UI</li>
+          <li data-i="rLater3">团队工作区与云同步</li>
+          <li data-i="rLater4">经由 ProofForge 后端支持更多链</li>
         </ul>
       </div>
     </div>
   </section>
 
   <section class="wrap sec" id="pricing">
-    <div class="sec-label">Pricing</div>
-    <h2>The local app is free. Forever.</h2>
-    <p class="lede">You already pay for your coding agent — ProofShip doesn't charge you again for running it on your own machine.</p>
+    <p class="kicker" data-i="pKicker">定价</p>
+    <h2 data-i="pH">本地版免费。永久免费。</h2>
+    <p class="lede" data-i="pLead">你已经在为 coding agent 付费——在自己机器上运行 ProofShip 不需要再付一次。</p>
     <div class="price-grid">
       <div class="price-card featured">
-        <div class="price-name">Local <span class="price-tag">MIT · OPEN SOURCE</span></div>
-        <div class="price-amount">$0 <span>/ forever</span></div>
+        <div class="price-name"><span data-i="plName">本地版</span> <span class="price-tag">MIT · OPEN SOURCE</span></div>
+        <div class="price-amount" data-i="plAmt">$0 <span>/ 永久</span></div>
         <ul>
-          <li>Full desktop app, all 7 agent lanes</li>
-          <li>Unlimited drafts, gate runs, and deploys</li>
-          <li>X Layer + custom EVM networks</li>
-          <li>Local signer, env keys, WalletConnect</li>
-          <li>Keys and code never leave your machine</li>
+          <li data-i="pl1">完整桌面 app，全部 7 条 agent 通道</li>
+          <li data-i="pl2">起草、门禁、部署不限次数</li>
+          <li data-i="pl3">X Layer + 自定义 EVM 网络</li>
+          <li data-i="pl4">本地签名器、env key、WalletConnect</li>
+          <li data-i="pl5">密钥和代码不离开你的机器</li>
         </ul>
-        <a class="btn" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
+        <a class="btn" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
       </div>
       <div class="price-card">
-        <div class="price-name">Cloud <span class="price-tag">COMING SOON</span></div>
-        <div class="price-amount">TBA <span>/ month</span></div>
+        <div class="price-name"><span data-i="pcName">云端版</span> <span class="price-tag" data-i="pcTag">即将推出</span></div>
+        <div class="price-amount" data-i="pcAmt">待定 <span>/ 月</span></div>
         <ul>
-          <li>Hosted ProofForge gate — zero toolchain setup</li>
-          <li>Managed deployments &amp; explorer verification</li>
-          <li>Team workspaces with cloud sync</li>
-          <li>Priority support</li>
+          <li data-i="pc1">托管 ProofForge 门禁——零工具链安装</li>
+          <li data-i="pc2">托管部署与浏览器源码验证</li>
+          <li data-i="pc3">团队工作区与云同步</li>
+          <li data-i="pc4">优先支持</li>
         </ul>
-        <a class="btn disabled" aria-disabled="true">Not open yet</a>
+        <a class="btn disabled" aria-disabled="true" data-i="pcBtn">尚未开放</a>
       </div>
     </div>
-    <p class="price-note">Cloud pricing lands with the hosted gate service. The local app stays free and fully functional either way — the cloud tier removes setup friction, it never gates core features.</p>
+    <p class="price-note" data-i="pNote">云端定价随托管门禁服务一起公布。本地版始终免费且功能完整——云端只解决安装摩擦，不锁核心功能。</p>
   </section>
 
   <section class="closing">
     <canvas class="hand-ascii hand-down" aria-hidden="true"></canvas>
     <div class="wrap">
-      <h2>Draft safely. Ship with proof.</h2>
-      <p>Local-first agent session workflows, ProofForge machine gating, and X Layer smart contract deployment.</p>
+      <h2 data-i="closeH">先过内核，再上链。</h2>
+      <p data-i="closeP">Agent 起草，ProofForge 判定，X Layer 承接。密钥始终在你这边。</p>
       <div class="cta-row">
-        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proofship">Get ProofShip</a>
-        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship">View on GitHub ↗</a>
+        <a class="btn" id="closing-download" href="https://github.com/DaviRain-Su/proof_forge" data-i="kBtn">打开 ProofForge</a>
+        <a class="btn ghost" href="https://github.com/DaviRain-Su/proofship" data-i="cta">ProofShip 仓库</a>
       </div>
     </div>
   </section>
@@ -744,6 +888,209 @@
     </div>
   </footer>
 
+<script>
+  (() => {
+    const copy = {
+      en: {
+        h1: "AI drafts the contract.<br/>The gate decides if it ships.",
+        sub: "ProofShip turns a sentence into a contract that can ship. Your agent drafts a ProofForge ProgramV1. The kernel checks, builds, and inspects. Nothing reaches X Layer unless the gate passes.",
+        cta: "ProofShip repo",
+        ctaKernel: "ProofForge kernel",
+        navKernel: "ProofForge",
+        f1i: "Kernel",
+        f1h: "ProofForge is the kernel",
+        f1p: "One portable ProgramV1 source. A Lean 4 compiler infers semantics, then materializes. Changing target can change artifacts — not business meaning.",
+        f2i: "Gate",
+        f2h: "Check, build, inspect",
+        f2p: "The gate is fail-closed. No pass, no artifacts, no deploy. No best-effort downgrade, no legacy fallback.",
+        f3i: "Agents",
+        f3h: "The agent you already use",
+        f3p: "Claude Code, Codex, Cursor, Grok, Hermes, Pi. ProofForge plugs in as a skill. Drafting stays in the agent.",
+        f4i: "X Layer",
+        f4h: "This chain first",
+        f4p: "First ship target is X Layer. Keys stay in your environment or wallet — never this page, the repo, or a relay.",
+        kKicker: "KERNEL",
+        kH: "The kernel is ProofForge",
+        kLead: "ProofShip sits on ProofForge. Authors write one program … where. The compiler derives requirements, then --target selects materialization. It is a codegen and semantics checker — not an on-chain VM, and not a key custodian.",
+        kBtn: "Open ProofForge",
+        p1h: "One source, many chains",
+        p1p: "Engineering targets include EVM, Solana, NEAR, and Noir. ProofShip ships EVM first, on X Layer.",
+        p2h: "Refuse if semantics slip",
+        p2p: "A new target cannot change integer meaning, state transition, rollback, call order, or auth. If it cannot keep them, it must refuse.",
+        p3h: "Different from last time",
+        p3p: "No web Sessions. No Studio inside the browser. ProofForge enters as skill and kernel. The gate stays the authority.",
+        closeH: "Kernel first. Then the chain.",
+        closeP: "The agent drafts. ProofForge decides. X Layer receives. Keys stay with you.",
+        navRoadmap: "Roadmap",
+        navPricing: "Pricing",
+        tKicker: "IN THE APP TODAY",
+        tH: "What ships in the current build",
+        tLead: "A local-first desktop app. Your agents, your keys, your machine — nothing is locked behind a hosted platform.",
+        t1h: "Sessions with 7 coding agents",
+        t1p: "Claude Code, Codex, Cursor, Grok, Hermes, Pi, and OpenCode drive local Sessions over one ACP layer. Bring the agent subscriptions you already pay for.",
+        t2h: "ProofForge drafting skill",
+        t2p: "Natural language to ProgramV1 (Lean DSL): the skill teaches your agent the language surface, forbidden patterns, and the PF-* diagnostic repair loop.",
+        t3h: "X Layer network presets",
+        t3p: "X Layer testnet (1952) and mainnet (196) built in, plus Sepolia and Base Sepolia. Add any custom EVM RPC in Settings → Networks.",
+        t4h: "Wallets without key juggling",
+        t4p: "Create an in-app signer (key stored locally, mode 0600, never synced), reference an env key, watch an address, or sign through WalletConnect.",
+        t5h: "Git-aware workspace",
+        t5p: "Branch diff panel, integrated terminal, and per-project sessions. Multi-device remote control through a self-hosted sync edge.",
+        t6h: "Open source, offline-capable",
+        t6p: "MIT licensed. The whole drafting and gating loop runs on your machine — no account, no server, no telemetry required.",
+        rKicker: "ROADMAP",
+        rH: "Local first, then the cloud",
+        rLead: "The order is deliberate: prove the gate on your machine, then remove the remaining friction with hosted services.",
+        rNowTag: "NOW",
+        rNowH: "Draft & gate on X Layer",
+        rNow1: "Desktop app: Sessions + 7 ACP agent lanes",
+        rNow2: "ProofForge ProgramV1 skill injection",
+        rNow3: "Networks & Wallets settings, X Layer first",
+        rNow4: "Local signer + WalletConnect signing",
+        rNextTag: "NEXT",
+        rNextH: "The gate as a native tool",
+        rNext1: "ProofForge MCP auto-attached to every session — check, build, inspect as real tool calls",
+        rNext2: "One-click deploy from sealed gate artifacts",
+        rNext3: "Source verification on the OKX explorer",
+        rNext4: "OKX Wallet flows polished end to end",
+        rLaterTag: "LATER",
+        rLaterH: "Hosted where it helps",
+        rLater1: "Hosted gate service — no local Lean toolchain install",
+        rLater2: "Web UI on the same local engine",
+        rLater3: "Team workspaces and cloud sync",
+        rLater4: "More chains through ProofForge backends",
+        pKicker: "PRICING",
+        pH: "The local app is free. Forever.",
+        pLead: "You already pay for your coding agent — ProofShip doesn't charge you again for running it on your own machine.",
+        plName: "Local",
+        plAmt: "$0 <span>/ forever</span>",
+        pl1: "Full desktop app, all 7 agent lanes",
+        pl2: "Unlimited drafts, gate runs, and deploys",
+        pl3: "X Layer + custom EVM networks",
+        pl4: "Local signer, env keys, WalletConnect",
+        pl5: "Keys and code never leave your machine",
+        pcName: "Cloud",
+        pcTag: "COMING SOON",
+        pcAmt: "TBA <span>/ month</span>",
+        pc1: "Hosted ProofForge gate — zero toolchain setup",
+        pc2: "Managed deployments & explorer verification",
+        pc3: "Team workspaces with cloud sync",
+        pc4: "Priority support",
+        pcBtn: "Not open yet",
+        pNote: "Cloud pricing lands with the hosted gate service. The local app stays free and fully functional either way — the cloud tier removes setup friction, it never gates core features.",
+        lang: "中文",
+      },
+      zh: {
+        h1: "AI 起草合约。<br/>过了门禁，才能上链。",
+        sub: "ProofShip 把自然语言变成能上链的合约。你选的 agent 起草一份 ProofForge ProgramV1；内核做检查、构建、核验。门禁不过，就不能上 X Layer。",
+        cta: "ProofShip 仓库",
+        ctaKernel: "ProofForge 内核",
+        navKernel: "内核",
+        f1i: "内核",
+        f1h: "ProofForge 是内核",
+        f1p: "一份 portable ProgramV1 源码，Lean 4 编译器推导语义再物化。改 target 只能改制品，不能改业务语义。",
+        f2i: "门禁",
+        f2h: "检查、构建、核验",
+        f2p: "门禁 fail-closed。过不了就没有制品，也不能部署。不允许降级，也不走旧路径。",
+        f3i: "Agent",
+        f3h: "你已有的 agent",
+        f3p: "Claude Code、Codex、Cursor、Grok、Hermes、Pi。ProofForge 作为 skill 接入，起草发生在 agent 里。",
+        f4i: "X Layer",
+        f4h: "先上这一条链",
+        f4p: "首发 X Layer。密钥留在你的环境或钱包，不会进页面、仓库或中继。",
+        kKicker: "内核",
+        kH: "内核是 ProofForge",
+        kLead: "ProofShip 站在 ProofForge 上面。作者只写统一的 program … where；编译器从源码推导 requirements，再由 --target 选择物化。它是代码生成和语义检查工具，不是链上 VM，也不托管密钥。",
+        kBtn: "打开 ProofForge",
+        p1h: "一份源码，多条链",
+        p1p: "工程面已有 EVM、Solana、NEAR、Noir 等物化。ProofShip 首发走 EVM，目标链是 X Layer。",
+        p2h: "保不住语义就拒绝",
+        p2p: "改链不能改整数语义、状态迁移、回滚、调用顺序或授权。无法保持语义时必须拒绝。",
+        p3h: "和上次不一样",
+        p3p: "不再做网页 Sessions，也不把 Studio 嵌进浏览器。ProofForge 以 skill / 内核接入，门禁仍是权威。",
+        closeH: "先过内核，再上链。",
+        closeP: "Agent 起草，ProofForge 判定，X Layer 承接。密钥始终在你这边。",
+        navRoadmap: "路线图",
+        navPricing: "定价",
+        tKicker: "当前版本",
+        tH: "当前构建里已经有什么",
+        tLead: "一个本地优先的桌面 app。你的 agent、你的密钥、你的机器——没有任何东西锁在托管平台里。",
+        t1h: "7 个 coding agent 的 Sessions",
+        t1p: "Claude Code、Codex、Cursor、Grok、Hermes、Pi、OpenCode 通过一层 ACP 驱动本地 Sessions。用你已经在付费的 agent 订阅。",
+        t2h: "ProofForge 起草 skill",
+        t2p: "自然语言到 ProgramV1（Lean DSL）：skill 教会 agent 语言边界、禁忌写法和 PF-* 诊断修复环。",
+        t3h: "X Layer 网络预设",
+        t3p: "内置 X Layer 测试网（1952）与主网（196），另有 Sepolia 与 Base Sepolia；Settings → Networks 可添加任意 EVM RPC。",
+        t4h: "不折腾私钥的钱包",
+        t4p: "应用内生成本地签名器（密钥 0600 权限存本机、绝不同步），或引用 env key、watch 地址、走 WalletConnect 签名。",
+        t5h: "Git 工作区",
+        t5p: "分支 diff 面板、内置终端、按项目组织的 sessions；通过自托管 sync edge 做多设备远程控制。",
+        t6h: "开源、可离线",
+        t6p: "MIT 协议。起草与门禁闭环全部在本机运行——不需要账号、服务器或遥测。",
+        rKicker: "路线图",
+        rH: "先本地，后云端",
+        rLead: "顺序是有意的：先在你的机器上证明门禁，再用托管服务消掉剩下的摩擦。",
+        rNowTag: "现在",
+        rNowH: "在 X Layer 上起草与门禁",
+        rNow1: "桌面 app：Sessions + 7 条 ACP agent 通道",
+        rNow2: "ProofForge ProgramV1 skill 注入",
+        rNow3: "Networks 与 Wallets 设置，X Layer 优先",
+        rNow4: "本地签名器 + WalletConnect 签名",
+        rNextTag: "下一步",
+        rNextH: "门禁变成原生工具",
+        rNext1: "ProofForge MCP 自动挂载到每个 session——check、build、inspect 成为真实工具调用",
+        rNext2: "门禁制品一键部署",
+        rNext3: "OKX 浏览器上的合约源码验证",
+        rNext4: "打磨 OKX Wallet 端到端流程",
+        rLaterTag: "之后",
+        rLaterH: "该托管的才托管",
+        rLater1: "托管门禁服务——无需本地安装 Lean 工具链",
+        rLater2: "同一引擎之上的 Web UI",
+        rLater3: "团队工作区与云同步",
+        rLater4: "经由 ProofForge 后端支持更多链",
+        pKicker: "定价",
+        pH: "本地版免费。永久免费。",
+        pLead: "你已经在为 coding agent 付费——在自己机器上运行 ProofShip 不需要再付一次。",
+        plName: "本地版",
+        plAmt: "$0 <span>/ 永久</span>",
+        pl1: "完整桌面 app，全部 7 条 agent 通道",
+        pl2: "起草、门禁、部署不限次数",
+        pl3: "X Layer + 自定义 EVM 网络",
+        pl4: "本地签名器、env key、WalletConnect",
+        pl5: "密钥和代码不离开你的机器",
+        pcName: "云端版",
+        pcTag: "即将推出",
+        pcAmt: "待定 <span>/ 月</span>",
+        pc1: "托管 ProofForge 门禁——零工具链安装",
+        pc2: "托管部署与浏览器源码验证",
+        pc3: "团队工作区与云同步",
+        pc4: "优先支持",
+        pcBtn: "尚未开放",
+        pNote: "云端定价随托管门禁服务一起公布。本地版始终免费且功能完整——云端只解决安装摩擦，不锁核心功能。",
+        lang: "EN",
+      },
+    };
+    const apply = (lang) => {
+      const pack = copy[lang] || copy.en;
+      document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+      document.querySelectorAll("[data-i]").forEach((el) => {
+        const key = el.getAttribute("data-i");
+        if (key && pack[key]) el.innerHTML = pack[key];
+      });
+      const btn = document.getElementById("lang-toggle");
+      if (btn) btn.textContent = pack.lang;
+      try { localStorage.setItem("proofship.lang", lang); } catch {}
+    };
+    const start = (() => {
+      try { return localStorage.getItem("proofship.lang") || "zh"; } catch { return "zh"; }
+    })();
+    apply(start);
+    document.getElementById("lang-toggle")?.addEventListener("click", () => {
+      const next = document.documentElement.lang.startsWith("zh") ? "en" : "zh";
+      apply(next);
+    });
+  })();
+</script>
 <script>
   // Edge ascii: a slow-warping noise field mapped through a glyph density
   // ramp — organic clusters of characters hugging each page edge, dense at
