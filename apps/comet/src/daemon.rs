@@ -42,6 +42,7 @@ const CAPTURED_ENV: &[&str] = &[
     "PROOFSHIP_RELAY_CHAT_ID",
     "PROOFSHIP_RELAY_CWD",
     "PROOFSHIP_DEFAULT_HARNESS",
+    "PROOFSHIP_WEB",
 ];
 
 pub fn install(data_dir: &Path) -> anyhow::Result<()> {
@@ -435,6 +436,7 @@ mod tests {
         assert!(CAPTURED_ENV.contains(&"PROOFSHIP_RELAY"));
         assert!(CAPTURED_ENV.contains(&"PROOFSHIP_DEVICE_ID"));
         assert!(CAPTURED_ENV.contains(&"PROOFSHIP_SESSION_ID"));
+        assert!(CAPTURED_ENV.contains(&"PROOFSHIP_WEB"));
     }
 
     #[test]

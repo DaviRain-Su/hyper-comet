@@ -23,8 +23,18 @@ const MAX_TEXT: usize = 4096;
 
 /// Hosted ProofShip coordinator (Cloudflare Worker, 2026-08-13).
 pub const DEFAULT_PROOFSHIP_RELAY: &str = "https://proofship-relay.davirain-yin.workers.dev";
-/// Hosted Sessions viewer (Cloudflare Pages).
+/// Fallback web Sessions origin when `PROOFSHIP_WEB` is unset.
+/// Production frontend is the Vercel app; set `PROOFSHIP_WEB` to that URL.
 pub const DEFAULT_PROOFSHIP_WEB: &str = "https://proofship-web.pages.dev";
+
+/// Public Sessions site. `PROOFSHIP_WEB` wins (Vercel production / preview).
+pub fn hosted_web_base() -> String {
+    std::env::var("PROOFSHIP_WEB")
+        .ok()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_PROOFSHIP_WEB.trim_end_matches('/').to_string())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelayIdentity {
@@ -36,8 +46,8 @@ pub struct RelayIdentity {
 impl RelayIdentity {
     pub fn web_url(&self) -> String {
         format!(
-            "{}/?relay={}&session={}",
-            DEFAULT_PROOFSHIP_WEB.trim_end_matches('/'),
+            "{}/sessions?relay={}&session={}",
+            hosted_web_base(),
             urlencoding_encode(&self.base),
             urlencoding_encode(&self.session_id)
         )
@@ -537,6 +547,7 @@ mod tests {
         assert_eq!(id.device_id, "abc-123");
         assert_eq!(id.session_id, "desktop-abc-123");
         assert!(id.web_url().contains("session=desktop-abc-123"));
+        assert!(id.web_url().contains("/sessions?"));
         assert!(id.web_url().starts_with(DEFAULT_PROOFSHIP_WEB));
     }
 

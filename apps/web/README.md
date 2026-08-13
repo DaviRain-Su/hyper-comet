@@ -1,15 +1,12 @@
 # ProofShip web
 
-Landing + remote Sessions panel. The agent and ProofForge gate run on
-your computer. This page is a thin relay viewer.
+Landing + remote Sessions panel. **Deploy this app on Vercel.**
+The Cloudflare Worker (`proofship-relay`) stays the message pipe;
+this frontend is not a Cloudflare Pages project.
 
-Not a replacement for the live Cloudflare viewer at
-[proofship-web.pages.dev](https://proofship-web.pages.dev) —
-that stays in [`proofship/web`](../../proofship/web). This app is the
-branded companion: marketing site, login, and a Sessions console that
-can attach a desktop room (`?relay=&session=`).
-
-**Deploy keys never transit the web.**
+The agent and ProofForge gate run on the user's computer. This page
+attaches a desktop room (`?relay=&session=`). **Deploy keys never
+transit the web.**
 
 ## Surfaces
 
@@ -25,3 +22,29 @@ cd apps/web
 npm install
 npm run dev          # http://127.0.0.1:8080
 ```
+
+## Deploy on Vercel
+
+1. New Project → import this GitHub repo.
+2. **Root Directory:** `apps/web` (not the repo root).
+3. Build is already `npm run build` (Vite + Nitro `vercel` preset).
+4. Environment variables:
+
+| Name | Required | Notes |
+| --- | --- | --- |
+| `BETTER_AUTH_URL` | yes in prod | `https://<your-app>.vercel.app` (no trailing slash) |
+| `BETTER_AUTH_SECRET` | yes in prod | long random string |
+| `DATABASE_URL` | recommended | Vercel Postgres / Neon. Unset = PGLite (wiped on cold start) |
+
+5. After the first deploy, on the machine running the daemon:
+
+```sh
+export PROOFSHIP_WEB=https://<your-app>.vercel.app
+# then reinstall so the unit keeps the URL
+cargo run -p comet -- daemon install
+cargo run -p comet -- agent url
+```
+
+`comet agent url` will then open **this** Vercel site with
+`?relay=…&session=desktop-…`. Relay stays
+`https://proofship-relay.davirain-yin.workers.dev`.
