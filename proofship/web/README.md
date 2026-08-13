@@ -11,7 +11,8 @@ deploy keys.
 - Composer → `cmd.prompt` / `cmd.steer` / `cmd.cancel`
 - Deploy → `cmd.deploy` (UserExecutor only; platform refused by relay)
 - Interact → viem `eth_call` + `window.ethereum` writes; fill from snapshot
-- Account → **Sign in with wallet** (SIWE on the relay); mint a read-only share URL
+- Account → SIWE login, Personal/workspace **orgs**, invite members, claim a session
+- Share links with role `readonly` / `comment` / `command`
 - ProofForge HTTP MCP panel for **external IDE agents** (not the main chat)
 
 ## Local

@@ -16,6 +16,7 @@ export type EventKind =
   | "executor.offline"
   | "executor.refused"
   | "deploy.done"
+  | "session.comment"
   | "note";
 
 export interface EngineEventMessage {
@@ -60,7 +61,17 @@ export interface DeployCommand {
   executor?: "user" | "platform";
 }
 
-export type CommandMessage = PromptCommand | CancelCommand | SteerCommand | DeployCommand;
+export interface CommentCommand {
+  type: "cmd.comment";
+  text: string;
+}
+
+export type CommandMessage =
+  | PromptCommand
+  | CancelCommand
+  | SteerCommand
+  | DeployCommand
+  | CommentCommand;
 
 export interface SessionState {
   sessionId?: string;
@@ -174,6 +185,7 @@ export const SHARE_ALLOWED_EVENT_KINDS = [
   "gate.done",
   "artifact.sealed",
   "deploy.done",
+  "session.comment",
   "note",
 ] as const;
 
@@ -235,6 +247,10 @@ export function parseViewerCommand(raw: unknown): CommandMessage | null {
     if (raw.executor === "user" || raw.executor === "platform") command.executor = raw.executor;
     return command;
   }
+  if (raw.type === "cmd.comment") {
+    if (typeof raw.text !== "string" || !raw.text.trim()) return null;
+    return { type: "cmd.comment", text: raw.text };
+  }
   return null;
 }
 
@@ -246,6 +262,9 @@ export function resolveExecutor(
   command: CommandMessage,
   preferredExecutor?: "user" | "platform",
 ): "user" | "platform" {
+  if (command.type === "cmd.comment") {
+    return "user";
+  }
   if (command.type === "cmd.deploy") {
     return "user";
   }
@@ -279,7 +298,8 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
     case "session.user":
     case "session.agent":
     case "session.tool":
-    case "session.done": {
+    case "session.done":
+    case "session.comment": {
       const transcript = Array.isArray(next.transcript) ? [...next.transcript] : [];
       transcript.push({ kind: event.kind, payload: event.payload, ts: event.ts });
       next.transcript = transcript.slice(-MAX_TRANSCRIPT);

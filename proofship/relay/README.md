@@ -23,7 +23,18 @@ GET  /api/auth/siwe/nonce?address=0x…&chainId=1952
 POST /api/auth/siwe/verify          { message, signature } → { token, address, expiresAt }
 GET  /api/auth/me                   Authorization: Bearer <token>
 POST /api/auth/logout
-POST /api/sessions/:id/share        mint a readonly share token (signed-in)
+POST /api/sessions/:id/share        { role?: readonly|comment|command }
+GET  /api/orgs
+POST /api/orgs                      { name }
+POST /api/orgs/:id/select
+GET  /api/orgs/:id/members
+POST /api/orgs/:id/members          { address, role?: admin|member }
+DELETE /api/orgs/:id/members?address=
+POST /api/sessions/:id/claim        bind room to the active org
+POST /api/sessions/:id/comments     { text }  (comment or command role)
+
+Share roles: `readonly` observe · `comment` transcript notes (no executor) ·
+`command` prompt/steer/cancel/deploy. Org members of a claimed room get command.
 ```
 
 Sessions persist in D1 when `DB` is bound (`schema.sql`); otherwise an in-memory

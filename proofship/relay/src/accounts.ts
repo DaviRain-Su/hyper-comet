@@ -12,7 +12,8 @@ export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const NONCE_TTL_MS = 10 * 60 * 1000;
 export const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type ShareRole = "readonly";
+export type ShareRole = "readonly" | "comment" | "command";
+export type OrgMemberRole = "owner" | "admin" | "member";
 
 export interface AccountUser {
   id: string;
@@ -24,6 +25,7 @@ export interface AccountSession {
   userId: string;
   address: string;
   expiresAt: string;
+  orgId?: string;
 }
 
 export interface AccountShare {
@@ -33,22 +35,59 @@ export interface AccountShare {
   expiresAt: string;
 }
 
+export interface AccountOrg {
+  id: string;
+  name: string;
+  createdAt: string;
+  createdBy: string;
+}
+
+export interface OrgMember {
+  orgId: string;
+  userId: string;
+  address: string;
+  role: OrgMemberRole;
+  createdAt: string;
+}
+
+export interface RoomGrant {
+  sessionId: string;
+  orgId: string;
+  ownerId: string;
+  claimedAt: string;
+}
+
 export interface AccountStore {
   putNonce(address: string, nonce: string, expiresAt: string): Promise<void>;
   takeNonce(address: string): Promise<{ nonce: string; expiresAt: string } | null>;
   upsertUser(address: string, now: string): Promise<AccountUser>;
+  getUser(userId: string): Promise<AccountUser | null>;
+  getUserByAddress(address: string): Promise<AccountUser | null>;
   putSession(tokenHash: string, session: AccountSession): Promise<void>;
   getSession(tokenHash: string): Promise<AccountSession | null>;
   deleteSession(tokenHash: string): Promise<void>;
   putShare(tokenHash: string, share: AccountShare): Promise<void>;
   getShare(tokenHash: string): Promise<AccountShare | null>;
+  createOrg(org: AccountOrg): Promise<AccountOrg>;
+  getOrg(orgId: string): Promise<AccountOrg | null>;
+  listOrgsForUser(userId: string): Promise<AccountOrg[]>;
+  putMember(member: OrgMember): Promise<void>;
+  getMember(orgId: string, userId: string): Promise<OrgMember | null>;
+  listMembers(orgId: string): Promise<OrgMember[]>;
+  deleteMember(orgId: string, userId: string): Promise<void>;
+  putRoomGrant(grant: RoomGrant): Promise<void>;
+  getRoomGrant(sessionId: string): Promise<RoomGrant | null>;
 }
 
 export class MemoryAccountStore implements AccountStore {
   private nonces = new Map<string, { nonce: string; expiresAt: string }>();
   private users = new Map<string, AccountUser>();
+  private usersById = new Map<string, AccountUser>();
   private sessions = new Map<string, AccountSession>();
   private shares = new Map<string, AccountShare>();
+  private orgs = new Map<string, AccountOrg>();
+  private members = new Map<string, OrgMember>();
+  private rooms = new Map<string, RoomGrant>();
 
   async putNonce(address: string, nonce: string, expiresAt: string): Promise<void> {
     const key = normalizeAddress(address);
@@ -75,7 +114,18 @@ export class MemoryAccountStore implements AccountStore {
       createdAt: now,
     };
     this.users.set(normalized, user);
+    this.usersById.set(user.id, user);
     return user;
+  }
+
+  async getUser(userId: string): Promise<AccountUser | null> {
+    return this.usersById.get(userId) ?? null;
+  }
+
+  async getUserByAddress(address: string): Promise<AccountUser | null> {
+    const key = normalizeAddress(address);
+    if (!key) return null;
+    return this.users.get(key) ?? null;
   }
 
   async putSession(tokenHash: string, session: AccountSession): Promise<void> {
@@ -97,6 +147,88 @@ export class MemoryAccountStore implements AccountStore {
   async getShare(tokenHash: string): Promise<AccountShare | null> {
     return this.shares.get(tokenHash) ?? null;
   }
+
+  async createOrg(org: AccountOrg): Promise<AccountOrg> {
+    this.orgs.set(org.id, org);
+    return org;
+  }
+
+  async getOrg(orgId: string): Promise<AccountOrg | null> {
+    return this.orgs.get(orgId) ?? null;
+  }
+
+  async listOrgsForUser(userId: string): Promise<AccountOrg[]> {
+    const ids = [...this.members.values()]
+      .filter((m) => m.userId === userId)
+      .map((m) => m.orgId);
+    return ids
+      .map((id) => this.orgs.get(id))
+      .filter((org): org is AccountOrg => Boolean(org));
+  }
+
+  async putMember(member: OrgMember): Promise<void> {
+    this.members.set(`${member.orgId}:${member.userId}`, member);
+  }
+
+  async getMember(orgId: string, userId: string): Promise<OrgMember | null> {
+    return this.members.get(`${orgId}:${userId}`) ?? null;
+  }
+
+  async listMembers(orgId: string): Promise<OrgMember[]> {
+    return [...this.members.values()].filter((m) => m.orgId === orgId);
+  }
+
+  async deleteMember(orgId: string, userId: string): Promise<void> {
+    this.members.delete(`${orgId}:${userId}`);
+  }
+
+  async putRoomGrant(grant: RoomGrant): Promise<void> {
+    this.rooms.set(grant.sessionId, grant);
+  }
+
+  async getRoomGrant(sessionId: string): Promise<RoomGrant | null> {
+    return this.rooms.get(sessionId) ?? null;
+  }
+}
+
+export function personalOrgId(address: string): string {
+  return `org:${address}`;
+}
+
+export async function ensurePersonalOrg(
+  store: AccountStore,
+  user: AccountUser,
+  now: string,
+): Promise<AccountOrg> {
+  const id = personalOrgId(user.address);
+  const existing = await store.getOrg(id);
+  if (existing) {
+    if (!(await store.getMember(id, user.id))) {
+      await store.putMember({
+        orgId: id,
+        userId: user.id,
+        address: user.address,
+        role: "owner",
+        createdAt: now,
+      });
+    }
+    return existing;
+  }
+  const org: AccountOrg = {
+    id,
+    name: "Personal",
+    createdAt: now,
+    createdBy: user.id,
+  };
+  await store.createOrg(org);
+  await store.putMember({
+    orgId: id,
+    userId: user.id,
+    address: user.address,
+    role: "owner",
+    createdAt: now,
+  });
+  return org;
 }
 
 export function sessionStillValid(session: AccountSession, nowMs: number): boolean {
@@ -164,6 +296,5 @@ export async function resolveShare(
   const share = await store.getShare(await hashToken(token));
   if (!share || !shareStillValid(share, nowMs)) return null;
   if (share.sessionId !== sessionId) return null;
-  if (share.role !== "readonly") return null;
   return share;
 }

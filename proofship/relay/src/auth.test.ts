@@ -141,6 +141,31 @@ describe("SIWE auth routes", () => {
     const share = (await mint!.json()) as { token: string; role: string };
     expect(share.role).toBe("readonly");
 
+    const commandMint = await handleAuth(
+      new Request("http://relay.test/api/sessions/demo-1/share", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ role: "command" }),
+      }),
+      {},
+      store,
+    );
+    const commandShare = (await commandMint!.json()) as { role: string };
+    expect(commandShare.role).toBe("command");
+
+    const orgs = await handleAuth(
+      new Request("http://relay.test/api/orgs", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    const orgBody = (await orgs!.json()) as { orgs: { name: string }[] };
+    expect(orgBody.orgs.some((o) => o.name === "Personal")).toBe(true);
+
     const url = new URL("http://relay.test/api/share/demo-1?token=" + share.token);
     expect(
       await shareAllowed(new Request(url), url, store, "demo-1", Date.now(), () => false),
@@ -157,6 +182,7 @@ describe("SIWE auth routes", () => {
         }),
         viewerUrl,
         store,
+        "demo-1",
         Date.now(),
         () => false,
       ),

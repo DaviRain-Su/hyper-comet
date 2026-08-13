@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryAccountStore,
+  ensurePersonalOrg,
   hashToken,
   resolveSession,
   resolveShare,
@@ -50,6 +51,28 @@ describe("MemoryAccountStore", () => {
     });
     expect(await resolveShare(store, shareToken, "sess-1", now)).not.toBeNull();
     expect(await resolveShare(store, shareToken, "other", now)).toBeNull();
+  });
+});
+
+describe("orgs", () => {
+  it("creates a personal org and accepts comment/command shares", async () => {
+    const store = new MemoryAccountStore();
+    const user = await store.upsertUser(ADDRESS, "t0");
+    const org = await ensurePersonalOrg(store, user, "t0");
+    expect(org.name).toBe("Personal");
+    expect(await store.getMember(org.id, user.id)).toMatchObject({ role: "owner" });
+    const again = await ensurePersonalOrg(store, user, "t1");
+    expect(again.id).toBe(org.id);
+
+    const token = "cmd-share";
+    await store.putShare(await hashToken(token), {
+      sessionId: "s1",
+      ownerId: user.id,
+      role: "command",
+      expiresAt: "2026-09-01T00:00:00.000Z",
+    });
+    const now = Date.parse("2026-08-13T00:00:00.000Z");
+    expect((await resolveShare(store, token, "s1", now))?.role).toBe("command");
   });
 });
 

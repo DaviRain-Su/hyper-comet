@@ -14,11 +14,19 @@
 }
 
 body.share-mode #executor-fieldset,
-body.share-mode #composer,
 body.share-mode #deploy-panel,
 body.share-mode #account-panel,
 body.share-mode #cancel,
 body.share-mode #disconnect {
+  display: none !important;
+}
+
+body.share-mode:not(.share-comment):not(.share-command) #composer {
+  display: none !important;
+}
+
+body.share-mode.share-comment:not(.share-command) #send-prompt,
+body.share-mode.share-comment:not(.share-command) #steer {
   display: none !important;
 }
 

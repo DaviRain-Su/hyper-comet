@@ -96,8 +96,8 @@
 |---|---|
 | 4.1 自托管 edge | 部署 `edge/`(Workers+DO+R2);`COMET_EDGE_URL` 指回自有域 |
 | 4.2 平台登录(多用户) | **SIWE 钱包登录** ✅ relay `/api/auth/siwe/*` + web Account 面板(钱包地址即账户;签名只作登录,不授部署钥)。WorkOS 邮箱/OAuth 仍在 `edge/`(同步基座)。D1 表已写 `schema.sql`,未绑定时走内存 store;生产需 `wrangler d1 create` 后绑定 |
-| 4.3 隔离与权限 | 每用户/每 org 空间隔离(org 门禁已内建于 workspace room 授权);relay 已支持 per-device token(W1);分享链接的权限策略(只读/可评论/可下命令)仍后置 |
-| 4.4 分享链接 | 只读视图 ✅ web `?share=1`;已登录用户可 `POST /api/sessions/:id/share` 铸造只读 token。评论/下命令分权仍后置 |
+| 4.3 隔离与权限 | **org + 分享角色** ✅ SIWE 登录创建 Personal org;可建 workspace、邀请已登录钱包(owner/admin/member)。Session 可 claim 到当前 org。分享角色 `readonly` / `comment` / `command`(评论只进 transcript,不驱动 executor) |
+| 4.4 分享链接 | ✅ `POST /api/sessions/:id/share` `{role}`;web 按 writeCap 显示观察 / 评论 / 命令 |
 | 4.5 托管 agent lane | 纯云端执行(pi 等 lane 的托管形态);按需 |
 
 ### Phase 5 — 生态与差异化

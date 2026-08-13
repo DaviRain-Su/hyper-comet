@@ -32,6 +32,13 @@ const els = {
   mintShare: document.getElementById("mint-share"),
   accountStatus: document.getElementById("account-status"),
   shareUrl: document.getElementById("share-url"),
+  shareRole: document.getElementById("share-role"),
+  orgSelect: document.getElementById("org-select"),
+  orgInvite: document.getElementById("org-invite"),
+  orgAdd: document.getElementById("org-add"),
+  orgMembers: document.getElementById("org-members"),
+  claimSession: document.getElementById("claim-session"),
+  sendComment: document.getElementById("send-comment"),
 };
 
 const params = new URLSearchParams(location.search);
@@ -145,10 +152,53 @@ function refreshAccountUi() {
   if (els.siweLogin) els.siweLogin.disabled = signedIn || isShareMode;
   if (els.siweLogout) els.siweLogout.disabled = !signedIn;
   if (els.mintShare) els.mintShare.disabled = !signedIn || isShareMode;
+  if (els.orgAdd) els.orgAdd.disabled = !signedIn || isShareMode;
+  if (els.claimSession) els.claimSession.disabled = !signedIn || isShareMode;
   if (signedIn) {
     setAccountStatus(`Signed in as ${session.address}`, "live");
+    void refreshOrgs();
   } else {
     setAccountStatus("Not signed in.");
+    if (els.orgSelect) els.orgSelect.innerHTML = "";
+    if (els.orgMembers) els.orgMembers.textContent = "";
+  }
+}
+
+async function authHeaders() {
+  const session = loadSession();
+  return session?.token ? { authorization: `Bearer ${session.token}` } : {};
+}
+
+async function refreshOrgs() {
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const session = loadSession();
+  if (!base || !session?.token || !els.orgSelect) return;
+  try {
+    const res = await fetch(`${base}/api/orgs`, { headers: await authHeaders() });
+    const body = await res.json();
+    if (!res.ok) return;
+    els.orgSelect.innerHTML = "";
+    for (const org of body.orgs ?? []) {
+      const opt = document.createElement("option");
+      opt.value = org.id;
+      opt.textContent = org.name;
+      if (org.id === (body.orgId || session.orgId)) opt.selected = true;
+      els.orgSelect.appendChild(opt);
+    }
+    const orgId = els.orgSelect.value;
+    if (orgId) {
+      const mem = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/members`, {
+        headers: await authHeaders(),
+      });
+      const memBody = await mem.json();
+      if (els.orgMembers) {
+        els.orgMembers.textContent = (memBody.members ?? [])
+          .map((m) => `${m.address} (${m.role})`)
+          .join(" · ");
+      }
+    }
+  } catch {
+    /* relay offline */
   }
 }
 
@@ -222,7 +272,11 @@ async function mintShareLink() {
   try {
     const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/share`, {
       method: "POST",
-      headers: { authorization: `Bearer ${session.token}` },
+      headers: {
+        authorization: `Bearer ${session.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ role: els.shareRole?.value || "readonly" }),
     });
     const body = await res.json();
     if (!res.ok || !body.token) {
@@ -245,6 +299,105 @@ async function mintShareLink() {
 if (els.siweLogin) els.siweLogin.addEventListener("click", () => void siweLogin());
 if (els.siweLogout) els.siweLogout.addEventListener("click", () => void siweLogout());
 if (els.mintShare) els.mintShare.addEventListener("click", () => void mintShareLink());
+if (els.orgAdd) {
+  els.orgAdd.addEventListener("click", async () => {
+    const base = els.relay.value.trim().replace(/\/$/, "");
+    const orgId = els.orgSelect?.value;
+    const address = els.orgInvite?.value.trim();
+    if (!base || !orgId || !address) {
+      setAccountStatus("Pick an org and enter a wallet that has signed in once.", "err");
+      return;
+    }
+    const res = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/members`, {
+      method: "POST",
+      headers: { ...(await authHeaders()), "content-type": "application/json" },
+      body: JSON.stringify({ address, role: "member" }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setAccountStatus(body.error || `Invite failed (${res.status})`, "err");
+      return;
+    }
+    if (els.orgInvite) els.orgInvite.value = "";
+    setAccountStatus("Member added.", "live");
+    await refreshOrgs();
+  });
+}
+if (els.orgSelect) {
+  els.orgSelect.addEventListener("change", async () => {
+    const base = els.relay.value.trim().replace(/\/$/, "");
+    const orgId = els.orgSelect.value;
+    if (!base || !orgId) return;
+    await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/select`, {
+      method: "POST",
+      headers: await authHeaders(),
+    });
+    await refreshOrgs();
+  });
+}
+if (els.claimSession) {
+  els.claimSession.addEventListener("click", async () => {
+    const base = els.relay.value.trim().replace(/\/$/, "");
+    const sessionId = els.session.value.trim();
+    if (!base || !sessionId) {
+      setAccountStatus("Set relay + session id first.", "err");
+      return;
+    }
+    const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/claim`, {
+      method: "POST",
+      headers: await authHeaders(),
+    });
+    const body = await res.json();
+    setAccountStatus(
+      res.ok ? `Claimed for org ${body.grant?.orgId ?? ""}` : body.error || "claim failed",
+      res.ok ? "live" : "err",
+    );
+  });
+}
+
+let shareAccess = isShareMode ? { role: "readonly", writeCap: "none" } : null;
+
+function applyShareAccessUi() {
+  const cap = shareAccess?.writeCap ?? "none";
+  document.body.classList.toggle("share-comment", cap === "comment" || cap === "command");
+  document.body.classList.toggle("share-command", cap === "command");
+  if (els.sendComment) els.sendComment.disabled = cap !== "comment" && cap !== "command";
+  if (shareAccess?.role) {
+    setStatus(`Share access: ${shareAccess.role}`, cap === "none" ? "" : "live");
+  }
+}
+
+async function sendComment() {
+  const text = els.prompt?.value.trim();
+  if (!text) return;
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "cmd.comment", text }));
+    els.prompt.value = "";
+    return;
+  }
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const sessionId = els.session.value.trim();
+  const token = params.get("shareToken") || params.get("token") || loadSession()?.token;
+  if (!base || !sessionId || !token) {
+    setStatus("Need relay, session, and a share/session token to comment.", "err");
+    return;
+  }
+  const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/comments`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  const body = await res.json();
+  if (!res.ok) {
+    setStatus(body.error || `Comment failed (${res.status})`, "err");
+    return;
+  }
+  els.prompt.value = "";
+  setStatus("Comment posted.", "live");
+  if (isShareMode) fetchShare();
+}
+
+if (els.sendComment) els.sendComment.addEventListener("click", () => void sendComment());
 refreshAccountUi();
 
 function updateExecutorPresence(state) {
@@ -258,11 +411,17 @@ function updateExecutorPresence(state) {
   const want = selectedExecutor();
   const online =
     want === "platform" ? Boolean(ex.platformOnline) : Boolean(ex.userOnline);
-  const canWrite = Boolean(socket && socket.readyState === WebSocket.OPEN && online);
+  const cap = shareAccess?.writeCap;
+  const canCommand =
+    cap === "command" ||
+    (!shareAccess && Boolean(socket && socket.readyState === WebSocket.OPEN && online));
+  const canComment = cap === "comment" || canCommand;
+  const canWrite = Boolean(socket && socket.readyState === WebSocket.OPEN && online && canCommand);
   els.sendPrompt.disabled = !canWrite;
   els.steer.disabled = !canWrite;
   els.cancel.disabled = !canWrite;
-  els.deploy.disabled = !(socket && socket.readyState === WebSocket.OPEN && ex.userOnline);
+  els.deploy.disabled = !(socket && socket.readyState === WebSocket.OPEN && ex.userOnline && canCommand);
+  if (els.sendComment) els.sendComment.disabled = !canComment;
 
   if (socket?.readyState === WebSocket.OPEN && !online) {
     setStatus(
@@ -303,6 +462,9 @@ function transcriptLine(kind, payload) {
   let body = "";
   if (kind === "session.user") body = payload?.text ?? JSON.stringify(payload);
   else if (kind === "session.agent") body = payload?.text ?? JSON.stringify(payload);
+  else if (kind === "session.comment") {
+    body = payload?.by ? `${payload.by}: ${payload.text ?? ""}` : (payload?.text ?? JSON.stringify(payload));
+  }
   else if (kind === "session.tool") body = JSON.stringify(payload?.call ?? payload);
   else if (kind === "session.done") body = JSON.stringify(payload);
   else body = JSON.stringify(payload);
@@ -409,6 +571,9 @@ async function fetchShare() {
       setStatus("Invalid share response from relay.", "err");
       return;
     }
+
+    shareAccess = data.access ?? { role: "readonly", writeCap: "none" };
+    applyShareAccessUi();
 
     const share = data.share ?? {};
     renderSnapshot({

@@ -9,12 +9,14 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import {
+  accessFor,
   getAccountStore,
   handleAuth,
   shareAllowed,
   viewerAllowed,
   withCors,
 } from "./auth";
+import { commandAllowedForCap, type WriteCap } from "./policy";
 import {
   PLATFORM_DEPLOY_REFUSAL,
   authorizeEngine,
@@ -79,6 +81,7 @@ interface QueuedCommand {
 interface SocketAttachment {
   role: Role;
   deviceId?: string;
+  writeCap?: WriteCap;
 }
 
 const MAX_EVENTS = 500;
@@ -163,6 +166,8 @@ export default {
           dualExecutor: true,
           accounts: true,
           siwe: true,
+          orgs: true,
+          shareRoles: ["readonly", "comment", "command"],
         }),
       );
     }
@@ -188,10 +193,16 @@ export default {
       const roomId = extractRoomId(url.pathname, prefix);
       if (request.method === "GET" && roomId !== null) {
         if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
-        if (!(await viewerAllowed(request, url, store, Date.now(), (u) => authorizeViewer(env, u)))) {
-          return unauthorized("invalid viewer token");
-        }
-        return forwardToRoom(request, env, roomId, "viewer");
+        const access = await accessFor(
+          request,
+          url,
+          store,
+          roomId,
+          Date.now(),
+          authorizeViewer(env, url),
+        );
+        if (!access.ok) return unauthorized("invalid viewer token");
+        return forwardToRoom(request, env, roomId, "viewer", undefined, access.writeCap);
       }
     }
 
@@ -201,7 +212,11 @@ export default {
     if (request.method === "GET" && stateMatch !== null) {
       const roomId = decodeURIComponent(stateMatch[1] ?? "");
       if (!roomId) return badRequest("missing session id");
-      if (!(await viewerAllowed(request, url, store, Date.now(), (u) => authorizeViewer(env, u)))) {
+      if (
+        !(await viewerAllowed(request, url, store, roomId, Date.now(), (u) =>
+          authorizeViewer(env, u),
+        ))
+      ) {
         return unauthorized("invalid viewer token");
       }
       const id = env.SESSION_ROOM.idFromName(roomId);
@@ -224,11 +239,56 @@ export default {
       ) {
         return unauthorized("invalid share token");
       }
+      const access = await accessFor(
+        request,
+        url,
+        store,
+        roomId,
+        Date.now(),
+        authorizeShare(env, url),
+      );
+      const id = env.SESSION_ROOM.idFromName(roomId);
+      const room = env.SESSION_ROOM.get(id);
+      const shared = await room.fetch(new Request(new URL("/share", request.url), { method: "GET" }));
+      const payload = (await shared.json()) as Record<string, unknown>;
+      payload.access = { role: access.role ?? "readonly", writeCap: access.writeCap };
+      return withCors(request, json(payload));
+    }
+
+    const commentMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/comments$/u);
+    if (request.method === "POST" && commentMatch) {
+      const roomId = decodeURIComponent(commentMatch[1] ?? "");
+      if (!roomId) return badRequest("missing session id");
+      const access = await accessFor(
+        request,
+        url,
+        store,
+        roomId,
+        Date.now(),
+        authorizeViewer(env, url),
+      );
+      if (!access.ok || !commandAllowedForCap(access.writeCap, "cmd.comment")) {
+        return unauthorized("comment role required");
+      }
+      let text = "";
+      try {
+        const body = (await request.json()) as { text?: unknown };
+        if (typeof body.text === "string") text = body.text.trim();
+      } catch {
+        return badRequest("invalid json");
+      }
+      if (!text) return badRequest("text required");
       const id = env.SESSION_ROOM.idFromName(roomId);
       const room = env.SESSION_ROOM.get(id);
       return withCors(
         request,
-        await room.fetch(new Request(new URL("/share", request.url), { method: "GET" })),
+        await room.fetch(
+          new Request(new URL("/comment", request.url), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text, by: access.address ?? "share" }),
+          }),
+        ),
       );
     }
 
@@ -242,6 +302,7 @@ async function forwardToRoom(
   roomId: string,
   role: Role,
   deviceId?: string,
+  writeCap?: WriteCap,
 ): Promise<Response> {
   if (!roomId) return badRequest("missing session id");
   const id = env.SESSION_ROOM.idFromName(roomId);
@@ -250,6 +311,7 @@ async function forwardToRoom(
   url.pathname = "/ws";
   const q = new URLSearchParams({ role });
   if (deviceId) q.set("deviceId", deviceId);
+  if (writeCap) q.set("writeCap", writeCap);
   url.search = `?${q.toString()}`;
   return room.fetch(new Request(url, request));
 }
@@ -278,6 +340,25 @@ export class SessionRoom extends DurableObject<Env> {
       return json(redactSharePayload(this.state, this.events, this.sessionId, SNAPSHOT_TAIL));
     }
 
+    if (request.method === "POST" && url.pathname === "/comment") {
+      let text = "";
+      let by = "share";
+      try {
+        const body = (await request.json()) as { text?: unknown; by?: unknown };
+        if (typeof body.text === "string") text = body.text.trim();
+        if (typeof body.by === "string" && body.by.trim()) by = body.by.trim();
+      } catch {
+        return badRequest("invalid json");
+      }
+      if (!text) return badRequest("text required");
+      await this.appendEvent({
+        type: "event",
+        kind: "session.comment",
+        payload: { text, by },
+      });
+      return json({ ok: true });
+    }
+
     if (request.method === "GET" && url.pathname === "/ws") {
       if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
       const role = url.searchParams.get("role");
@@ -285,10 +366,15 @@ export class SessionRoom extends DurableObject<Env> {
         return badRequest("invalid role");
       }
       const deviceId = url.searchParams.get("deviceId") ?? undefined;
+      const writeRaw = url.searchParams.get("writeCap");
+      const writeCap: WriteCap =
+        writeRaw === "none" || writeRaw === "comment" || writeRaw === "command"
+          ? writeRaw
+          : "command";
 
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-      server.serializeAttachment({ role, deviceId } satisfies SocketAttachment);
+      server.serializeAttachment({ role, deviceId, writeCap } satisfies SocketAttachment);
 
       if (role === "engine" || role === "platform") {
         for (const socket of this.socketsFor(role)) {
@@ -345,6 +431,19 @@ export class SessionRoom extends DurableObject<Env> {
       sendJson(ws, { type: "error", error: "invalid viewer command" });
       return;
     }
+    const cap = attachment.writeCap ?? "command";
+    if (!commandAllowedForCap(cap, command.type)) {
+      sendJson(ws, { type: "error", error: "share role cannot send that command" });
+      return;
+    }
+    if (command.type === "cmd.comment") {
+      await this.appendEvent({
+        type: "event",
+        kind: "session.comment",
+        payload: { text: command.text },
+      });
+      return;
+    }
     await this.enqueueCommand(command);
   }
 
@@ -388,7 +487,11 @@ export class SessionRoom extends DurableObject<Env> {
       attachment?.role === "viewer" ||
       attachment?.role === "platform"
     ) {
-      return { role: attachment.role, deviceId: attachment.deviceId };
+      return {
+        role: attachment.role,
+        deviceId: attachment.deviceId,
+        writeCap: attachment.writeCap,
+      };
     }
     return { role: "viewer" };
   }

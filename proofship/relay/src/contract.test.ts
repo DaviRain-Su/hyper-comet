@@ -81,6 +81,14 @@ describe("parseViewerCommand", () => {
     expect(parseViewerCommand({ type: "cmd.deploy", module: "m" })).toBeNull();
   });
 
+  it("parses cmd.comment", () => {
+    expect(parseViewerCommand({ type: "cmd.comment", text: "looks good" })).toEqual({
+      type: "cmd.comment",
+      text: "looks good",
+    });
+    expect(parseViewerCommand({ type: "cmd.comment", text: "  " })).toBeNull();
+  });
+
   it("rejects unknown types", () => {
     expect(parseViewerCommand({ type: "cmd.unknown" })).toBeNull();
     expect(parseViewerCommand(null)).toBeNull();

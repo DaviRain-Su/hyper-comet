@@ -11,12 +11,20 @@ import {
   SHARE_TTL_MS,
   type AccountStore,
   bearerFromRequest,
+  ensurePersonalOrg,
   hashToken,
   randomToken,
   resolveSession,
   resolveShare,
   tokenFromUrl,
 } from "./accounts";
+import {
+  canManageMembers,
+  parseOrgMemberRole,
+  parseShareRole,
+  resolveViewerAccess,
+  type WriteCap,
+} from "./policy";
 import { D1AccountStore, type D1Like } from "./d1";
 import { MemoryAccountStore } from "./accounts";
 import {
@@ -183,18 +191,21 @@ export async function handleAuth(
     }
     const now = new Date(nowMs).toISOString();
     const user = await store.upsertUser(fields.address, now);
+    const org = await ensurePersonalOrg(store, user, now);
     const token = randomToken(32);
     const expiresAt = new Date(nowMs + SESSION_TTL_MS).toISOString();
     await store.putSession(await hashToken(token), {
       userId: user.id,
       address: user.address,
       expiresAt,
+      orgId: org.id,
     });
     return json({
       ok: true,
       token,
       address: user.address,
       userId: user.id,
+      orgId: org.id,
       expiresAt,
     });
   }
@@ -206,10 +217,13 @@ export async function handleAuth(
       nowMs,
     );
     if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    const orgs = await store.listOrgsForUser(session.userId);
     return json({
       ok: true,
       address: session.address,
       userId: session.userId,
+      orgId: session.orgId ?? orgs[0]?.id,
+      orgs,
       expiresAt: session.expiresAt,
     });
   }
@@ -230,21 +244,193 @@ export async function handleAuth(
       nowMs,
     );
     if (!session) return json({ ok: false, error: "sign in to mint a share link" }, 401);
+    let role = parseShareRole("readonly") ?? "readonly";
+    try {
+      const body = await request.json().catch(() => ({}));
+      if (isRecord(body) && body.role !== undefined) {
+        const parsed = parseShareRole(body.role);
+        if (!parsed) return json({ ok: false, error: "role must be readonly|comment|command" }, 400);
+        role = parsed;
+      }
+    } catch {
+      /* empty body is readonly */
+    }
+    const access = await resolveViewerAccess(store, bearerFromRequest(request) ?? tokenFromUrl(url), sessionId, nowMs, false);
+    if (!access.ok || access.writeCap !== "command") {
+      return json({ ok: false, error: "only org members can mint share links" }, 403);
+    }
     const token = randomToken(24);
     const expiresAt = new Date(nowMs + SHARE_TTL_MS).toISOString();
     await store.putShare(await hashToken(token), {
       sessionId,
       ownerId: session.userId,
-      role: "readonly",
+      role,
       expiresAt,
     });
     return json({
       ok: true,
       token,
       sessionId,
-      role: "readonly",
+      role,
       expiresAt,
     });
+  }
+
+  const orgHandled = await handleOrgRoutes(request, url, store, nowMs);
+  if (orgHandled) return orgHandled;
+
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function requireSession(
+  request: Request,
+  url: URL,
+  store: AccountStore,
+  nowMs: number,
+) {
+  return resolveSession(store, bearerFromRequest(request) ?? tokenFromUrl(url), nowMs);
+}
+
+async function handleOrgRoutes(
+  request: Request,
+  url: URL,
+  store: AccountStore,
+  nowMs: number,
+): Promise<Response | null> {
+  if (request.method === "GET" && url.pathname === "/api/orgs") {
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    const orgs = await store.listOrgsForUser(session.userId);
+    return json({ ok: true, orgId: session.orgId, orgs });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/orgs") {
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    let name = "Workspace";
+    try {
+      const body = await request.json();
+      if (isRecord(body) && typeof body.name === "string" && body.name.trim()) {
+        name = body.name.trim().slice(0, 80);
+      }
+    } catch {
+      /* default name */
+    }
+    const now = new Date(nowMs).toISOString();
+    const org = await store.createOrg({
+      id: `org:${randomToken(8)}`,
+      name,
+      createdAt: now,
+      createdBy: session.userId,
+    });
+    await store.putMember({
+      orgId: org.id,
+      userId: session.userId,
+      address: session.address,
+      role: "owner",
+      createdAt: now,
+    });
+    return json({ ok: true, org });
+  }
+
+  const select = url.pathname.match(/^\/api\/orgs\/([^/]+)\/select$/u);
+  if (request.method === "POST" && select) {
+    const orgId = decodeURIComponent(select[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    if (!orgId || !(await store.getMember(orgId, session.userId))) {
+      return json({ ok: false, error: "not a member of that org" }, 403);
+    }
+    const raw = bearerFromRequest(request) ?? tokenFromUrl(url);
+    if (raw) {
+      await store.putSession(await hashToken(raw), { ...session, orgId });
+    }
+    return json({ ok: true, orgId });
+  }
+
+  const membersPath = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members$/u);
+  if (membersPath) {
+    const orgId = decodeURIComponent(membersPath[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    const self = await store.getMember(orgId, session.userId);
+    if (!self) return json({ ok: false, error: "not a member of that org" }, 403);
+    if (request.method === "GET") {
+      return json({ ok: true, orgId, members: await store.listMembers(orgId) });
+    }
+    if (request.method === "POST") {
+      if (!canManageMembers(self.role)) {
+        return json({ ok: false, error: "only owner/admin can add members" }, 403);
+      }
+      let body: unknown;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ ok: false, error: "invalid json" }, 400);
+      }
+      if (!isRecord(body) || typeof body.address !== "string") {
+        return json({ ok: false, error: "address required" }, 400);
+      }
+      const invited = await store.getUserByAddress(body.address);
+      if (!invited) {
+        return json({ ok: false, error: "invitee must sign in with SIWE once first" }, 404);
+      }
+      const role = parseOrgMemberRole(body.role) ?? "member";
+      if (role === "owner") {
+        return json({ ok: false, error: "cannot grant owner via invite" }, 400);
+      }
+      await store.putMember({
+        orgId,
+        userId: invited.id,
+        address: invited.address,
+        role,
+        createdAt: new Date(nowMs).toISOString(),
+      });
+      return json({ ok: true, member: await store.getMember(orgId, invited.id) });
+    }
+    if (request.method === "DELETE") {
+      if (!canManageMembers(self.role)) {
+        return json({ ok: false, error: "only owner/admin can remove members" }, 403);
+      }
+      const address = url.searchParams.get("address") ?? "";
+      const target = await store.getUserByAddress(address);
+      if (!target) return json({ ok: false, error: "unknown member" }, 404);
+      const existing = await store.getMember(orgId, target.id);
+      if (!existing) return json({ ok: false, error: "not a member" }, 404);
+      if (existing.role === "owner") {
+        return json({ ok: false, error: "cannot remove the owner" }, 400);
+      }
+      await store.deleteMember(orgId, target.id);
+      return json({ ok: true });
+    }
+  }
+
+  const claim = url.pathname.match(/^\/api\/sessions\/([^/]+)\/claim$/u);
+  if (request.method === "POST" && claim) {
+    const sessionId = decodeURIComponent(claim[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    if (!sessionId) return json({ ok: false, error: "missing session id" }, 400);
+    const orgId = session.orgId;
+    if (!orgId || !(await store.getMember(orgId, session.userId))) {
+      return json({ ok: false, error: "select an org first" }, 400);
+    }
+    const existing = await store.getRoomGrant(sessionId);
+    if (existing && existing.orgId !== orgId) {
+      return json({ ok: false, error: "session already claimed by another org" }, 403);
+    }
+    const grant = existing ?? {
+      sessionId,
+      orgId,
+      ownerId: session.userId,
+      claimedAt: new Date(nowMs).toISOString(),
+    };
+    if (!existing) await store.putRoomGrant(grant);
+    return json({ ok: true, grant });
   }
 
   return null;
@@ -254,16 +440,18 @@ export async function viewerAllowed(
   request: Request,
   url: URL,
   store: AccountStore,
+  sessionId: string,
   nowMs: number,
   fallback: (url: URL) => boolean,
 ): Promise<boolean> {
-  const session = await resolveSession(
+  const access = await resolveViewerAccess(
     store,
     bearerFromRequest(request) ?? tokenFromUrl(url),
+    sessionId,
     nowMs,
+    fallback(url),
   );
-  if (session) return true;
-  return fallback(url);
+  return access.ok;
 }
 
 export async function shareAllowed(
@@ -274,9 +462,33 @@ export async function shareAllowed(
   nowMs: number,
   fallback: (url: URL) => boolean,
 ): Promise<boolean> {
-  const token = tokenFromUrl(url) ?? bearerFromRequest(request);
-  if (await resolveShare(store, token, sessionId, nowMs)) return true;
-  const session = await resolveSession(store, token, nowMs);
-  if (session) return true;
-  return fallback(url);
+  const access = await resolveViewerAccess(
+    store,
+    tokenFromUrl(url) ?? bearerFromRequest(request),
+    sessionId,
+    nowMs,
+    fallback(url),
+  );
+  return access.ok;
+}
+
+export async function accessFor(
+  request: Request,
+  url: URL,
+  store: AccountStore,
+  sessionId: string,
+  nowMs: number,
+  fallbackOpen: boolean,
+): Promise<import("./policy").ViewerAccess> {
+  return resolveViewerAccess(
+    store,
+    bearerFromRequest(request) ?? tokenFromUrl(url),
+    sessionId,
+    nowMs,
+    fallbackOpen,
+  );
+}
+
+export function writeCapQuery(cap: WriteCap): string {
+  return cap;
 }
