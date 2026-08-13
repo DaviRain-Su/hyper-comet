@@ -27,11 +27,17 @@ export type Harness = {
   enabled?: boolean;
 };
 
+export function looksLikeDeviceRoom(id: string) {
+  return /^desktop-[a-z0-9-]+$/i.test(id.trim());
+}
+
 export type RelaySnapshot = {
   state?: Record<string, unknown>;
   tail?: RelayEvent[];
   transcript?: RelayEvent[];
   queueDepth?: number;
+  harnesses?: Harness[];
+  preferredLane?: string;
   executors?:
     | RelayExecutor[]
     | Record<string, RelayExecutor | unknown>
@@ -176,6 +182,22 @@ export function desktopFrom(snapshot: RelaySnapshot | null): RelayExecutor | nul
   );
 }
 
+/** GET /state wraps the room as `{ state, tail, presence }`. WS snapshots are the inner state. */
+export function unwrapRelayPayload(raw: unknown): RelaySnapshot {
+  const rec = asRecord(raw);
+  if (!rec) return {};
+  const inner = asRecord(rec.state);
+  const hoisted = inner ? { ...rec, ...inner } : rec;
+  const executors = hoisted.executors ?? rec.presence ?? inner?.executors;
+  return {
+    ...hoisted,
+    state: rec.state ?? rec,
+    tail: Array.isArray(rec.tail) ? (rec.tail as RelayEvent[]) : hoisted.tail,
+    executors: (executors as RelaySnapshot["executors"]) ?? undefined,
+    launch: (hoisted.launch ?? inner?.launch) as RelaySnapshot["launch"],
+  };
+}
+
 export function platformFrom(snapshot: RelaySnapshot | null): RelayExecutor | null {
   return normalizeExecutors(snapshot?.executors).find((e) => e.role === "platform") ?? null;
 }
@@ -187,12 +209,18 @@ export function viewerCount(snapshot: RelaySnapshot | null): number {
 }
 
 export function harnessesFrom(snapshot: RelaySnapshot | null): Harness[] {
-  const launch = snapshot?.launch ?? (asRecord(snapshot?.state)?.launch as RelaySnapshot["launch"]);
+  if (snapshot?.launch?.harnesses?.length) return snapshot.launch.harnesses;
+  if (snapshot?.harnesses?.length) return snapshot.harnesses;
+  const inner = asRecord(snapshot?.state);
+  const launch = inner?.launch as RelaySnapshot["launch"] | undefined;
   if (launch?.harnesses?.length) return launch.harnesses;
+  const nested = inner?.harnesses;
+  if (Array.isArray(nested) && nested.length) return nested as Harness[];
   return DEFAULT_HARNESSES;
 }
 
 export function defaultHarness(snapshot: RelaySnapshot | null): string {
+  if (snapshot?.preferredLane) return snapshot.preferredLane;
   const launch = snapshot?.launch ?? (asRecord(snapshot?.state)?.launch as RelaySnapshot["launch"]);
   return launch?.defaultId || loadHarness();
 }
@@ -221,13 +249,13 @@ export async function fetchSessionState(
     { credentials: "omit" },
   );
   if (!res.ok) throw new Error(`relay ${res.status}`);
-  return (await res.json()) as RelaySnapshot;
+  return unwrapRelayPayload(await res.json());
 }
 
 export type ViewerCommand =
   | { type: "cmd.prompt"; nl: string; lane: string; executor: ExecutorKind }
   | { type: "cmd.steer"; nl: string }
-  | { type: "cmd.comment"; nl: string }
+  | { type: "cmd.comment"; text: string }
   | { type: "cmd.cancel" }
   | {
       type: "cmd.deploy";

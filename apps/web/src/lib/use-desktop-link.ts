@@ -10,10 +10,12 @@ import {
   loadHarness,
   loadLastRoom,
   loadRelayUrl,
+  looksLikeDeviceRoom,
   platformFrom,
   saveHarness,
   saveLastRoom,
   saveRelayUrl,
+  unwrapRelayPayload,
   viewerCount,
   wsUrl,
   type ExecutorKind,
@@ -93,7 +95,13 @@ export function useDesktopLink(
     const seededRelay = seed?.relay || loadRelayUrl();
     setRelayUrlState(seededRelay);
     if (seed?.relay) saveRelayUrl(seed.relay);
-    const room = seed?.session || roomFromSession || loadLastRoom();
+    const fromRoute =
+      roomFromSession && looksLikeDeviceRoom(roomFromSession) ? roomFromSession : "";
+    const last = loadLastRoom();
+    const room =
+      seed?.session ||
+      fromRoute ||
+      (looksLikeDeviceRoom(last) ? last : "");
     if (room) setRoomIdState(room);
     setHarnessState(loadHarness());
   }, [roomFromSession, seed?.relay, seed?.session]);
@@ -181,7 +189,9 @@ export function useDesktopLink(
               event?: RelayEvent;
               error?: string;
             };
-            if (msg.type === "snapshot" && msg.state) ingestSnapshot(msg.state);
+            if (msg.type === "snapshot" && msg.state) {
+              ingestSnapshot(unwrapRelayPayload(msg.state));
+            }
             if (msg.type === "event" && msg.event?.kind) {
               setLiveEvents((prev) => [...prev, msg.event as RelayEvent]);
             }
@@ -202,8 +212,8 @@ export function useDesktopLink(
 
   useEffect(() => {
     if (didAuto.current) return;
-    const room = seed?.session || roomId;
-    if (seed?.session && room) {
+    const room = (seed?.session || roomId).trim();
+    if (room && looksLikeDeviceRoom(room)) {
       didAuto.current = true;
       connect(room);
     }
@@ -219,7 +229,7 @@ export function useDesktopLink(
 
   const desktop = desktopFrom(snapshot);
   const platform = platformFrom(snapshot);
-  const desktopOnline = Boolean(desktop?.online) || liveEvents.some((e) => e.kind === "executor.online");
+  const desktopOnline = Boolean(desktop?.online);
   const platformOnline = Boolean(platform?.online);
   const relayOk = status === "live" || status === "connecting";
   const harnesses = harnessesFrom(snapshot);
@@ -259,7 +269,7 @@ export function useDesktopLink(
     sendPrompt: (nl: string) =>
       send({ type: "cmd.prompt", nl, lane: harness, executor }),
     sendSteer: (nl: string) => send({ type: "cmd.steer", nl }),
-    sendComment: (nl: string) => send({ type: "cmd.comment", nl }),
+    sendComment: (nl: string) => send({ type: "cmd.comment", text: nl }),
     sendCancel: () => send({ type: "cmd.cancel" }),
     sendDeploy: (opts: { networkId: string; module: string; digest?: string }) =>
       send({

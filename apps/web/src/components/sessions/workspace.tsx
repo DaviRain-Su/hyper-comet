@@ -27,7 +27,7 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
   const { locale } = useLocale();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { relay?: string; session?: string };
-  const link = useDesktopLink(sessionId ?? search.session, {
+  const link = useDesktopLink(undefined, {
     relay: search.relay,
     session: search.session,
   });
@@ -84,8 +84,11 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
       const created = await createSession({ data: { title: "New session" } });
       await refreshList();
       setNavOpen(false);
-      link.setRoomId(created.id);
-      await navigate({ to: "/sessions/$sessionId", params: { sessionId: created.id } });
+      await navigate({
+        to: "/sessions/$sessionId",
+        params: { sessionId: created.id },
+        search: { relay: search.relay, session: search.session },
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed");
     } finally {
@@ -129,8 +132,14 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
       if (!id) {
         const created = await createSession({ data: { title: "New session" } });
         id = created.id;
-        link.setRoomId(id);
-        await navigate({ to: "/sessions/$sessionId", params: { sessionId: id }, search: {} });
+        await navigate({
+          to: "/sessions/$sessionId",
+          params: { sessionId: id },
+          search: {
+            relay: search.relay,
+            session: search.session,
+          },
+        });
       }
       try {
         if (mode === "steer") link.sendSteer(text);
@@ -163,8 +172,14 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
       if (!id) {
         const created = await createSession({ data: { title: "New session" } });
         id = created.id;
-        link.setRoomId(id);
-        await navigate({ to: "/sessions/$sessionId", params: { sessionId: id }, search: {} });
+        await navigate({
+          to: "/sessions/$sessionId",
+          params: { sessionId: id },
+          search: {
+            relay: search.relay,
+            session: search.session,
+          },
+        });
       }
       const bundle = await applyTemplate({ data: { sessionId: id, templateId, locale } });
       if (bundle) {

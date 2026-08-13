@@ -205,8 +205,8 @@ export function PairingCard({
           2.{" "}
           {pick(
             locale,
-            "Paste the desktop room (desktop-…) or open a shared ?relay=&session= link, then Connect.",
-            "粘贴桌面房间号（desktop-…）或打开共享的 ?relay=&session= 链接，然后点连接。",
+            "On the machine run `comet agent url` and open that link (session must be desktop-…). Then Connect if the lamps stay idle.",
+            "在那台机器上运行 `comet agent url`，打开打印出的链接（session 必须是 desktop-…）。灯还是灰的再点连接。",
           )}
         </li>
         <li>
