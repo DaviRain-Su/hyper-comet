@@ -76,7 +76,9 @@ export function SessionSidebar({
                     <span className="min-w-0">
                       <span className="line-clamp-2">{s.title}</span>
                       <span className="mt-1 block font-mono text-[10px] uppercase tracking-wider text-fg-subtle">
-                        {s.status}
+                        {s.deviceId
+                          ? `${s.status} · ${s.deviceId.slice(0, 8)}`
+                          : s.status}
                       </span>
                     </span>
                   </span>

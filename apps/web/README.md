@@ -5,8 +5,9 @@ The Cloudflare Worker (`proofship-relay`) stays the message pipe;
 this frontend is not a Cloudflare Pages project.
 
 The agent and ProofForge gate run on the user's computer. This page
-attaches a desktop room (`?relay=&session=`). **Deploy keys never
-transit the web.**
+attaches a desktop room (`?relay=&session=desktop-{deviceId}`).
+That room is bound to one computer and does not change when you
+click New session. **Deploy keys never transit the web.**
 
 ## Surfaces
 

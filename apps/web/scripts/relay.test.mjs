@@ -37,7 +37,15 @@ function normalizeExecutors(raw) {
 }
 
 function looksLikeDeviceRoom(id) {
-  return /^desktop-[a-z0-9-]+$/i.test(String(id).trim());
+  return /^desktop-[a-z0-9-]+$/i.test(String(id ?? "").trim());
+}
+
+function pickDeviceRoom(...candidates) {
+  for (const raw of candidates) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (id && looksLikeDeviceRoom(id)) return id;
+  }
+  return "";
 }
 
 test("GET /state wrap hoists userOnline so Desktop lamp can turn on", () => {
@@ -65,10 +73,28 @@ test("inner WS snapshot still reads executors", () => {
   assert.equal(normalizeExecutors(snap.executors)[0].online, true);
 });
 
+test("computer snapshot prefers bound desktop room", () => {
+  const snap = {
+    computer: {
+      deviceId: "ba8835a2-079e-45e2-9b97-035d0e4f7a78",
+      roomId: "desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78",
+      hostname: "davirain-SER9",
+    },
+  };
+  assert.equal(snap.computer.roomId.startsWith("desktop-"), true);
+  assert.equal(looksLikeDeviceRoom(snap.computer.roomId), true);
+});
+
 test("local chat UUIDs are not device rooms", () => {
+  assert.equal(looksLikeDeviceRoom("ba8835a2-079e-45e2-9b97-035d0e4f7a78"), false);
   assert.equal(looksLikeDeviceRoom("desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78"), true);
   assert.equal(looksLikeDeviceRoom("3f2c1b90-1111-2222-3333-444444444444"), false);
   assert.equal(looksLikeDeviceRoom(""), false);
+  assert.equal(
+    pickDeviceRoom("ba8835a2-079e-45e2-9b97-035d0e4f7a78", "desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78"),
+    "desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78",
+  );
+  assert.equal(pickDeviceRoom("new-session", "   "), "");
 });
 
 void createRequire;

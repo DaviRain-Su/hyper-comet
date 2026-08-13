@@ -34,7 +34,7 @@ pub use networks::{NetworkError, NetworkStore};
 pub use preview::StudioPreview;
 pub use relay::{
     DEFAULT_PROOFSHIP_RELAY, DEFAULT_PROOFSHIP_WEB, RelayCommand, RelayCommandKind, RelayIdentity,
-    StudioRelay, hosted_web_base, resolve_device_token, resolve_relay_base,
+    StudioRelay, device_room_id, hosted_web_base, resolve_device_token, resolve_relay_base,
     resolve_relay_identity,
 };
 pub use session_enrich::{SKILL_PROMPT_MARKER, enrich_sessions_run_request};

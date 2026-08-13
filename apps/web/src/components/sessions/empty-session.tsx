@@ -22,8 +22,8 @@ export function EmptySession({
       <p className="mt-3 max-w-[48ch] text-[14.5px] leading-relaxed text-fg-muted">
         {pick(
           locale,
-          "Web is the remote panel. Agent + gate stay on your desktop. Starters below are read-only previews — they do not call a cloud model.",
-          "Web 是远程面板。Agent 和门禁留在桌面。下面的模板只是只读预览——不会调用云端模型。",
+          "Web is the remote panel. One computer, one room (desktop-{deviceId}). New chats hang off that machine — they do not mint a new room. Starters below are read-only previews.",
+          "Web 是远程面板。一台电脑一个房间（desktop-{deviceId}）。新对话挂在这台机器上，不会另开房间。下面的模板只是只读预览。",
         )}
       </p>
 

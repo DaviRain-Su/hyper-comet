@@ -74,9 +74,18 @@ export type CommandMessage =
   | DeployCommand
   | CommentCommand;
 
+export interface ComputerInfo {
+  deviceId: string;
+  roomId: string;
+  hostname?: string;
+  os?: string;
+}
+
 export interface SessionState {
   sessionId?: string;
   preferredExecutor?: "user" | "platform";
+  /** Bound computer. Same install always owns `desktop-{deviceId}`. */
+  computer?: ComputerInfo;
   executors?: {
     userOnline?: boolean;
     platformOnline?: boolean;
@@ -305,6 +314,7 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
   switch (event.kind) {
     case "session.open":
       next.launch = event.payload;
+      applyComputer(next, event.payload);
       applyHarnessCatalog(next, event.payload);
       break;
     case "harness.catalog":
@@ -353,6 +363,7 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
           next.executors!.userLastSeenAt = event.ts;
           if (typeof event.payload.deviceId === "string") {
             next.executors!.userDeviceId = event.payload.deviceId;
+            applyComputer(next, event.payload);
           }
         }
       }
@@ -380,6 +391,36 @@ export function eventStatePatch(state: SessionState, event: StoredEvent): Sessio
   return next;
 }
 
+export function computerFromPayload(payload: unknown): ComputerInfo | undefined {
+  if (!isRecord(payload)) return undefined;
+  const deviceId =
+    typeof payload.deviceId === "string" && payload.deviceId.trim()
+      ? payload.deviceId.trim()
+      : "";
+  if (!deviceId) return undefined;
+  const roomId =
+    (typeof payload.roomId === "string" && payload.roomId.trim()) ||
+    (typeof payload.sessionId === "string" && payload.sessionId.startsWith("desktop-")
+      ? payload.sessionId.trim()
+      : "") ||
+    `desktop-${deviceId}`;
+  const computer: ComputerInfo = { deviceId, roomId };
+  if (typeof payload.hostname === "string" && payload.hostname.trim()) {
+    computer.hostname = payload.hostname.trim();
+  }
+  if (typeof payload.os === "string" && payload.os.trim()) {
+    computer.os = payload.os.trim();
+  }
+  return computer;
+}
+
+function applyComputer(state: SessionState, payload: unknown): void {
+  const computer = computerFromPayload(payload);
+  if (!computer) return;
+  state.computer = { ...(state.computer ?? {}), ...computer };
+  state.sessionId = computer.roomId;
+}
+
 function applyHarnessCatalog(state: SessionState, payload: unknown): void {
   if (!isRecord(payload)) return;
   if (Array.isArray(payload.harnesses)) {
@@ -402,13 +443,21 @@ export function overlayLiveExecutors(
   state: SessionState,
   live: LiveExecutorSockets,
 ): SessionState {
+  const userDeviceId = live.userDeviceId || state.executors?.userDeviceId;
+  const computer =
+    state.computer ??
+    (userDeviceId
+      ? { deviceId: userDeviceId, roomId: `desktop-${userDeviceId}` }
+      : undefined);
   return {
     ...state,
+    computer,
+    sessionId: state.sessionId || computer?.roomId,
     executors: {
       ...(state.executors ?? {}),
       userOnline: live.userOnline,
       platformOnline: live.platformOnline,
-      userDeviceId: live.userDeviceId || state.executors?.userDeviceId,
+      userDeviceId,
       viewerCount: live.viewerCount,
     },
   };

@@ -607,6 +607,10 @@ function updateExecutorPresence(state) {
   const sessionId = els.session?.value.trim() ?? "";
   const unknown = !isShareMode && !sessionId;
   const device = typeof ex.userDeviceId === "string" ? ex.userDeviceId : "";
+  const hostname =
+    (typeof state?.computer?.hostname === "string" && state.computer.hostname) ||
+    (typeof state?.launch?.hostname === "string" && state.launch.hostname) ||
+    "";
 
   setLamp(els.lampDesktop, userOn, unknown);
   setLamp(els.lampPlatform, platOn, unknown);
@@ -619,9 +623,11 @@ function updateExecutorPresence(state) {
     unknown
       ? "—"
       : userOn
-        ? device
-          ? `online · ${device}`
-          : "online"
+        ? hostname
+          ? `online · ${hostname}`
+          : device
+            ? `online · ${device}`
+            : "online"
         : userSeen
           ? `offline · ${userSeen}`
           : "offline",
@@ -635,7 +641,7 @@ function updateExecutorPresence(state) {
   if (els.deviceLine && els.deviceId) {
     if (device) {
       els.deviceLine.hidden = false;
-      els.deviceId.textContent = device;
+      els.deviceId.textContent = hostname ? `${hostname} · ${device}` : device;
     } else {
       els.deviceLine.hidden = true;
       els.deviceId.textContent = "";
@@ -701,7 +707,7 @@ function updateExecutorPresence(state) {
       hint.className = "status err";
     } else if (!sessionId.startsWith("desktop-") && want === "user") {
       hint.textContent =
-        "This session id is not a device room. Daemon rooms look like desktop-ba8835a2-…";
+        "This is not a device room. Daemon rooms look like desktop-ba8835a2-… A local session id will not light the desktop lamp.";
       hint.className = "status err";
     } else if (!userOn && want === "user") {
       hint.textContent =

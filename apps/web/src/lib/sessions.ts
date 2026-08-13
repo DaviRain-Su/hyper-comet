@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { authMiddleware } from "@/lib/auth/middleware";
 import { getSql, type Sql } from "@/lib/db";
 import { extractModule, gateSummary, runGate, type GateResult } from "@/lib/gate";
+import { looksLikeDeviceRoom } from "@/lib/relay";
 import { templateById } from "@/lib/templates";
 
 export type SessionStatus = "idle" | "running" | "failed" | "ready";
@@ -13,6 +14,9 @@ export type SessionRow = {
   source: string;
   moduleName: string | null;
   gate: GateResult | null;
+  /** Daemon room this chat is pinned to (`desktop-{deviceId}`). */
+  roomId: string | null;
+  deviceId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -34,9 +38,17 @@ type SessionDb = {
   source: string;
   module_name: string | null;
   gate_json: string | null;
+  room_id: string | null;
+  device_id: string | null;
   created_at: string;
   updated_at: string;
 };
+
+function deviceIdFromRoom(roomId: string | null | undefined) {
+  const room = roomId?.trim() ?? "";
+  if (!looksLikeDeviceRoom(room)) return null;
+  return room.slice("desktop-".length) || null;
+}
 
 type MessageDb = {
   id: string;
@@ -65,6 +77,8 @@ function mapSession(row: SessionDb): SessionRow {
     source: row.source,
     moduleName: row.module_name,
     gate,
+    roomId: row.room_id,
+    deviceId: row.device_id ?? deviceIdFromRoom(row.room_id),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -136,14 +150,16 @@ export const getSession = createServerFn({ method: "GET" })
 
 export const createSession = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator((input: { title?: string }) => input)
+  .validator((input: { title?: string; roomId?: string }) => input)
   .handler(async ({ context, data }) => {
     const sql = await getSql();
     const id = nid();
     const title = data.title?.trim() || "New session";
+    const roomId = looksLikeDeviceRoom(data.roomId ?? "") ? data.roomId!.trim() : null;
+    const deviceId = deviceIdFromRoom(roomId);
     await sql`
-      insert into ship_sessions (id, user_id, title, status)
-      values (${id}, ${context.userId}, ${title}, ${"idle"})
+      insert into ship_sessions (id, user_id, title, status, room_id, device_id)
+      values (${id}, ${context.userId}, ${title}, ${"idle"}, ${roomId}, ${deviceId})
     `;
     const rows = await sql<SessionDb>`
       select * from ship_sessions where id = ${id} and user_id = ${context.userId}
@@ -290,6 +306,26 @@ export const applyTemplate = createServerFn({ method: "POST" })
       where id = ${session.id} and user_id = ${context.userId}
     `;
     return loadBundle(sql, context.userId, session.id);
+  });
+
+/** Pin an existing chat to a computer room. Does not mint a new room. */
+export const bindSessionRoom = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator((input: { id: string; roomId: string }) => input)
+  .handler(async ({ context, data }) => {
+    const roomId = data.roomId.trim();
+    if (!looksLikeDeviceRoom(roomId)) throw new Error("Not a device room");
+    const deviceId = deviceIdFromRoom(roomId);
+    const sql = await getSql();
+    await sql`
+      update ship_sessions
+      set room_id = ${roomId},
+          device_id = ${deviceId},
+          updated_at = ${new Date().toISOString()}
+      where id = ${data.id} and user_id = ${context.userId}
+        and (room_id is null or room_id = ${roomId})
+    `;
+    return loadBundle(sql, context.userId, data.id);
   });
 
 export const renameSession = createServerFn({ method: "POST" })

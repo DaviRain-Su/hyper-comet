@@ -34,6 +34,12 @@ pub async fn status(config: EngineConfig) -> anyhow::Result<()> {
         println!("Session:  {}", report.session_id);
         if let Some(url) = &report.web_url {
             println!("Web:      {url}");
+            println!(
+                "Hint:     this room is bound to this machine (desktop-{{deviceId}})."
+            );
+            println!(
+                "          Open that exact link. Local chat UUIDs will not light the lamp."
+            );
         }
     }
     Ok(())

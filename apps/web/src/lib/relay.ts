@@ -27,8 +27,18 @@ export type Harness = {
   enabled?: boolean;
 };
 
+/** Daemon rooms are `desktop-{deviceId}`. PGLite / Vercel chat ids are UUIDs. */
 export function looksLikeDeviceRoom(id: string) {
   return /^desktop-[a-z0-9-]+$/i.test(id.trim());
+}
+
+/** First candidate that is a real UserExecutor room. Local session UUIDs lose. */
+export function pickDeviceRoom(...candidates: Array<string | undefined | null>) {
+  for (const raw of candidates) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (id && looksLikeDeviceRoom(id)) return id;
+  }
+  return "";
 }
 
 export type RelaySnapshot = {
@@ -54,6 +64,16 @@ export type RelaySnapshot = {
     role?: string;
     harnesses?: Harness[];
     defaultId?: string;
+    hostname?: string;
+    os?: string;
+    roomId?: string;
+    kind?: string;
+  };
+  computer?: {
+    deviceId: string;
+    roomId: string;
+    hostname?: string;
+    os?: string;
   };
   preferredExecutor?: string;
 };
@@ -93,7 +113,10 @@ export function loadLastRoom(): string {
 
 export function saveLastRoom(id: string) {
   try {
-    if (id) localStorage.setItem(ROOM_KEY, id);
+    const trimmed = id.trim();
+    // Only persist a real daemon room. Partial input / chat UUIDs must
+    // not clobber the last working desktop-* value.
+    if (looksLikeDeviceRoom(trimmed)) localStorage.setItem(ROOM_KEY, trimmed);
   } catch {
     /* private mode */
   }
@@ -182,6 +205,32 @@ export function desktopFrom(snapshot: RelaySnapshot | null): RelayExecutor | nul
   );
 }
 
+export function computerFromSnapshot(snapshot: RelaySnapshot | null) {
+  if (!snapshot) return null;
+  if (snapshot.computer?.deviceId) return snapshot.computer;
+  const launch = snapshot.launch;
+  if (launch?.deviceId) {
+    return {
+      deviceId: launch.deviceId,
+      roomId:
+        launch.roomId ||
+        (looksLikeDeviceRoom(launch.sessionId ?? "")
+          ? launch.sessionId!
+          : `desktop-${launch.deviceId}`),
+      hostname: launch.hostname,
+      os: launch.os,
+    };
+  }
+  const desktop = desktopFrom(snapshot);
+  if (desktop?.deviceId) {
+    return {
+      deviceId: desktop.deviceId,
+      roomId: `desktop-${desktop.deviceId}`,
+    };
+  }
+  return null;
+}
+
 /** GET /state wraps the room as `{ state, tail, presence }`. WS snapshots are the inner state. */
 export function unwrapRelayPayload(raw: unknown): RelaySnapshot {
   const rec = asRecord(raw);
@@ -199,6 +248,7 @@ export function unwrapRelayPayload(raw: unknown): RelaySnapshot {
         : undefined,
     executors: (executors as RelaySnapshot["executors"]) ?? undefined,
     launch: (hoisted.launch ?? inner?.launch) as RelaySnapshot["launch"],
+    computer: (hoisted.computer ?? inner?.computer) as RelaySnapshot["computer"],
   };
 }
 

@@ -11,6 +11,8 @@ import {
   loadLastRoom,
   loadRelayUrl,
   looksLikeDeviceRoom,
+  pickDeviceRoom,
+  computerFromSnapshot,
   platformFrom,
   saveHarness,
   saveLastRoom,
@@ -95,13 +97,7 @@ export function useDesktopLink(
     const seededRelay = seed?.relay || loadRelayUrl();
     setRelayUrlState(seededRelay);
     if (seed?.relay) saveRelayUrl(seed.relay);
-    const fromRoute =
-      roomFromSession && looksLikeDeviceRoom(roomFromSession) ? roomFromSession : "";
-    const last = loadLastRoom();
-    const room =
-      seed?.session ||
-      fromRoute ||
-      (looksLikeDeviceRoom(last) ? last : "");
+    const room = pickDeviceRoom(seed?.session, roomFromSession, loadLastRoom());
     if (room) setRoomIdState(room);
     setHarnessState(loadHarness());
   }, [roomFromSession, seed?.relay, seed?.session]);
@@ -143,8 +139,12 @@ export function useDesktopLink(
     (explicitRoom?: string) => {
       const room = (explicitRoom || roomId).trim();
       const base = relayUrl.trim() || DEFAULT_RELAY;
-      if (!room) {
-        setLastError("Need a room id (this session, or desktop-…).");
+      if (!looksLikeDeviceRoom(room)) {
+        setLastError(
+          room
+            ? "Not a device room. Daemon rooms look like desktop-ba8835a2-… Local session ids will not light the desktop lamp."
+            : "Need the daemon room (desktop-…). A local session id will not light the lamp.",
+        );
         setStatus("error");
         return;
       }
@@ -228,6 +228,7 @@ export function useDesktopLink(
   }, []);
 
   const desktop = desktopFrom(snapshot);
+  const computer = computerFromSnapshot(snapshot);
   const platform = platformFrom(snapshot);
   const desktopOnline = Boolean(desktop?.online);
   const platformOnline = Boolean(platform?.online);
@@ -252,6 +253,7 @@ export function useDesktopLink(
     lastError,
     snapshot,
     desktop,
+    computer,
     platform,
     desktopOnline,
     platformOnline,

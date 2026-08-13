@@ -10,8 +10,10 @@ import { SessionHeader } from "@/components/sessions/session-header";
 import { DesktopLinkBar } from "@/components/sessions/desktop-link";
 import { pick, useLocale } from "@/lib/i18n";
 import { useDesktopLink, type PromptMode } from "@/lib/use-desktop-link";
+import { pickDeviceRoom } from "@/lib/relay";
 import {
   applyTemplate,
+  bindSessionRoom,
   createSession,
   deleteSession,
   getSession,
@@ -27,11 +29,6 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
   const { locale } = useLocale();
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { relay?: string; session?: string };
-  const keep = { relay: search.relay, session: search.session };
-  const link = useDesktopLink(undefined, {
-    relay: search.relay,
-    session: search.session,
-  });
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [session, setSession] = useState<SessionRow | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -39,6 +36,13 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
   const [creating, setCreating] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
+  const link = useDesktopLink(
+    pickDeviceRoom(session?.roomId, sessionId) || undefined,
+    {
+      relay: search.relay,
+      session: search.session,
+    },
+  );
 
   const refreshList = useCallback(async () => {
     try {
@@ -79,10 +83,31 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
     return extra.length ? [...messages, ...extra] : messages;
   }, [messages, link.messages]);
 
+  const boundRoom =
+    pickDeviceRoom(
+      link.roomId,
+      link.computer?.roomId,
+      session?.roomId,
+      search.session,
+    ) || undefined;
+
+  const keep = { relay: search.relay, session: boundRoom || search.session };
+
+  useEffect(() => {
+    if (!session || session.id !== sessionId || !boundRoom || session.roomId === boundRoom) return;
+    void bindSessionRoom({ data: { id: session.id, roomId: boundRoom } }).then((bundle) => {
+      if (!bundle) return;
+      setSession(bundle.session);
+      void refreshList();
+    });
+  }, [session, sessionId, boundRoom, refreshList]);
+
   const handleNew = async () => {
     setCreating(true);
     try {
-      const created = await createSession({ data: { title: "New session" } });
+      const created = await createSession({
+        data: { title: "New session", roomId: boundRoom },
+      });
       await refreshList();
       setNavOpen(false);
       await navigate({
@@ -131,7 +156,9 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
     try {
       let id = sessionId;
       if (!id) {
-        const created = await createSession({ data: { title: "New session" } });
+        const created = await createSession({
+          data: { title: "New session", roomId: boundRoom },
+        });
         id = created.id;
         await navigate({
           to: "/sessions/$sessionId",
@@ -168,7 +195,9 @@ export function Workspace({ sessionId }: { sessionId?: string }) {
     try {
       let id = sessionId;
       if (!id) {
-        const created = await createSession({ data: { title: "New session" } });
+        const created = await createSession({
+          data: { title: "New session", roomId: boundRoom },
+        });
         id = created.id;
         await navigate({
           to: "/sessions/$sessionId",

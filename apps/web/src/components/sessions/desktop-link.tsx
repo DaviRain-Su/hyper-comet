@@ -92,7 +92,9 @@ export function DesktopLinkBar({ link }: { link: Link }) {
           label={pick(locale, "Desktop", "桌面")}
           value={
             link.desktopOnline
-              ? link.desktop?.deviceId?.slice(0, 10) || pick(locale, "online", "在线")
+              ? link.computer?.hostname ||
+                link.desktop?.deviceId?.slice(0, 10) ||
+                pick(locale, "online", "在线")
               : pick(locale, "offline", "离线")
           }
           tone={desktopTone}
@@ -153,7 +155,7 @@ export function DesktopLinkBar({ link }: { link: Link }) {
             value={link.roomId}
             onChange={(e) => link.setRoomId(e.target.value)}
             placeholder="desktop-…"
-            className="h-8 w-[min(100%,180px)] font-mono text-[11px]"
+            className="h-8 w-[min(100%,220px)] font-mono text-[11px]"
             aria-label={pick(locale, "Room", "房间")}
           />
           {link.status === "live" ? (
@@ -196,7 +198,9 @@ export function DesktopLinkBar({ link }: { link: Link }) {
 
 export function PairingCard({ link }: { link: Link }) {
   const { locale } = useLocale();
-  const room = link.roomId || "—";
+  const room = looksLikeDeviceRoom(link.roomId)
+    ? link.roomId
+    : pick(locale, "no device room yet", "还没有设备房间");
   return (
     <div className="rounded-[var(--radius-2xl)] border border-border bg-surface p-5 sm:p-6">
       <p className="text-[11px] font-semibold tracking-[0.14em] text-accent">
@@ -224,8 +228,8 @@ export function PairingCard({ link }: { link: Link }) {
           2.{" "}
           {pick(
             locale,
-            "On the machine run `comet agent url` and open that link (session must be desktop-…). Then Connect if the lamps stay idle.",
-            "在那台机器上运行 `comet agent url`，打开打印出的链接（session 必须是 desktop-…）。灯还是灰的再点连接。",
+            "On that machine run `comet agent url` and open the printed link. The room is bound to the computer (desktop-{deviceId}) and does not change when you start a new chat.",
+            "在那台机器上运行 `comet agent url`，打开打印出的链接。房间绑在这台电脑上（desktop-{deviceId}），新建对话不会换房间。",
           )}
         </li>
         <li>
@@ -238,7 +242,10 @@ export function PairingCard({ link }: { link: Link }) {
         </li>
       </ol>
       <p className="mt-4 font-mono text-[11.5px] text-fg-subtle">
-        {pick(locale, "Room", "房间")} {room}
+        {pick(locale, "Computer", "电脑")}{" "}
+        {link.computer
+          ? `${link.computer.hostname || link.computer.deviceId} · ${link.computer.roomId}`
+          : room}
         {link.viewers ? ` · ${link.viewers} viewers` : ""}
       </p>
     </div>

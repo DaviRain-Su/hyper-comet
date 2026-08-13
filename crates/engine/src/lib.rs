@@ -47,7 +47,7 @@ pub use spaces::SpacesSync;
 pub use studio::{
     DEFAULT_PROOFSHIP_RELAY, DEFAULT_PROOFSHIP_WEB, DeployStore, DraftRunner, NetworkStore,
     StudioDeployer, StudioGate, StudioInteract, StudioLaunchRunner, StudioPreview, StudioRelay,
-    StudioStore, TemplateStore, WalletConnectBridge, WalletStore, hosted_web_base,
+    StudioStore, TemplateStore, WalletConnectBridge, WalletStore, device_room_id, hosted_web_base,
     resolve_device_token, resolve_relay_base, resolve_relay_identity,
 };
 pub use terminals::Terminals;

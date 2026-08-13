@@ -5,8 +5,10 @@
 //!   ProofShip relay.** Set `off` / `0` / `-` to disable.
 //! - `PROOFSHIP_DEVICE_TOKEN` / `DEVICE_TOKEN` / `ENGINE_TOKEN` — device auth
 //! - `PROOFSHIP_DEVICE_ID` — device id (default: this install's engine id)
-//! - `PROOFSHIP_SESSION_ID` / `PROOFSHIP_LAUNCH_ID` — room id
-//!   (default: `desktop-{deviceId}` so machines do not collide)
+//! - `PROOFSHIP_SESSION_ID` / `PROOFSHIP_LAUNCH_ID` — ignored for the
+//!   UserExecutor. The room is always `desktop-{deviceId}` so it stays
+//!   bound to this install (Raft Computer model). Platform sandbox has
+//!   its own room override.
 //! - `PROOFSHIP_RELAY_CHAT_ID` — Sessions chat used for web prompts (default `proofship-relay`)
 
 use std::path::Path;
@@ -45,13 +47,32 @@ pub struct RelayIdentity {
 
 impl RelayIdentity {
     pub fn web_url(&self) -> String {
+        // Root `/?relay=&session=` works on the static Pages viewer and on
+        // the Vercel app (Home redirects `/` → `/sessions` when those
+        // query params are present). `/sessions?` 404s on Pages.
         format!(
-            "{}/sessions?relay={}&session={}",
+            "{}/?relay={}&session={}",
             hosted_web_base(),
             urlencoding_encode(&self.base),
             urlencoding_encode(&self.session_id)
         )
     }
+}
+
+/// Stable UserExecutor room for one install. Same machine → same room.
+pub fn device_room_id(device_id: &str) -> String {
+    format!("desktop-{}", device_id.trim())
+}
+
+fn device_hostname() -> String {
+    std::env::var("PROOFSHIP_DEVICE_NAME")
+        .ok()
+        .or_else(|| std::env::var("COMET_DEVICE_NAME").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "desktop".into())
 }
 
 /// Resolve the Worker base. Unset → hosted default. `off`/`0`/`-`/`false` → disabled.
@@ -76,7 +97,11 @@ fn is_relay_off(value: &str) -> bool {
     )
 }
 
-/// Device + room used when env vars are omitted.
+/// Device + room. The room is always `desktop-{deviceId}`.
+///
+/// `session_override` is accepted for call-site compatibility (daemon env
+/// capture, older CLIs) but a mismatched value is ignored — otherwise a
+/// leftover `PROOFSHIP_SESSION_ID` would detach the lamp from this machine.
 pub fn resolve_relay_identity(
     base: &str,
     default_device_id: &str,
@@ -88,11 +113,16 @@ pub fn resolve_relay_identity(
         .filter(|s| !s.is_empty())
         .unwrap_or(default_device_id)
         .to_string();
-    let session_id = session_override
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("desktop-{device_id}"));
+    let session_id = device_room_id(&device_id);
+    if let Some(raw) = session_override.map(str::trim).filter(|s| !s.is_empty()) {
+        if raw != session_id {
+            tracing::warn!(
+                ignored = raw,
+                bound = %session_id,
+                "PROOFSHIP_SESSION_ID is not this device room; keeping desktop-{{deviceId}}"
+            );
+        }
+    }
     RelayIdentity {
         base: base.to_string(),
         device_id,
@@ -355,8 +385,12 @@ async fn run_client(
                     catalog.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 let mut open_payload = serde_json::json!({
                     "sessionId": session_id,
+                    "roomId": session_id,
                     "deviceId": device_id,
+                    "hostname": device_hostname(),
+                    "os": std::env::consts::OS,
                     "role": "engine",
+                    "kind": "computer",
                 });
                 if let Some(obj) = catalog.as_object() {
                     for (key, value) in obj {
@@ -375,8 +409,16 @@ async fn run_client(
                         break;
                     }
                 }
+                // Cloudflare will drop an idle DO socket. Ping keeps presence live.
+                let mut heartbeat = tokio::time::interval(Duration::from_secs(25));
+                heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     tokio::select! {
+                        _ = heartbeat.tick() => {
+                            if write.send(Message::Ping(Vec::new())).await.is_err() {
+                                break;
+                            }
+                        }
                         outgoing = out_rx.recv() => {
                             match outgoing {
                                 Some(msg) => {
@@ -547,8 +589,18 @@ mod tests {
         assert_eq!(id.device_id, "abc-123");
         assert_eq!(id.session_id, "desktop-abc-123");
         assert!(id.web_url().contains("session=desktop-abc-123"));
-        assert!(id.web_url().contains("/sessions?"));
+        assert!(id.web_url().contains("/?relay="));
+        assert!(!id.web_url().contains("/sessions?"));
         assert!(id.web_url().starts_with(DEFAULT_PROOFSHIP_WEB));
+
+        let ignored = resolve_relay_identity(
+            DEFAULT_PROOFSHIP_RELAY,
+            "abc-123",
+            None,
+            Some("ba8835a2-079e-45e2-9b97-035d0e4f7a78"),
+        );
+        assert_eq!(ignored.session_id, "desktop-abc-123");
+        assert_eq!(device_room_id("abc-123"), "desktop-abc-123");
     }
 
     #[test]

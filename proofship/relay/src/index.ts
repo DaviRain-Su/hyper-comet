@@ -41,6 +41,7 @@ export {
   authorizeEngine,
   authorizeShare,
   authorizeViewer,
+  computerFromPayload,
   eventStatePatch,
   overlayLiveExecutors,
   parseViewerCommand,
@@ -311,7 +312,7 @@ async function forwardToRoom(
   const room = env.SESSION_ROOM.get(id);
   const url = new URL(request.url);
   url.pathname = "/ws";
-  const q = new URLSearchParams({ role });
+  const q = new URLSearchParams({ role, roomId });
   if (deviceId) q.set("deviceId", deviceId);
   if (writeCap) q.set("writeCap", writeCap);
   url.search = `?${q.toString()}`;
@@ -370,6 +371,11 @@ export class SessionRoom extends DurableObject<Env> {
         return badRequest("invalid role");
       }
       const deviceId = url.searchParams.get("deviceId") ?? undefined;
+      const roomId = url.searchParams.get("roomId")?.trim() || "";
+      if (roomId && roomId !== this.sessionId) {
+        this.sessionId = roomId;
+        await this.ctx.storage.put("sessionId", roomId);
+      }
       const writeRaw = url.searchParams.get("writeCap");
       const writeCap: WriteCap =
         writeRaw === "none" || writeRaw === "comment" || writeRaw === "command"
@@ -399,7 +405,11 @@ export class SessionRoom extends DurableObject<Env> {
         await this.appendEvent({
           type: "event",
           kind: "executor.online",
-          payload: { role, deviceId },
+          payload: {
+            role,
+            deviceId,
+            roomId: this.sessionId || (deviceId ? `desktop-${deviceId}` : undefined),
+          },
         });
         await this.drainQueueToExecutors();
       }

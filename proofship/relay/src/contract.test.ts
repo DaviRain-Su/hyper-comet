@@ -320,6 +320,8 @@ describe("eventStatePatch", () => {
       userDeviceId: "d1",
       userLastSeenAt: "t1",
     });
+    expect(state.computer).toEqual({ deviceId: "d1", roomId: "desktop-d1" });
+    expect(state.sessionId).toBe("desktop-d1");
 
     state = eventStatePatch(state, {
       seq: 2,
@@ -391,19 +393,49 @@ describe("eventStatePatch", () => {
         userLastSeenAt: "t0",
       },
     };
-    expect(
-      overlayLiveExecutors(stale, {
-        userOnline: false,
-        platformOnline: true,
-        userDeviceId: "live-dev",
-        viewerCount: 2,
-      }).executors,
-    ).toEqual({
+    const live = overlayLiveExecutors(stale, {
+      userOnline: false,
+      platformOnline: true,
+      userDeviceId: "live-dev",
+      viewerCount: 2,
+    });
+    expect(live.executors).toEqual({
       userOnline: false,
       platformOnline: true,
       userDeviceId: "live-dev",
       userLastSeenAt: "t0",
       viewerCount: 2,
     });
+    expect(live.computer).toEqual({
+      deviceId: "live-dev",
+      roomId: "desktop-live-dev",
+    });
+  });
+
+  it("binds session.open to the announcing computer", () => {
+    const state = eventStatePatch(
+      {},
+      {
+        seq: 1,
+        ts: "t1",
+        kind: "session.open",
+        payload: {
+          sessionId: "desktop-abc",
+          roomId: "desktop-abc",
+          deviceId: "abc",
+          hostname: "ser9",
+          os: "linux",
+          role: "engine",
+          kind: "computer",
+        },
+      },
+    );
+    expect(state.computer).toEqual({
+      deviceId: "abc",
+      roomId: "desktop-abc",
+      hostname: "ser9",
+      os: "linux",
+    });
+    expect(state.sessionId).toBe("desktop-abc");
   });
 });
