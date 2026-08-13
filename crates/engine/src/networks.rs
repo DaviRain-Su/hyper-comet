@@ -150,7 +150,29 @@ mod tests {
             explorer_url: Some("https://explorer.example.com".into()),
             currency_symbol: "ETH".into(),
             builtin: false,
+            enabled: true,
         }
+    }
+
+    #[test]
+    fn enabled_toggle_persists_for_builtins() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NetworkStore::new(dir.path());
+        let mut mainnet = store
+            .load()
+            .unwrap()
+            .into_iter()
+            .find(|n| n.id == "xlayer-mainnet")
+            .unwrap();
+        mainnet.enabled = false;
+        store.upsert(mainnet).unwrap();
+
+        let reloaded = store.load().unwrap();
+        let mainnet = reloaded.iter().find(|n| n.id == "xlayer-mainnet").unwrap();
+        assert!(!mainnet.enabled, "off state survives reload");
+        assert!(mainnet.builtin, "still a built-in — cannot be removed");
+        let testnet = reloaded.iter().find(|n| n.id == "xlayer-testnet").unwrap();
+        assert!(testnet.enabled, "other networks untouched");
     }
 
     #[test]

@@ -19,6 +19,15 @@ pub struct EvmNetwork {
     /// Built-in presets cannot be deleted; the operator may still edit RPC URL.
     #[serde(default)]
     pub builtin: bool,
+    /// Pluggable multi-chain: disabled networks stay configured but are
+    /// hidden from deploy pickers and rejected by preflight. Built-ins can
+    /// be disabled, never deleted.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+pub(crate) fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +66,7 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
             explorer_url: Some("https://www.okx.com/web3/explorer/xlayer-test".into()),
             currency_symbol: "OKB".into(),
             builtin: true,
+            enabled: true,
         },
         EvmNetwork {
             id: "xlayer-mainnet".into(),
@@ -66,6 +76,7 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
             explorer_url: Some("https://www.okx.com/web3/explorer/xlayer".into()),
             currency_symbol: "OKB".into(),
             builtin: true,
+            enabled: true,
         },
         EvmNetwork {
             id: "ethereum-sepolia".into(),
@@ -75,6 +86,7 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
             explorer_url: Some("https://sepolia.etherscan.io".into()),
             currency_symbol: "ETH".into(),
             builtin: true,
+            enabled: true,
         },
         EvmNetwork {
             id: "base-sepolia".into(),
@@ -84,6 +96,7 @@ pub fn builtin_networks() -> Vec<EvmNetwork> {
             explorer_url: Some("https://sepolia.basescan.org".into()),
             currency_symbol: "ETH".into(),
             builtin: true,
+            enabled: true,
         },
     ]
 }

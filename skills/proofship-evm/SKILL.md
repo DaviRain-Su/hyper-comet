@@ -42,6 +42,21 @@ are blocked for **DevEnvKey** signing; WalletConnect may still target them.
 - Keep the local bridge browser tab open for signing
 - Session material never hits disk; address book stores label + address only
 
+## OKX OnchainOS MCP (when attached)
+
+When the user configured an OnchainOS API key (Settings → Networks), every
+session carries the hosted `okx-onchainos` MCP server. Prefer its tools for
+DEX work instead of hand-rolling calldata:
+
+- supported chains / liquidity sources: `dex-okx-dex-aggregator-supported-chains`, `dex-okx-dex-liquidity`
+- best aggregated quote (output, price impact, route): `dex-okx-dex-quote`
+- ERC-20 approve calldata: `dex-okx-dex-approve-transaction`
+- full swap transaction (calldata + value + gas): `dex-okx-dex-swap`
+
+These tools **construct** transactions only — signing and sending stays in
+ProofShip (Settings → Wallets / Deploy flow). Never ask the user to paste a
+private key to "complete" a swap.
+
 ## Deploy discipline
 
 - Gate must PASS before deploy (fail closed)

@@ -5,7 +5,7 @@ use gpui::{
     px,
 };
 
-use comet_proto::{EvmNetwork, NetworksResponse, UpsertNetworkRequest};
+use comet_proto::{EvmNetwork, NetworksResponse, OkxStatusResponse, UpsertNetworkRequest};
 use comet_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
@@ -18,6 +18,8 @@ struct NetworkDialog {
     /// `None` when adding a new network; `Some(id)` when editing.
     edit_id: Option<String>,
     edit_builtin: bool,
+    /// Preserved through the edit dialog — the row toggle owns this flag.
+    edit_enabled: bool,
     name: Entity<ComposerInput>,
     chain_id: Entity<ComposerInput>,
     rpc_url: Entity<ComposerInput>,
@@ -34,10 +36,21 @@ pub struct NetworksPage {
     error: Option<String>,
     load_task: Option<Task<()>>,
     action_task: Option<Task<()>>,
+    okx_status: Option<OkxStatusResponse>,
+    okx_input: Entity<ComposerInput>,
+    okx_error: Option<String>,
+    okx_task: Option<Task<()>>,
+    _okx_events: Subscription,
 }
 
 impl NetworksPage {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
+        let okx_input = cx.new(|cx| ComposerInput::new("OnchainOS API key", cx));
+        let okx_events = cx.subscribe(&okx_input, |this: &mut Self, _, event, cx| {
+            if matches!(event, ComposerInputEvent::Submitted) {
+                this.save_okx_key(cx);
+            }
+        });
         let mut page = Self {
             state,
             networks: Loadable::Idle,
@@ -45,9 +58,102 @@ impl NetworksPage {
             error: None,
             load_task: None,
             action_task: None,
+            okx_status: None,
+            okx_input,
+            okx_error: None,
+            okx_task: None,
+            _okx_events: okx_events,
         };
         page.load(cx);
+        page.load_okx(cx);
         page
+    }
+
+    fn load_okx(&mut self, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.okx_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(methods::OKX_STATUS, serde_json::json!({}))
+                .await;
+            this.update(cx, |page, cx| {
+                match result {
+                    Ok(value) => {
+                        page.okx_status = serde_json::from_value(value).ok();
+                    }
+                    Err(err) => page.okx_error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Save (non-empty input) or clear (empty input + Clear button) the key.
+    fn put_okx_key(&mut self, api_key: String, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.okx_error = None;
+        self.okx_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(
+                    methods::OKX_PUT_KEY,
+                    serde_json::json!({ "apiKey": api_key }),
+                )
+                .await;
+            this.update(cx, |page, cx| {
+                match result {
+                    Ok(value) => {
+                        page.okx_status = serde_json::from_value(value).ok();
+                        page.okx_input.update(cx, |input, cx| input.set_text("", cx));
+                    }
+                    Err(err) => page.okx_error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Flip the pluggable toggle — key stays stored either way.
+    fn set_okx_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        let Some(engine) = self.state.read(cx).engine().cloned() else {
+            return;
+        };
+        self.okx_error = None;
+        self.okx_task = Some(cx.spawn(async move |this, cx| {
+            let result = engine
+                .client()
+                .call(
+                    methods::OKX_SET_ENABLED,
+                    serde_json::json!({ "enabled": enabled }),
+                )
+                .await;
+            this.update(cx, |page, cx| {
+                match result {
+                    Ok(value) => page.okx_status = serde_json::from_value(value).ok(),
+                    Err(err) => page.okx_error = Some(err.to_string()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    fn save_okx_key(&mut self, cx: &mut Context<Self>) {
+        let key = self.okx_input.read(cx).text().trim().to_string();
+        if key.is_empty() {
+            self.okx_error = Some("Paste an OnchainOS API key first".into());
+            cx.notify();
+            return;
+        }
+        self.put_okx_key(key, cx);
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
@@ -94,6 +200,7 @@ impl NetworksPage {
         let explorer_url = cx.new(|cx| ComposerInput::new("Explorer URL (optional)", cx));
         let symbol = cx.new(|cx| ComposerInput::new("Currency symbol", cx));
         let edit_builtin = existing.as_ref().is_some_and(|n| n.builtin);
+        let edit_enabled = existing.as_ref().map(|n| n.enabled).unwrap_or(true);
         if let Some(network) = existing {
             name.update(cx, |input, cx| input.set_text(network.name, cx));
             chain_id.update(cx, |input, cx| {
@@ -117,6 +224,7 @@ impl NetworksPage {
         self.dialog = Some(NetworkDialog {
             edit_id,
             edit_builtin,
+            edit_enabled,
             name,
             chain_id,
             rpc_url,
@@ -139,6 +247,7 @@ impl NetworksPage {
         let symbol = dialog.symbol.read(cx).text().trim().to_string();
         let edit_id = dialog.edit_id.clone();
         let edit_builtin = dialog.edit_builtin;
+        let edit_enabled = dialog.edit_enabled;
 
         if name.is_empty() {
             self.set_dialog_error("Name is required", cx);
@@ -181,6 +290,7 @@ impl NetworksPage {
             explorer_url,
             currency_symbol: symbol,
             builtin: edit_builtin,
+            enabled: edit_enabled,
         };
         self.dialog = None;
         self.upsert(network, cx);
@@ -359,22 +469,46 @@ impl NetworksPage {
                         .into_any_element(),
                 );
                 let edit_network = network.clone();
+                let toggle_network = network.clone();
                 let remove_id = network.id.clone();
                 let can_remove = !network.builtin;
+                let enabled = network.enabled;
                 widgets::card_row(&theme, ix == 0)
-                    .child(widgets::row_tile(&theme, crate::icons::GLOBAL))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .flex()
-                            .flex_col()
-                            .child(widgets::row_title(&theme, network.name.clone()))
-                            .child(widgets::meta_line(&theme, meta)),
+                            .flex_row()
+                            .items_center()
+                            .gap(px(12.0))
+                            // Disabled rows stay listed (config survives) but
+                            // read as parked — pluggable multi-chain.
+                            .when(!enabled, |el| el.opacity(0.5))
+                            .child(widgets::row_tile(&theme, crate::icons::GLOBAL))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(widgets::row_title(&theme, network.name.clone()))
+                                    .child(widgets::meta_line(&theme, meta)),
+                            )
+                            .when(network.builtin, |el| {
+                                el.child(widgets::badge(&theme, "Built-in"))
+                            }),
                     )
-                    .when(network.builtin, |el| {
-                        el.child(widgets::badge(&theme, "Built-in"))
-                    })
+                    .child(
+                        widgets::toggle_switch(&theme, enabled)
+                            .id(("network-toggle", ix))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let mut network = toggle_network.clone();
+                                network.enabled = !network.enabled;
+                                this.upsert(network, cx);
+                            })),
+                    )
                     .child(
                         widgets::ghost_action(&theme)
                             .id(("network-edit", ix))
@@ -410,6 +544,119 @@ impl NetworksPage {
                     .into_any_element()
             })
             .collect()
+    }
+}
+
+impl NetworksPage {
+    /// OKX OnchainOS card: one API key unlocks the hosted OnchainOS MCP
+    /// (DEX quotes / liquidity / approve + swap calldata) on every session.
+    fn render_okx_card(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = Theme::of(cx).clone();
+        let status = self.okx_status.clone().unwrap_or_default();
+        let on = status.configured && status.enabled;
+        let status_line = if status.configured {
+            let source = match status.source.as_deref() {
+                Some("env") => "from environment",
+                _ => "stored on this device",
+            };
+            if status.enabled {
+                format!("Connected — key {} ({source})", status.key_hint)
+            } else {
+                format!("Off — key {} kept ({source})", status.key_hint)
+            }
+        } else {
+            "Not connected — agents run without OKX DEX tools".to_string()
+        };
+        let from_env = status.source.as_deref() == Some("env");
+        let enabled_now = status.enabled;
+
+        widgets::section_card(&theme)
+            .mt(px(16.0))
+            .p(px(16.0))
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(widgets::row_tile(&theme, crate::icons::KEY_MINIMALISTIC))
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .child(widgets::row_title(&theme, "OKX OnchainOS"))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(if on { theme.success } else { theme.text_muted })
+                                    .child(SharedString::from(status_line)),
+                            ),
+                    )
+                    .when(on, |el| {
+                        el.child(widgets::badge_active(&theme, "MCP attached"))
+                    })
+                    .when(status.configured, |el| {
+                        el.child(
+                            widgets::toggle_switch(&theme, enabled_now)
+                                .id("okx-enabled-toggle")
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_okx_enabled(!enabled_now, cx);
+                                })),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme.text_muted)
+                    .child(SharedString::from(
+                        "Attaches OKX's hosted OnchainOS MCP server (DEX quotes, liquidity, \
+                         approve/swap calldata) to every agent session. Get a key at \
+                         web3.okx.com/onchainos/dev-portal.",
+                    )),
+            )
+            .when(!from_env, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(popover::dialog_field(self.okx_input.clone().into_any_element())),
+                        )
+                        .child(
+                            popover::btn_primary(&theme, "Save")
+                                .id("okx-key-save")
+                                .on_click(cx.listener(|this, _, _, cx| this.save_okx_key(cx))),
+                        )
+                        .when(status.configured, |el| {
+                            el.child(
+                                popover::btn_ghost(&theme, "Disconnect", "okx-key-clear")
+                                    .id("okx-key-clear")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.put_okx_key(String::new(), cx);
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .when_some(self.okx_error.clone(), |el, message| {
+                el.child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme.danger_muted)
+                        .child(SharedString::from(message)),
+                )
+            })
+            .into_any_element()
     }
 }
 
@@ -508,7 +755,8 @@ impl Render for NetworksPage {
                         "EVM RPC endpoints. Built-in X Layer presets can be edited but not removed.",
                     ))
                     .children(error)
-                    .child(body),
+                    .child(body)
+                    .child(self.render_okx_card(cx)),
             )
             .when_some(dialog, |el, dialog| el.child(dialog))
     }

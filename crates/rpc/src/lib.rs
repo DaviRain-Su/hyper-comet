@@ -131,6 +131,11 @@ pub mod methods {
     pub const DEPLOY_SCAN: &str = "DeployScan";
     pub const DEPLOY_SEND: &str = "DeploySend";
     pub const DEPLOYMENTS: &str = "Deployments";
+    /// OKX OnchainOS API key (proto `okx.rs`) — unlocks the hosted OnchainOS
+    /// MCP server on every agent session.
+    pub const OKX_STATUS: &str = "OkxStatus";
+    pub const OKX_PUT_KEY: &str = "OkxPutKey";
+    pub const OKX_SET_ENABLED: &str = "OkxSetEnabled";
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -27,6 +27,7 @@ pub mod sessions;
 pub mod spaces;
 pub mod local_wallet;
 pub mod networks;
+pub mod okx;
 pub mod proofforge;
 pub mod walletconnect;
 pub mod wallets;
@@ -52,6 +53,7 @@ pub use sessions::{JournaledEvent, SessionsEngine, SteerOutcome};
 pub use spaces::SpacesSync;
 pub use local_wallet::{WalletSecrets, send_with_local};
 pub use networks::{NetworkError, NetworkStore};
+pub use okx::OkxStore;
 pub use walletconnect::{WalletConnectBridge, resolve_project_id};
 pub use wallets::{WalletError, WalletStore};
 pub use terminals::Terminals;
@@ -224,6 +226,8 @@ impl EngineCore {
         let network_store = NetworkStore::new(data_dir);
         let wallet_store = WalletStore::new(data_dir);
         let wallet_connect = WalletConnectBridge::new();
+        // Session enrichment reads the stored OnchainOS key through this.
+        okx::init(data_dir);
         Ok(Self {
             sessions,
             doc_host,
@@ -355,6 +359,7 @@ impl EngineCore {
             self.wallet_store.clone(),
             self.wallet_connect.clone(),
             DeployStore::new(&self.data_dir),
+            okx::OkxStore::new(&self.data_dir),
         )
         .with_auth(self.auth());
         if let Some(links) = self.links() {

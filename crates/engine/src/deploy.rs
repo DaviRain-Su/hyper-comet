@@ -282,6 +282,12 @@ pub fn encode_ctor_args(sig: &str, args: &[String]) -> Result<Vec<u8>, String> {
 
 /// Wallet/network checks before anything is read or sent.
 pub fn preflight(network: &EvmNetwork, wallet: &WalletAccount) -> Result<(), String> {
+    if !network.enabled {
+        return Err(format!(
+            "network {} is disabled — enable it in Settings → Networks first",
+            network.name
+        ));
+    }
     match wallet.source {
         WalletSource::Watch => {
             return Err("watch-only wallets cannot sign deploy transactions".into());
@@ -556,5 +562,9 @@ mod tests {
         preflight(&xlayer_mainnet(), &wc).unwrap();
         wc.address = String::new();
         assert!(preflight(&xlayer_testnet(), &wc).is_err());
+        // Disabled networks fail preflight regardless of wallet.
+        let mut disabled = xlayer_testnet();
+        disabled.enabled = false;
+        assert!(preflight(&disabled, &wallet(WalletSource::Local)).is_err());
     }
 }

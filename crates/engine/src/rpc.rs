@@ -391,6 +391,7 @@ pub struct EngineRpc {
     wallet_store: WalletStore,
     wallet_connect: WalletConnectBridge,
     deploy_store: DeployStore,
+    okx_store: crate::okx::OkxStore,
     auth: Option<Auth>,
     links: Option<std::sync::Arc<LinkCache>>,
     updater: Option<comet_update::Updater>,
@@ -412,6 +413,7 @@ impl EngineRpc {
         wallet_store: WalletStore,
         wallet_connect: WalletConnectBridge,
         deploy_store: DeployStore,
+        okx_store: crate::okx::OkxStore,
     ) -> Self {
         Self {
             sessions,
@@ -427,6 +429,7 @@ impl EngineRpc {
             wallet_store,
             wallet_connect,
             deploy_store,
+            okx_store,
             auth: None,
             links: None,
             updater: None,
@@ -826,6 +829,10 @@ fn forwardable(method: &str) -> bool {
             | methods::DEPLOY_SCAN
             | methods::DEPLOY_SEND
             | methods::DEPLOYMENTS
+            // OKX OnchainOS key lives on the host device.
+            | methods::OKX_STATUS
+            | methods::OKX_PUT_KEY
+            | methods::OKX_SET_ENABLED
     )
 }
 
@@ -1271,6 +1278,21 @@ impl RpcService for EngineRpc {
                     .load()
                     .map_err(|e| RpcError::Failed(e.to_string()))?;
                 RpcReply::value(&DeploymentsResponse { deployments })
+            }
+            methods::OKX_STATUS => RpcReply::value(&self.okx_store.status()),
+            methods::OKX_PUT_KEY => {
+                let p: comet_proto::OkxPutKeyRequest = parse_params(params)?;
+                self.okx_store
+                    .put(&p.api_key)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&self.okx_store.status())
+            }
+            methods::OKX_SET_ENABLED => {
+                let p: comet_proto::OkxSetEnabledRequest = parse_params(params)?;
+                self.okx_store
+                    .set_enabled(p.enabled)
+                    .map_err(|e| RpcError::Failed(e.to_string()))?;
+                RpcReply::value(&self.okx_store.status())
             }
             methods::UPDATE_STATUS => Ok(RpcReply::Stream(watch_stream(self.updater()?.watch()))),
             methods::APPLY_UPDATE => {

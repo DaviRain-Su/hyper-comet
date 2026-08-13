@@ -109,7 +109,11 @@ impl DeployPanel {
             this.update(cx, |panel, cx| {
                 panel.networks = match result {
                     Ok(value) => match serde_json::from_value::<NetworksResponse>(value) {
-                        Ok(resp) => Loadable::Ready(resp.networks),
+                        // Pluggable multi-chain: disabled networks never
+                        // reach the picker (preflight would reject anyway).
+                        Ok(resp) => Loadable::Ready(
+                            resp.networks.into_iter().filter(|n| n.enabled).collect(),
+                        ),
                         Err(err) => Loadable::Error(err.to_string()),
                     },
                     Err(err) => Loadable::Error(err.to_string()),
