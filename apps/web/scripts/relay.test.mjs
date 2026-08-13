@@ -21,6 +21,7 @@ function unwrapRelayPayload(raw) {
     tail: Array.isArray(rec.tail) ? rec.tail : hoisted.tail,
     executors,
     launch: hoisted.launch ?? inner?.launch,
+    computer: hoisted.computer ?? inner?.computer,
   };
 }
 
@@ -95,6 +96,22 @@ test("local chat UUIDs are not device rooms", () => {
     "desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78",
   );
   assert.equal(pickDeviceRoom("new-session", "   "), "");
+});
+
+test("GET /state wrap hoists computer so the pairing card can name the machine", () => {
+  const wrapped = {
+    state: {
+      computer: {
+        deviceId: "ba8835a2-079e-45e2-9b97-035d0e4f7a78",
+        roomId: "desktop-ba8835a2-079e-45e2-9b97-035d0e4f7a78",
+        hostname: "davirain-SER9",
+      },
+    },
+    tail: [],
+  };
+  const snap = unwrapRelayPayload(wrapped);
+  assert.equal(snap.computer.hostname, "davirain-SER9");
+  assert.equal(looksLikeDeviceRoom(snap.computer.roomId), true);
 });
 
 void createRequire;

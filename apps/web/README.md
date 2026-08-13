@@ -29,6 +29,9 @@ npm run dev          # http://127.0.0.1:8080
 1. New Project → import this GitHub repo.
 2. **Root Directory:** `apps/web` (not the repo root).
 3. Build is already `npm run build` (Vite + Nitro `vercel` preset).
+   The build also copies PGLite `pglite.data` / wasm next to the server
+   function so a deploy without `DATABASE_URL` still boots (landing works;
+   session rows still reset on cold start).
 4. Environment variables:
 
 | Name | Required | Notes |
