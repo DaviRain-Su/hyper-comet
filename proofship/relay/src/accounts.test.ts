@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MemoryAccountStore,
+  acceptPendingInvites,
   ensurePersonalOrg,
   hashToken,
   resolveSession,
@@ -73,6 +74,33 @@ describe("orgs", () => {
     });
     const now = Date.parse("2026-08-13T00:00:00.000Z");
     expect((await resolveShare(store, token, "s1", now))?.role).toBe("command");
+  });
+});
+
+describe("invites", () => {
+  it("accepts an address-bound invite after the wallet exists", async () => {
+    const store = new MemoryAccountStore();
+    const owner = await store.upsertUser("0x4444444444444444444444444444444444444444", "t0");
+    const org = await ensurePersonalOrg(store, owner, "t0");
+    const hash = await hashToken("invite-raw");
+    await store.putInvite(hash, {
+      orgId: org.id,
+      role: "member",
+      address: ADDRESS,
+      invitedBy: owner.id,
+      expiresAt: "2026-09-01T00:00:00.000Z",
+      createdAt: "t0",
+    });
+    const guest = await store.upsertUser(ADDRESS, "t1");
+    const joined = await acceptPendingInvites(
+      store,
+      guest,
+      "t1",
+      Date.parse("2026-08-13T00:00:00.000Z"),
+    );
+    expect(joined.map((o) => o.id)).toContain(org.id);
+    expect(await store.getMember(org.id, guest.id)).toMatchObject({ role: "member" });
+    expect(await store.getInvite(hash)).toBeNull();
   });
 });
 

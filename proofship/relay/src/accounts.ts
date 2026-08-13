@@ -11,6 +11,7 @@ import { normalizeAddress } from "./siwe";
 export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const NONCE_TTL_MS = 10 * 60 * 1000;
 export const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type ShareRole = "readonly" | "comment" | "command";
 export type OrgMemberRole = "owner" | "admin" | "member";
@@ -57,6 +58,16 @@ export interface RoomGrant {
   claimedAt: string;
 }
 
+export interface OrgInvite {
+  orgId: string;
+  role: Exclude<OrgMemberRole, "owner">;
+  /** When set, only this wallet can accept. Null = open join link. */
+  address: string | null;
+  invitedBy: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
 export interface AccountStore {
   putNonce(address: string, nonce: string, expiresAt: string): Promise<void>;
   takeNonce(address: string): Promise<{ nonce: string; expiresAt: string } | null>;
@@ -77,6 +88,11 @@ export interface AccountStore {
   deleteMember(orgId: string, userId: string): Promise<void>;
   putRoomGrant(grant: RoomGrant): Promise<void>;
   getRoomGrant(sessionId: string): Promise<RoomGrant | null>;
+  putInvite(tokenHash: string, invite: OrgInvite): Promise<void>;
+  getInvite(tokenHash: string): Promise<OrgInvite | null>;
+  deleteInvite(tokenHash: string): Promise<void>;
+  listInvitesForOrg(orgId: string): Promise<OrgInvite[]>;
+  listInvitesForAddress(address: string): Promise<Array<OrgInvite & { tokenHash: string }>>;
 }
 
 export class MemoryAccountStore implements AccountStore {
@@ -88,6 +104,7 @@ export class MemoryAccountStore implements AccountStore {
   private orgs = new Map<string, AccountOrg>();
   private members = new Map<string, OrgMember>();
   private rooms = new Map<string, RoomGrant>();
+  private invites = new Map<string, OrgInvite>();
 
   async putNonce(address: string, nonce: string, expiresAt: string): Promise<void> {
     const key = normalizeAddress(address);
@@ -189,6 +206,32 @@ export class MemoryAccountStore implements AccountStore {
   async getRoomGrant(sessionId: string): Promise<RoomGrant | null> {
     return this.rooms.get(sessionId) ?? null;
   }
+
+  async putInvite(tokenHash: string, invite: OrgInvite): Promise<void> {
+    this.invites.set(tokenHash, invite);
+  }
+
+  async getInvite(tokenHash: string): Promise<OrgInvite | null> {
+    return this.invites.get(tokenHash) ?? null;
+  }
+
+  async deleteInvite(tokenHash: string): Promise<void> {
+    this.invites.delete(tokenHash);
+  }
+
+  async listInvitesForOrg(orgId: string): Promise<OrgInvite[]> {
+    return [...this.invites.values()].filter((i) => i.orgId === orgId);
+  }
+
+  async listInvitesForAddress(
+    address: string,
+  ): Promise<Array<OrgInvite & { tokenHash: string }>> {
+    const key = normalizeAddress(address);
+    if (!key) return [];
+    return [...this.invites.entries()]
+      .filter(([, invite]) => invite.address === key)
+      .map(([tokenHash, invite]) => ({ ...invite, tokenHash }));
+  }
 }
 
 export function personalOrgId(address: string): string {
@@ -229,6 +272,64 @@ export async function ensurePersonalOrg(
     createdAt: now,
   });
   return org;
+}
+
+export function inviteStillValid(invite: OrgInvite, nowMs: number): boolean {
+  const exp = Date.parse(invite.expiresAt);
+  return !Number.isNaN(exp) && exp > nowMs;
+}
+
+/** Join every pending address-bound invite, plus an optional open/token invite. */
+export async function acceptPendingInvites(
+  store: AccountStore,
+  user: AccountUser,
+  now: string,
+  nowMs: number,
+  extraTokenHash?: string,
+): Promise<AccountOrg[]> {
+  const joined: AccountOrg[] = [];
+  const pending = await store.listInvitesForAddress(user.address);
+  for (const invite of pending) {
+    const org = await acceptOneInvite(store, user, invite, invite.tokenHash, now, nowMs, true);
+    if (org) joined.push(org);
+  }
+  if (extraTokenHash) {
+    const invite = await store.getInvite(extraTokenHash);
+    if (invite) {
+      const org = await acceptOneInvite(store, user, invite, extraTokenHash, now, nowMs, false);
+      if (org) joined.push(org);
+    }
+  }
+  return joined;
+}
+
+async function acceptOneInvite(
+  store: AccountStore,
+  user: AccountUser,
+  invite: OrgInvite,
+  tokenHash: string,
+  now: string,
+  nowMs: number,
+  addressBound: boolean,
+): Promise<AccountOrg | null> {
+  if (!inviteStillValid(invite, nowMs)) {
+    await store.deleteInvite(tokenHash);
+    return null;
+  }
+  if (invite.address && invite.address !== user.address) return null;
+  if (await store.getMember(invite.orgId, user.id)) {
+    if (addressBound || invite.address) await store.deleteInvite(tokenHash);
+    return store.getOrg(invite.orgId);
+  }
+  await store.putMember({
+    orgId: invite.orgId,
+    userId: user.id,
+    address: user.address,
+    role: invite.role,
+    createdAt: now,
+  });
+  if (invite.address) await store.deleteInvite(tokenHash);
+  return store.getOrg(invite.orgId);
 }
 
 export function sessionStillValid(session: AccountSession, nowMs: number): boolean {

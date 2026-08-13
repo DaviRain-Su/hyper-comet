@@ -4,6 +4,7 @@ import type {
   AccountStore,
   AccountSession,
   AccountUser,
+  OrgInvite,
   OrgMember,
   RoomGrant,
 } from "./accounts";
@@ -65,6 +66,15 @@ const SCHEMA = [
      org_id TEXT NOT NULL,
      owner_id TEXT NOT NULL,
      claimed_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS org_invites (
+     token_hash TEXT PRIMARY KEY,
+     org_id TEXT NOT NULL,
+     role TEXT NOT NULL,
+     address TEXT,
+     invited_by TEXT NOT NULL,
+     expires_at TEXT NOT NULL,
+     created_at TEXT NOT NULL
    )`,
 ];
 
@@ -298,5 +308,65 @@ export class D1AccountStore implements AccountStore {
       )
       .bind(sessionId)
       .first<RoomGrant>();
+  }
+
+  async putInvite(tokenHash: string, invite: OrgInvite): Promise<void> {
+    await this.ensure();
+    await this.db
+      .prepare(
+        "INSERT OR REPLACE INTO org_invites (token_hash, org_id, role, address, invited_by, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .bind(
+        tokenHash,
+        invite.orgId,
+        invite.role,
+        invite.address,
+        invite.invitedBy,
+        invite.expiresAt,
+        invite.createdAt,
+      )
+      .run();
+  }
+
+  async getInvite(tokenHash: string): Promise<OrgInvite | null> {
+    await this.ensure();
+    const row = await this.db
+      .prepare(
+        "SELECT org_id AS orgId, role, address, invited_by AS invitedBy, expires_at AS expiresAt, created_at AS createdAt FROM org_invites WHERE token_hash = ?",
+      )
+      .bind(tokenHash)
+      .first<OrgInvite>();
+    return row ?? null;
+  }
+
+  async deleteInvite(tokenHash: string): Promise<void> {
+    await this.ensure();
+    await this.db.prepare("DELETE FROM org_invites WHERE token_hash = ?").bind(tokenHash).run();
+  }
+
+  async listInvitesForOrg(orgId: string): Promise<OrgInvite[]> {
+    await this.ensure();
+    const { results } = await this.db
+      .prepare(
+        "SELECT org_id AS orgId, role, address, invited_by AS invitedBy, expires_at AS expiresAt, created_at AS createdAt FROM org_invites WHERE org_id = ?",
+      )
+      .bind(orgId)
+      .all<OrgInvite>();
+    return results ?? [];
+  }
+
+  async listInvitesForAddress(
+    address: string,
+  ): Promise<Array<OrgInvite & { tokenHash: string }>> {
+    await this.ensure();
+    const key = normalizeAddress(address);
+    if (!key) return [];
+    const { results } = await this.db
+      .prepare(
+        "SELECT token_hash AS tokenHash, org_id AS orgId, role, address, invited_by AS invitedBy, expires_at AS expiresAt, created_at AS createdAt FROM org_invites WHERE address = ?",
+      )
+      .bind(key)
+      .all<OrgInvite & { tokenHash: string }>();
+    return results ?? [];
   }
 }

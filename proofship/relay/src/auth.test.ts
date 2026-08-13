@@ -188,4 +188,64 @@ describe("SIWE auth routes", () => {
       ),
     ).toBe(true);
   });
+
+  it("mints an invite for a wallet that has not signed in", async () => {
+    const store = new MemoryAccountStore();
+    const nonceRes = await handleAuth(
+      new Request(
+        `http://relay.test/api/auth/siwe/nonce?address=${ACCOUNT.address}`,
+        { headers: originHeaders() },
+      ),
+      {},
+      store,
+    );
+    const { message } = (await nonceRes!.json()) as { message: string };
+    const signature = await ACCOUNT.signMessage({ message });
+    const verifyRes = await handleAuth(
+      new Request("http://relay.test/api/auth/siwe/verify", {
+        method: "POST",
+        headers: { ...originHeaders(), "content-type": "application/json" },
+        body: JSON.stringify({ message, signature }),
+      }),
+      {},
+      store,
+    );
+    const { token } = (await verifyRes!.json()) as { token: string };
+    const orgs = await handleAuth(
+      new Request("http://relay.test/api/orgs", {
+        headers: { authorization: `Bearer ${token}` },
+      }),
+      {},
+      store,
+    );
+    const orgId = ((await orgs!.json()) as { orgs: { id: string }[] }).orgs[0]?.id;
+    const inviteRes = await handleAuth(
+      new Request(`http://relay.test/api/orgs/${orgId}/invites`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          address: "0x5555555555555555555555555555555555555555",
+          role: "member",
+        }),
+      }),
+      {},
+      store,
+    );
+    expect(inviteRes?.status).toBe(200);
+    const inviteBody = (await inviteRes!.json()) as { token: string; invite: { address: string } };
+    expect(inviteBody.token.length).toBeGreaterThan(8);
+    expect(inviteBody.invite.address).toBe("0x5555555555555555555555555555555555555555");
+
+    const peek = await handleAuth(
+      new Request(`http://relay.test/api/invites/${inviteBody.token}`),
+      {},
+      store,
+    );
+    expect(peek?.status).toBe(200);
+    const peekBody = (await peek!.json()) as { orgName: string };
+    expect(peekBody.orgName).toBe("Personal");
+  });
 });

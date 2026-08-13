@@ -6,16 +6,18 @@
  */
 
 import {
+  INVITE_TTL_MS,
   NONCE_TTL_MS,
   SESSION_TTL_MS,
   SHARE_TTL_MS,
   type AccountStore,
+  acceptPendingInvites,
   bearerFromRequest,
   ensurePersonalOrg,
   hashToken,
+  inviteStillValid,
   randomToken,
   resolveSession,
-  resolveShare,
   tokenFromUrl,
 } from "./accounts";
 import {
@@ -189,23 +191,31 @@ export async function handleAuth(
     if (!signer || signer !== fields.address) {
       return json({ ok: false, error: "signature does not match address" }, 401);
     }
+    const inviteToken =
+      isRecord(body) && typeof (body as { inviteToken?: unknown }).inviteToken === "string"
+        ? (body as { inviteToken: string }).inviteToken.trim()
+        : "";
     const now = new Date(nowMs).toISOString();
     const user = await store.upsertUser(fields.address, now);
     const org = await ensurePersonalOrg(store, user, now);
+    const extraHash = inviteToken ? await hashToken(inviteToken) : undefined;
+    const joined = await acceptPendingInvites(store, user, now, nowMs, extraHash);
+    const orgId = joined.at(-1)?.id ?? org.id;
     const token = randomToken(32);
     const expiresAt = new Date(nowMs + SESSION_TTL_MS).toISOString();
     await store.putSession(await hashToken(token), {
       userId: user.id,
       address: user.address,
       expiresAt,
-      orgId: org.id,
+      orgId,
     });
     return json({
       ok: true,
       token,
       address: user.address,
       userId: user.id,
-      orgId: org.id,
+      orgId,
+      joinedOrgs: joined.map((o) => ({ id: o.id, name: o.name })),
       expiresAt,
     });
   }
@@ -284,6 +294,33 @@ export async function handleAuth(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function mintInvite(
+  store: AccountStore,
+  orgId: string,
+  invitedBy: string,
+  role: "admin" | "member",
+  address: string | undefined,
+  nowMs: number,
+): Promise<{ token: string; invite: import("./accounts").OrgInvite } | { error: string }> {
+  let normalized: string | null = null;
+  if (address) {
+    normalized = normalizeAddress(address);
+    if (!normalized) return { error: "invalid address" };
+  }
+  const token = randomToken(24);
+  const now = new Date(nowMs).toISOString();
+  const invite = {
+    orgId,
+    role,
+    address: normalized,
+    invitedBy,
+    expiresAt: new Date(nowMs + INVITE_TTL_MS).toISOString(),
+    createdAt: now,
+  };
+  await store.putInvite(await hashToken(token), invite);
+  return { token, invite };
 }
 
 async function requireSession(
@@ -375,22 +412,25 @@ async function handleOrgRoutes(
       if (!isRecord(body) || typeof body.address !== "string") {
         return json({ ok: false, error: "address required" }, 400);
       }
-      const invited = await store.getUserByAddress(body.address);
-      if (!invited) {
-        return json({ ok: false, error: "invitee must sign in with SIWE once first" }, 404);
-      }
-      const role = parseOrgMemberRole(body.role) ?? "member";
-      if (role === "owner") {
+      const roleRaw = parseOrgMemberRole(body.role) ?? "member";
+      if (roleRaw === "owner") {
         return json({ ok: false, error: "cannot grant owner via invite" }, 400);
       }
-      await store.putMember({
-        orgId,
-        userId: invited.id,
-        address: invited.address,
-        role,
-        createdAt: new Date(nowMs).toISOString(),
-      });
-      return json({ ok: true, member: await store.getMember(orgId, invited.id) });
+      const role = roleRaw === "admin" ? "admin" : "member";
+      const invited = await store.getUserByAddress(body.address);
+      if (invited) {
+        await store.putMember({
+          orgId,
+          userId: invited.id,
+          address: invited.address,
+          role,
+          createdAt: new Date(nowMs).toISOString(),
+        });
+        return json({ ok: true, joined: true, member: await store.getMember(orgId, invited.id) });
+      }
+      const minted = await mintInvite(store, orgId, session.userId, role, body.address, nowMs);
+      if ("error" in minted) return json({ ok: false, error: minted.error }, 400);
+      return json({ ok: true, joined: false, invite: minted.invite, token: minted.token });
     }
     if (request.method === "DELETE") {
       if (!canManageMembers(self.role)) {
@@ -407,6 +447,82 @@ async function handleOrgRoutes(
       await store.deleteMember(orgId, target.id);
       return json({ ok: true });
     }
+  }
+
+  const invitesPath = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites$/u);
+  if (invitesPath) {
+    const orgId = decodeURIComponent(invitesPath[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "not signed in" }, 401);
+    const self = await store.getMember(orgId, session.userId);
+    if (!self) return json({ ok: false, error: "not a member of that org" }, 403);
+    if (request.method === "GET") {
+      return json({ ok: true, invites: await store.listInvitesForOrg(orgId) });
+    }
+    if (request.method === "POST") {
+      if (!canManageMembers(self.role)) {
+        return json({ ok: false, error: "only owner/admin can invite" }, 403);
+      }
+      let address: string | undefined;
+      let role: "admin" | "member" = "member";
+      try {
+        const body = await request.json();
+        if (isRecord(body)) {
+          if (typeof body.address === "string" && body.address.trim()) {
+            address = body.address;
+          }
+          const parsed = parseOrgMemberRole(body.role);
+          if (parsed === "owner") {
+            return json({ ok: false, error: "cannot grant owner via invite" }, 400);
+          }
+          if (parsed === "admin" || parsed === "member") role = parsed;
+        }
+      } catch {
+        /* open invite */
+      }
+      const minted = await mintInvite(store, orgId, session.userId, role, address, nowMs);
+      if ("error" in minted) return json({ ok: false, error: minted.error }, 400);
+      return json({ ok: true, invite: minted.invite, token: minted.token });
+    }
+  }
+
+  const invitePeek = url.pathname.match(/^\/api\/invites\/([^/]+)$/u);
+  if (request.method === "GET" && invitePeek) {
+    const raw = decodeURIComponent(invitePeek[1] ?? "");
+    if (!raw) return json({ ok: false, error: "missing invite" }, 400);
+    const invite = await store.getInvite(await hashToken(raw));
+    if (!invite || !inviteStillValid(invite, nowMs)) {
+      return json({ ok: false, error: "invite not found or expired" }, 404);
+    }
+    const org = await store.getOrg(invite.orgId);
+    return json({
+      ok: true,
+      orgId: invite.orgId,
+      orgName: org?.name ?? "Workspace",
+      role: invite.role,
+      address: invite.address,
+      expiresAt: invite.expiresAt,
+    });
+  }
+
+  const inviteAccept = url.pathname.match(/^\/api\/invites\/([^/]+)\/accept$/u);
+  if (request.method === "POST" && inviteAccept) {
+    const raw = decodeURIComponent(inviteAccept[1] ?? "");
+    const session = await requireSession(request, url, store, nowMs);
+    if (!session) return json({ ok: false, error: "sign in to accept the invite" }, 401);
+    const user = await store.getUser(session.userId);
+    if (!user) return json({ ok: false, error: "unknown user" }, 401);
+    const now = new Date(nowMs).toISOString();
+    const joined = await acceptPendingInvites(store, user, now, nowMs, await hashToken(raw));
+    if (joined.length === 0) {
+      return json({ ok: false, error: "invite not valid for this wallet" }, 403);
+    }
+    const orgId = joined.at(-1)!.id;
+    const token = bearerFromRequest(request) ?? tokenFromUrl(url);
+    if (token) {
+      await store.putSession(await hashToken(token), { ...session, orgId });
+    }
+    return json({ ok: true, orgId, joinedOrgs: joined.map((o) => ({ id: o.id, name: o.name })) });
   }
 
   const claim = url.pathname.match(/^\/api\/sessions\/([^/]+)\/claim$/u);

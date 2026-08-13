@@ -63,12 +63,16 @@
         <select id="org-select"></select>
       </label>
       <label class="field">
-        Invite wallet
-        <input id="org-invite" type="text" placeholder="0x…" spellcheck="false"/>
+        Invite wallet <span class="hint">(optional — leave empty for an open link)</span>
+        <input id="org-invite" type="text" placeholder="0x… or blank" spellcheck="false"/>
       </label>
       <div class="row">
-        <button id="org-add" type="button" class="ghost" disabled>Add member</button>
+        <button id="org-add" type="button" class="ghost" disabled>Create invite</button>
       </div>
+      <label class="field">
+        Invite URL
+        <input id="invite-url" type="text" readonly placeholder="create an invite" spellcheck="false"/>
+      </label>
       <p id="org-members" class="status"></p>
       <label class="field">
         Share role

@@ -37,6 +37,7 @@ const els = {
   orgInvite: document.getElementById("org-invite"),
   orgAdd: document.getElementById("org-add"),
   orgMembers: document.getElementById("org-members"),
+  inviteUrl: document.getElementById("invite-url"),
   claimSession: document.getElementById("claim-session"),
   sendComment: document.getElementById("send-comment"),
 };
@@ -232,10 +233,15 @@ async function siweLogin() {
       method: "personal_sign",
       params: [nonceBody.message, address],
     });
+    const inviteToken = params.get("invite") || "";
     const verifyRes = await fetch(`${base}/api/auth/siwe/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message: nonceBody.message, signature }),
+      body: JSON.stringify({
+        message: nonceBody.message,
+        signature,
+        inviteToken: inviteToken || undefined,
+      }),
     });
     const session = await verifyRes.json();
     if (!verifyRes.ok || !session.token) {
@@ -243,7 +249,11 @@ async function siweLogin() {
       return;
     }
     saveSession(session);
+    const joined = (session.joinedOrgs ?? []).map((o) => o.name).filter(Boolean);
     refreshAccountUi();
+    if (joined.length) {
+      setAccountStatus(`Signed in as ${session.address} · joined ${joined.join(", ")}`, "live");
+    }
   } catch (err) {
     setAccountStatus(err?.message || String(err), "err");
   }
@@ -306,14 +316,17 @@ if (els.orgAdd) {
     const base = els.relay.value.trim().replace(/\/$/, "");
     const orgId = els.orgSelect?.value;
     const address = els.orgInvite?.value.trim();
-    if (!base || !orgId || !address) {
-      setAccountStatus("Pick an org and enter a wallet that has signed in once.", "err");
+    if (!base || !orgId) {
+      setAccountStatus("Pick an org first.", "err");
       return;
     }
-    const res = await fetch(`${base}/api/orgs/${encodeURIComponent(orgId)}/members`, {
+    const path = address
+      ? `/api/orgs/${encodeURIComponent(orgId)}/members`
+      : `/api/orgs/${encodeURIComponent(orgId)}/invites`;
+    const res = await fetch(`${base}${path}`, {
       method: "POST",
       headers: { ...(await authHeaders()), "content-type": "application/json" },
-      body: JSON.stringify({ address, role: "member" }),
+      body: JSON.stringify(address ? { address, role: "member" } : { role: "member" }),
     });
     const body = await res.json();
     if (!res.ok) {
@@ -321,7 +334,21 @@ if (els.orgAdd) {
       return;
     }
     if (els.orgInvite) els.orgInvite.value = "";
-    setAccountStatus("Member added.", "live");
+    if (body.token) {
+      const here = new URL(location.href);
+      here.searchParams.set("relay", base);
+      here.searchParams.set("invite", body.token);
+      here.searchParams.delete("share");
+      here.searchParams.delete("shareToken");
+      const url = here.toString();
+      if (els.inviteUrl) els.inviteUrl.value = url;
+      setAccountStatus(
+        body.joined ? "Already a member. Invite link also minted." : "Invite link ready — send it.",
+        "live",
+      );
+    } else {
+      setAccountStatus("Member added.", "live");
+    }
     await refreshOrgs();
   });
 }
@@ -401,6 +428,23 @@ async function sendComment() {
 
 if (els.sendComment) els.sendComment.addEventListener("click", () => void sendComment());
 refreshAccountUi();
+
+if (params.get("invite") && !isShareMode) {
+  const base = (els.relay.value || DEFAULT_RELAY).replace(/\/$/, "");
+  fetch(`${base}/api/invites/${encodeURIComponent(params.get("invite"))}`)
+    .then((r) => r.json())
+    .then((body) => {
+      if (body?.ok) {
+        setAccountStatus(
+          `Invite to ${body.orgName} as ${body.role}${body.address ? ` for ${body.address}` : ""}. Sign in to join.`,
+          "live",
+        );
+      } else {
+        setAccountStatus(body.error || "Invite is invalid or expired.", "err");
+      }
+    })
+    .catch(() => {});
+}
 
 function updateExecutorPresence(state) {
   const ex = state?.executors ?? {};

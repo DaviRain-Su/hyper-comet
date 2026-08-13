@@ -28,7 +28,11 @@ GET  /api/orgs
 POST /api/orgs                      { name }
 POST /api/orgs/:id/select
 GET  /api/orgs/:id/members
-POST /api/orgs/:id/members          { address, role?: admin|member }
+POST /api/orgs/:id/members          { address, role?: admin|member }  (existing user joins now; unknown wallet gets an invite token)
+POST /api/orgs/:id/invites          { address?, role? }  open link if address omitted
+GET  /api/orgs/:id/invites
+GET  /api/invites/:token            public peek
+POST /api/invites/:token/accept     signed-in wallet joins
 DELETE /api/orgs/:id/members?address=
 POST /api/sessions/:id/claim        bind room to the active org
 POST /api/sessions/:id/comments     { text }  (comment or command role)
