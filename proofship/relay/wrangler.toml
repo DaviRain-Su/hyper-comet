@@ -12,3 +12,12 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SessionRoom"]
+
+# Optional accounts DB (Phase 4.2). When unset, relay uses an in-memory store
+# (local spike / tests). Create + bind before production:
+#   wrangler d1 create proofship-accounts
+#   wrangler d1 execute proofship-accounts --file=schema.sql
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "proofship-accounts"
+# database_id = "<set-after-create>"

@@ -9,6 +9,13 @@
  */
 import { DurableObject } from "cloudflare:workers";
 import {
+  getAccountStore,
+  handleAuth,
+  shareAllowed,
+  viewerAllowed,
+  withCors,
+} from "./auth";
+import {
   PLATFORM_DEPLOY_REFUSAL,
   authorizeEngine,
   authorizeShare,
@@ -53,6 +60,11 @@ export interface Env {
    * When unset, share uses the same auth as viewer endpoints.
    */
   SHARE_TOKEN?: string;
+  /** Optional D1 accounts database. Memory store is used when unset. */
+  DB?: D1Database;
+  /** Host the SIWE message must name (defaults to Origin / request host). */
+  SIWE_DOMAIN?: string;
+  SIWE_URI?: string;
 }
 
 type Role = "engine" | "viewer" | "platform";
@@ -143,12 +155,21 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({
-        ok: true,
-        contract: "proofship-relay-w1",
-        dualExecutor: true,
-      });
+      return withCors(
+        request,
+        json({
+          ok: true,
+          contract: "proofship-relay-w1-accounts",
+          dualExecutor: true,
+          accounts: true,
+          siwe: true,
+        }),
+      );
     }
+
+    const store = getAccountStore(env);
+    const authResponse = await handleAuth(request, env, store);
+    if (authResponse) return withCors(request, authResponse);
 
     // Prefer /ws/engine/:sessionId; keep /ws/engine/:launchId alias.
     for (const prefix of ["/ws/engine/", "/ws/session/engine/"]) {
@@ -167,7 +188,9 @@ export default {
       const roomId = extractRoomId(url.pathname, prefix);
       if (request.method === "GET" && roomId !== null) {
         if (!isUpgrade(request)) return badRequest("expected WebSocket upgrade");
-        if (!authorizeViewer(env, url)) return unauthorized("invalid viewer token");
+        if (!(await viewerAllowed(request, url, store, Date.now(), (u) => authorizeViewer(env, u)))) {
+          return unauthorized("invalid viewer token");
+        }
         return forwardToRoom(request, env, roomId, "viewer");
       }
     }
@@ -178,21 +201,35 @@ export default {
     if (request.method === "GET" && stateMatch !== null) {
       const roomId = decodeURIComponent(stateMatch[1] ?? "");
       if (!roomId) return badRequest("missing session id");
-      if (!authorizeViewer(env, url)) return unauthorized("invalid viewer token");
+      if (!(await viewerAllowed(request, url, store, Date.now(), (u) => authorizeViewer(env, u)))) {
+        return unauthorized("invalid viewer token");
+      }
       const id = env.SESSION_ROOM.idFromName(roomId);
       const room = env.SESSION_ROOM.get(id);
-      return room.fetch(new Request(new URL("/state", request.url), { method: "GET" }));
+      return withCors(
+        request,
+        await room.fetch(new Request(new URL("/state", request.url), { method: "GET" })),
+      );
     }
 
-    // Phase 4.4 stub: read-only share (gate + transcript; no command queue).
+    // Read-only share: minted SIWE share token, or SHARE_TOKEN / viewer fallback.
     const shareMatch = url.pathname.match(/^\/api\/share\/([^/]+)$/u);
     if (request.method === "GET" && shareMatch !== null) {
       const roomId = decodeURIComponent(shareMatch[1] ?? "");
       if (!roomId) return badRequest("missing session id");
-      if (!authorizeShare(env, url)) return unauthorized("invalid share token");
+      if (
+        !(await shareAllowed(request, url, store, roomId, Date.now(), (u) =>
+          authorizeShare(env, u),
+        ))
+      ) {
+        return unauthorized("invalid share token");
+      }
       const id = env.SESSION_ROOM.idFromName(roomId);
       const room = env.SESSION_ROOM.get(id);
-      return room.fetch(new Request(new URL("/share", request.url), { method: "GET" }));
+      return withCors(
+        request,
+        await room.fetch(new Request(new URL("/share", request.url), { method: "GET" })),
+      );
     }
 
     return notFound();

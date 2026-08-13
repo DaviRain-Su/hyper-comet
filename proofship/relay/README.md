@@ -12,7 +12,22 @@ web viewers and executors.
 | Role | How |
 |---|---|
 | Engine / platform | `?token=&deviceId=` matched against `DEVICE_TOKENS` JSON, or `DEVICE_TOKEN` / `ENGINE_TOKEN` (`*` fallback). Empty config accepts any token (local spike). |
-| Viewer | Optional `VIEWER_TOKEN` → require `?viewerToken=` |
+| Viewer | SIWE session (`Authorization: Bearer` or `?sessionToken=`) **or** optional `VIEWER_TOKEN` (`?viewerToken=`). Local spike with neither still accepts. |
+
+### SIWE (Phase 4.2)
+
+Wallet address is the account. The signature is a login, **not** a deploy key.
+
+```
+GET  /api/auth/siwe/nonce?address=0x…&chainId=1952
+POST /api/auth/siwe/verify          { message, signature } → { token, address, expiresAt }
+GET  /api/auth/me                   Authorization: Bearer <token>
+POST /api/auth/logout
+POST /api/sessions/:id/share        mint a readonly share token (signed-in)
+```
+
+Sessions persist in D1 when `DB` is bound (`schema.sql`); otherwise an in-memory
+store (local spike / tests). Tokens are stored hashed. CORS is enabled on `/api/*`.
 
 ## WebSockets
 
@@ -66,16 +81,17 @@ GET /api/launches/:id/state   # alias
 Returns `{ state, tail, queueDepth }`. Snapshot includes `transcript`,
 `executors`, `deployment`, gate/artifact fields.
 
-## Read-only share (Phase 4.4 stub)
+## Read-only share
 
 ```
 GET /api/share/:sessionId?token=…
 ```
 
-Auth: Query parameter `token` matched against `SHARE_TOKEN` when set (the web client also passes `viewerToken` as a fallback). If `SHARE_TOKEN` is unset, falls back to `VIEWER_TOKEN` (`viewerToken` or `token`). When neither is set, local spike requests are accepted.
+Auth, in order: minted SIWE share token for that session → owner session
+token → `SHARE_TOKEN` / `VIEWER_TOKEN` stub → local spike if none set.
 Response is redacted — gate / artifact / deployment / transcript only; no
-command queue and no write WebSocket. Full SIWE + permissioned share links
-remain Phase 4.
+command queue and no write WebSocket. Comment / command share roles are still
+follow-on.
 
 ## Development
 
@@ -95,7 +111,7 @@ wrangler secret put DEVICE_TOKENS   # '{"laptop":"…"}' preferred
 npm run deploy
 ```
 
-## Follow-on (not W1)
+## Follow-on
 
-SIWE / WorkOS accounts, share links, D1, billing quotas — see product-plan
-Phase 4 and `proofship/platform-sandbox/`.
+WorkOS email/OAuth (already on `edge/`), D1 production bind, comment/command
+share roles, billing quotas — see product-plan Phase 4.

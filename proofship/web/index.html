@@ -46,6 +46,24 @@
       <p id="status" class="status">Disconnected — open desktop ProofShip or choose Platform.</p>
     </section>
 
+    <section id="account-panel" class="panel">
+      <h2>Account</h2>
+      <p class="lede">
+        Sign in with a wallet (SIWE). This identifies you on the relay — it does
+        <strong>not</strong> give the relay a deploy key.
+      </p>
+      <p id="account-status" class="status">Not signed in.</p>
+      <div class="row">
+        <button id="siwe-login" type="button">Sign in with wallet</button>
+        <button id="siwe-logout" type="button" class="ghost" disabled>Sign out</button>
+        <button id="mint-share" type="button" class="ghost" disabled>Mint share link</button>
+      </div>
+      <label class="field">
+        Share URL
+        <input id="share-url" type="text" readonly placeholder="sign in, then mint" spellcheck="false"/>
+      </label>
+    </section>
+
     <section class="panel session-panel">
       <h2>Transcript</h2>
       <div id="transcript" class="transcript" aria-live="polite"></div>

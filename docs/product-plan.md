@@ -88,16 +88,16 @@
 
 **验收主路径:** 手机打开 web → 选「我的桌面」在线 → 发 NL → 桌面 Sessions 跑 agent+MCP → 事件回 web;另选 Platform → 仅门禁 job 在 Sandbox;deploy 仍回本机/钱包。
 
-**进度(2026-08-13):** W1–W5 合同与壳已落地。`proofship/web` `?share=1` 只读分享视图打现有 `GET /api/share/:id`。Platform Sandbox 入口为脚手架(非生产镜像)。SIWE / D1 / 托管 agent 仍 Phase 4 follow-on。
+**进度(2026-08-13):** W1–W5 合同与壳已落地。SIWE 账户 + 只读 share mint 已进 relay/web。Platform Sandbox 入口为脚手架(非生产镜像)。WorkOS 组织表 / 评论分权 / 托管 agent 仍 follow-on。
 
 ### Phase 4 — 平台账户与云(多用户)
 
 | 项 | 内容 |
 |---|---|
 | 4.1 自托管 edge | 部署 `edge/`(Workers+DO+R2);`COMET_EDGE_URL` 指回自有域 |
-| 4.2 平台登录(多用户) | **Follow-on after W1–W5:** 很多开发者各自注册/登录:WorkOS(邮箱/OAuth,管线已内建)+ **SIWE 钱包登录**(web3 用户习惯;钱包地址即账户,与 2.2 的钱包连接打通);D1 用户/组织表;会话与 token 刷新 |
+| 4.2 平台登录(多用户) | **SIWE 钱包登录** ✅ relay `/api/auth/siwe/*` + web Account 面板(钱包地址即账户;签名只作登录,不授部署钥)。WorkOS 邮箱/OAuth 仍在 `edge/`(同步基座)。D1 表已写 `schema.sql`,未绑定时走内存 store;生产需 `wrangler d1 create` 后绑定 |
 | 4.3 隔离与权限 | 每用户/每 org 空间隔离(org 门禁已内建于 workspace room 授权);relay 已支持 per-device token(W1);分享链接的权限策略(只读/可评论/可下命令)仍后置 |
-| 4.4 分享链接 | 只读 gate-report + transcript 尾 — stub:`GET /api/share/:id`(SHARE_TOKEN);web `?share=1` 只读视图已接该端点。完整 SIWE/分权后置 |
+| 4.4 分享链接 | 只读视图 ✅ web `?share=1`;已登录用户可 `POST /api/sessions/:id/share` 铸造只读 token。评论/下命令分权仍后置 |
 | 4.5 托管 agent lane | 纯云端执行(pi 等 lane 的托管形态);按需 |
 
 ### Phase 5 — 生态与差异化

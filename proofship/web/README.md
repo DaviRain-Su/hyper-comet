@@ -11,6 +11,7 @@ deploy keys.
 - Composer → `cmd.prompt` / `cmd.steer` / `cmd.cancel`
 - Deploy → `cmd.deploy` (UserExecutor only; platform refused by relay)
 - Interact → viem `eth_call` + `window.ethereum` writes; fill from snapshot
+- Account → **Sign in with wallet** (SIWE on the relay); mint a read-only share URL
 - ProofForge HTTP MCP panel for **external IDE agents** (not the main chat)
 
 ## Local
@@ -25,6 +26,7 @@ Query params:
 - `?relay=https://…&session=<id>`
 - `?launch=<id>` (alias for session)
 - `?viewerToken=…` when relay sets `VIEWER_TOKEN`
+- `?share=1&shareToken=…` read-only share view
 - `?executor=platform` to preselect Platform
 - `?pfMcp=https://…/mcp`
 
@@ -41,6 +43,6 @@ and says to open desktop ProofShip or choose Platform. Empty rooms show `{}`.
 
 ## Auth contract
 
-Viewer: optional `viewerToken` query param. Engine/platform: per-device token on
-the executor WebSocket (see relay README). SIWE / share links are Phase 4
-follow-on.
+Viewer: SIWE session (web Account panel) or optional `viewerToken`.
+Engine/platform: per-device token on the executor WebSocket (see relay README).
+SIWE identifies the account only — it never sends a deploy key.

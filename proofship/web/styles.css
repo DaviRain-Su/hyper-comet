@@ -16,6 +16,7 @@
 body.share-mode #executor-fieldset,
 body.share-mode #composer,
 body.share-mode #deploy-panel,
+body.share-mode #account-panel,
 body.share-mode #cancel,
 body.share-mode #disconnect {
   display: none !important;

@@ -27,6 +27,11 @@ const els = {
   deployDigest: document.getElementById("deploy-digest"),
   deploy: document.getElementById("deploy"),
   deployStatus: document.getElementById("deploy-status"),
+  siweLogin: document.getElementById("siwe-login"),
+  siweLogout: document.getElementById("siwe-logout"),
+  mintShare: document.getElementById("mint-share"),
+  accountStatus: document.getElementById("account-status"),
+  shareUrl: document.getElementById("share-url"),
 };
 
 const params = new URLSearchParams(location.search);
@@ -93,10 +98,154 @@ function wsUrl(base, sessionId, viewerToken) {
   const u = new URL(base);
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   u.pathname = `/ws/web/${encodeURIComponent(sessionId)}`;
-  u.search = viewerToken ? `?viewerToken=${encodeURIComponent(viewerToken)}` : "";
+  const q = new URLSearchParams();
+  if (viewerToken) q.set("viewerToken", viewerToken);
+  const sessionToken = loadSession()?.token;
+  if (sessionToken && !viewerToken) q.set("sessionToken", sessionToken);
+  u.search = q.toString() ? `?${q.toString()}` : "";
   u.hash = "";
   return u.toString();
 }
+
+const SESSION_KEY = "proofship.siwe.session";
+
+function loadSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token || !parsed?.address) return null;
+    if (parsed.expiresAt && Date.parse(parsed.expiresAt) <= Date.now()) {
+      sessionStorage.removeItem(SESSION_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(session) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+function clearSession() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+function setAccountStatus(text, kind = "") {
+  if (!els.accountStatus) return;
+  els.accountStatus.textContent = text;
+  els.accountStatus.className = `status${kind ? ` ${kind}` : ""}`;
+}
+
+function refreshAccountUi() {
+  const session = loadSession();
+  const signedIn = Boolean(session);
+  if (els.siweLogin) els.siweLogin.disabled = signedIn || isShareMode;
+  if (els.siweLogout) els.siweLogout.disabled = !signedIn;
+  if (els.mintShare) els.mintShare.disabled = !signedIn || isShareMode;
+  if (signedIn) {
+    setAccountStatus(`Signed in as ${session.address}`, "live");
+  } else {
+    setAccountStatus("Not signed in.");
+  }
+}
+
+async function siweLogin() {
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  if (!base) {
+    setAccountStatus("Set the relay base URL first.", "err");
+    return;
+  }
+  if (!window.ethereum) {
+    setAccountStatus("No window.ethereum — install a browser wallet.", "err");
+    return;
+  }
+  try {
+    setAccountStatus("Requesting wallet…");
+    const [address] = await window.ethereum.request({ method: "eth_requestAccounts" });
+    const chainHex = await window.ethereum.request({ method: "eth_chainId" }).catch(() => "0x7a0");
+    const chainId = Number.parseInt(chainHex, 16) || 1952;
+    const nonceRes = await fetch(
+      `${base}/api/auth/siwe/nonce?address=${encodeURIComponent(address)}&chainId=${chainId}`,
+    );
+    const nonceBody = await nonceRes.json();
+    if (!nonceRes.ok || !nonceBody.message) {
+      setAccountStatus(nonceBody.error || `Nonce failed (${nonceRes.status})`, "err");
+      return;
+    }
+    setAccountStatus("Sign the SIWE message in your wallet…");
+    const signature = await window.ethereum.request({
+      method: "personal_sign",
+      params: [nonceBody.message, address],
+    });
+    const verifyRes = await fetch(`${base}/api/auth/siwe/verify`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: nonceBody.message, signature }),
+    });
+    const session = await verifyRes.json();
+    if (!verifyRes.ok || !session.token) {
+      setAccountStatus(session.error || `Verify failed (${verifyRes.status})`, "err");
+      return;
+    }
+    saveSession(session);
+    refreshAccountUi();
+  } catch (err) {
+    setAccountStatus(err?.message || String(err), "err");
+  }
+}
+
+async function siweLogout() {
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const session = loadSession();
+  if (base && session?.token) {
+    await fetch(`${base}/api/auth/logout`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.token}` },
+    }).catch(() => {});
+  }
+  clearSession();
+  if (els.shareUrl) els.shareUrl.value = "";
+  refreshAccountUi();
+}
+
+async function mintShareLink() {
+  const base = els.relay.value.trim().replace(/\/$/, "");
+  const sessionId = els.session.value.trim();
+  const session = loadSession();
+  if (!base || !sessionId || !session?.token) {
+    setAccountStatus("Sign in and set a session id first.", "err");
+    return;
+  }
+  try {
+    const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/share`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${session.token}` },
+    });
+    const body = await res.json();
+    if (!res.ok || !body.token) {
+      setAccountStatus(body.error || `Mint failed (${res.status})`, "err");
+      return;
+    }
+    const here = new URL(location.href);
+    here.searchParams.set("relay", base);
+    here.searchParams.set("session", sessionId);
+    here.searchParams.set("share", "1");
+    here.searchParams.set("shareToken", body.token);
+    const url = here.toString();
+    if (els.shareUrl) els.shareUrl.value = url;
+    setAccountStatus("Read-only share link minted.", "live");
+  } catch (err) {
+    setAccountStatus(err?.message || String(err), "err");
+  }
+}
+
+if (els.siweLogin) els.siweLogin.addEventListener("click", () => void siweLogin());
+if (els.siweLogout) els.siweLogout.addEventListener("click", () => void siweLogout());
+if (els.mintShare) els.mintShare.addEventListener("click", () => void mintShareLink());
+refreshAccountUi();
 
 function updateExecutorPresence(state) {
   const ex = state?.executors ?? {};
