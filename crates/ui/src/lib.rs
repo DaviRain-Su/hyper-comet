@@ -1,16 +1,19 @@
 //! comet-ui — the gpui viewport. Shell, sidebar, conversation, composer, terminal,
 //! diff pane.
 //!
+//! Visual tokens (theme / icons / fonts) live in [`comet_kit`] and are re-exported
+//! here as [`theme`] / [`icons`] for existing call sites.
+//!
 //! Design: ARCHITECTURE.md §4; animation catalog docs/research/feature-inventory.md
 //! §1.12; virtualization/markdown techniques docs/research/mugen-pretext.md.
 //!
 //! M3a foundation:
-//! - [`theme`] — always-dark monochrome theme (oklch-derived neutrals), a gpui Global;
+//! - [`theme`] — light/dark token set from `comet-kit` (oklch-derived neutrals);
 //! - [`motion`] — the comet animation catalog over gpui `Animation` + cubic-bezier;
 //! - [`state`] — `AppState` entity + `EngineHandle` (connect-or-embed engine);
 //! - [`settings`] — persisted pane widths/collapse flags;
 //! - [`shell`] — sidebar + main panel + right-pane scaffold + gate;
-//! - [`loaders`] — comet pulse loader, gradient spinner, boot splash.
+//! - [`loaders`] — comet pulse loader, gradient spinner, boot splash;
 
 pub mod app_menus;
 pub mod appearance;
@@ -36,40 +39,9 @@ pub mod terminal;
 pub mod theme;
 pub mod transcript;
 
-use std::borrow::Cow;
 use std::path::PathBuf;
 
 use gpui::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
-
-/// Embedded UI fonts — Geist and Geist Mono (variable), © Vercel Inc.,
-/// licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
-/// Bundled so the type ships with the binary instead of depending on what the
-/// host system happens to have installed.
-static FONT_GEIST: &[u8] = include_bytes!("../assets/fonts/Geist.ttf");
-static FONT_GEIST_MONO: &[u8] = include_bytes!("../assets/fonts/GeistMono.ttf");
-/// Static Geist weights alongside the variable file: gpui's cosmic-text path
-/// (Linux) rasterizes variable fonts at their default instance only — it never
-/// applies `wght` coordinates — so medium/semibold/bold text silently paints
-/// at 400 with just the variable TTF registered. The statics give the face
-/// matcher real 500/600/700 faces (macOS/CoreText applies the variable axis
-/// natively and simply never falls through to these).
-static FONT_GEIST_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Geist-Medium.ttf");
-static FONT_GEIST_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Geist-SemiBold.ttf");
-static FONT_GEIST_BOLD: &[u8] = include_bytes!("../assets/fonts/Geist-Bold.ttf");
-
-/// Register the embedded fonts with the gpui text system. Failure is non-fatal:
-/// the theme's system fallbacks take over (same families the CSS stack names).
-fn register_fonts(cx: &App) {
-    if let Err(err) = cx.text_system().add_fonts(vec![
-        Cow::Borrowed(FONT_GEIST),
-        Cow::Borrowed(FONT_GEIST_MONO),
-        Cow::Borrowed(FONT_GEIST_MEDIUM),
-        Cow::Borrowed(FONT_GEIST_SEMIBOLD),
-        Cow::Borrowed(FONT_GEIST_BOLD),
-    ]) {
-        tracing::warn!(error = %err, "failed to register embedded Geist fonts");
-    }
-}
 
 pub use comet_proto::HarnessId;
 pub use state::EngineBootConfig;
@@ -122,7 +94,7 @@ impl gpui::Global for ReopenState {}
 /// connect-or-embed), 1320×880 window (min 900×600) with [`shell::Shell`] as the
 /// root view, boot splash overlaid until the engine reports ready.
 pub fn run_app(config: UiConfig) {
-    let app = gpui_platform::application().with_assets(icons::Assets);
+    let app = gpui_platform::application().with_assets(comet_kit::Assets);
     // Dock-icon click with no window (⌘W closed it): rebuild the main window
     // around the still-running engine — zed does the same via `on_reopen`
     // (crates/zed/src/main.rs `app.on_reopen`).
@@ -137,7 +109,7 @@ pub fn run_app(config: UiConfig) {
     app.run(move |cx: &mut App| {
         // NB: pinned-rev API — `gpui_tokio::init(cx)` free function (not `Tokio::init`).
         gpui_tokio::init(cx);
-        register_fonts(cx);
+        comet_kit::register_fonts(cx);
         // Appearance before anything paints: the theme global has to be the
         // final one on the very first frame, or the window flashes the wrong
         // palette while settings load.

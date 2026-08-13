@@ -29,10 +29,11 @@ cargo run -p comet
 apps/comet            the desktop binary (headed + headless engine daemon)
 apps/landing          marketing site
 apps/ios              iOS companion
-crates/               proto · doc · sync · harness · engine · rpc · ui (gpui)
+crates/               proto · doc · sync · harness · engine · rpc · kit · ui (gpui)
+                      kit = theme / icons / fonts; ui = product screens on top of kit
 crates/pf-mcp/        proofship-pf-mcp — ProofForge gate as an MCP server (rmcp, stdio)
 edge/                 TypeScript Worker + Durable Objects (sync edge)
-skills/               agent skills (proofforge-program-v1 is embedded into the engine)
+skills/               agent skills (ProgramV1, EVM, Cloudflare — embedded into the engine)
 docs/                 architecture + competition materials
 ```
 

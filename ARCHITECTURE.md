@@ -127,8 +127,11 @@ comet-native/
     rpc/          comet-rpc      # UiRpc/ControlRpc: typed req/resp/stream over WS (tokio-
                                  # tungstenite) + in-memory transport; device-room virtual
                                  # sockets ({s,k,to,from} frames)
+    kit/          comet-kit      # design kit: theme tokens, Solar Icons, Geist fonts
+                                 # (reusable; product screens stay out)
     ui/           comet-ui       # gpui app: shell, sidebar, conversation, composer,
-                                 # terminal view, diff pane, settings, animation kit
+                                 # terminal view, diff pane, settings, animation kit;
+                                 # re-exports comet-kit as theme/icons
   apps/
     comet/                       # the binary (headed default, `headless` subcommand)
   edge/                          # TypeScript Worker + DOs (ported from comet/apps/edge,
@@ -147,6 +150,10 @@ feature spec `docs/research/feature-inventory.md` §1.
 
 - **Deps**: `gpui` + `gpui_platform` pinned to one Zed rev (Apache-2.0). **We do not use Zed's
   GPL crates** (`markdown`, `ui`, `theme`, `editor`) — markdown, components, and theme are ours.
+- **Design kit** (`comet-kit`): shared visual layer — `Theme` / appearance tokens, embedded
+  Solar Icons + `AssetSource`, Geist font registration. `comet-ui` depends on it and re-exports
+  `theme` / `icons` for existing paths. Product chrome (shell, transcript, composer, …) stays in
+  `comet-ui`; do not pull those into the kit.
 - **Transcript**: gpui `list()` + `ListState::new(n, ListAlignment::Bottom, overdraw)` (sum-tree
   offsets, follow-tail). On top of it, port the mugen behaviors that gpui doesn't give us:
   - stick-to-bottom **spring** with feed-forward tracking of streaming growth; interrupt from

@@ -9,6 +9,7 @@ members = [
     "crates/pf-mcp",
     "crates/rpc",
     "crates/update",
+    "crates/kit",
     "crates/ui",
     "apps/comet",
 ]
@@ -27,6 +28,7 @@ comet-harness = { path = "crates/harness" }
 comet-engine = { path = "crates/engine" }
 comet-rpc = { path = "crates/rpc" }
 comet-update = { path = "crates/update" }
+comet-kit = { path = "crates/kit" }
 comet-ui = { path = "crates/ui" }
 
 # CRDT
