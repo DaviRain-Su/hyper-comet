@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use comet_proto::{EvmNetwork, builtin_networks};
+use zeron_proto::{EvmNetwork, builtin_networks};
 
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {

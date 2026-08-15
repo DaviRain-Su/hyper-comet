@@ -24,12 +24,12 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-use comet_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
-use comet_proto::{
+use zeron_doc::{MessagePart, MessageRole, SessionCommandPayload, SessionMessageEntry};
+use zeron_proto::{
     FileSearchMatch, HarnessId, RunRequest, SandboxLevel, SlashCommand, UserInputAnswer,
     UserInputQuestion,
 };
-use comet_rpc::{RpcError, methods};
+use zeron_rpc::{RpcError, methods};
 
 use crate::attachments::{self, StagedAttachment};
 use crate::motion;
@@ -41,17 +41,17 @@ use crate::theme::Theme;
 // Constants + pure decision logic
 // ---------------------------------------------------------------------------
 
-/// Expanded-mode textarea vertical padding: `pt-4 pb-1` (comet composer.tsx
+/// Expanded-mode textarea vertical padding: `pt-4 pb-1` (zeron composer.tsx
 /// line 578) = 16 + 4.
 pub const TEXTAREA_PAD_V: f32 = 20.0;
 /// The expanded textarea BOX (content + padding) is clamped by the original's
 /// auto-grow effect: `ta.style.height = Math.min(Math.max(scrollHeight, 76),
-/// 260)` (comet composer.tsx line 235). The 76px floor applies even when
+/// 260)` (zeron composer.tsx line 235). The 76px floor applies even when
 /// empty — it's what makes the always-expanded new-chat composer tall.
 pub const TEXTAREA_MIN: f32 = 76.0;
 pub const TEXTAREA_MAX: f32 = 260.0;
 /// Expanded actions row: `pt-1` (4) + h-8 picker chips (32 — the tallest
-/// children; composer/styles.tsx pickerChip) + `pb-2.5` (10) — comet
+/// children; composer/styles.tsx pickerChip) + `pb-2.5` (10) — zeron
 /// composer-actions.tsx line 60.
 pub const ACTIONS_ROW_HEIGHT: f32 = 46.0;
 /// The pill's 1px hairline, top + bottom (`rounded-[26px] border`).
@@ -190,7 +190,7 @@ fn input_drag_scroll_delta(
     distance.signum() * (distance.abs() * 0.2).clamp(1.0, line_height)
 }
 
-/// Staged-attachment strip metrics (comet attachment-ui.tsx AttachmentStrip:
+/// Staged-attachment strip metrics (zeron attachment-ui.tsx AttachmentStrip:
 /// `flex flex-wrap gap-2 px-4 pt-3`, `size-14` thumbs).
 pub const STRIP_THUMB: f32 = 56.0;
 pub const STRIP_GAP: f32 = 8.0;
@@ -376,20 +376,6 @@ pub fn send_button_mode(run_live: bool, has_text: bool) -> SendButtonMode {
         (true, true) => SendButtonMode::Steer,
         (true, false) => SendButtonMode::Stop,
     }
-}
-
-/// The prompt-at-top treatment belongs only to a chat's first send. The
-/// loaded transcript alone can't prove that: selecting a chat clears it
-/// synchronously and the watch task refills it later, so a fast send into a
-/// just-selected chat would read a history-laden transcript as empty. The
-/// chat row's own activity — bumped on every dispatch, `None` on a fresh row
-/// — closes that window.
-fn send_starts_empty_chat(
-    transcript_len: usize,
-    pending_echoes_len: usize,
-    chat_never_messaged: bool,
-) -> bool {
-    transcript_len == 0 && pending_echoes_len == 0 && chat_never_messaged
 }
 
 /// Find the unresolved input request the panel should serve, if any: an
@@ -651,7 +637,7 @@ const MENTION_TOOLTIP_HEIGHT: f32 = 24.0;
 const MENTION_SIDE_PAD: &str = "\u{00A0}";
 /// A private URI scheme keeps file mentions distinguishable from ordinary
 /// Markdown links pasted into the composer.
-const FILE_MENTION_SCHEME: &str = "comet-file:";
+const FILE_MENTION_SCHEME: &str = "zeron-file:";
 
 /// A restorable point in the input's history: text plus where the caret and
 /// selection sat when the edit landed.
@@ -3163,12 +3149,9 @@ impl Render for ComposerInput {
 #[derive(Debug, Clone)]
 pub enum ComposerEvent {
     /// A prompt was sent optimistically — give the transcript its exact row
-    /// identity so it can stage the top-anchor-to-follow-tail handoff.
-    Sent {
-        chat_id: String,
-        message_id: String,
-        started_empty: bool,
-    },
+    /// identity so it can anchor the prompt at the top with the reply's
+    /// reserved space below it.
+    Sent { chat_id: String, message_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3278,7 +3261,7 @@ fn mention_response_is_current(state: &FileMentionState, request: u64) -> bool {
 fn mention_error_message(err: &RpcError) -> SharedString {
     match err {
         RpcError::UnknownMethod(_) => {
-            "The session's device runs an older comet — update it to search its files".into()
+            "The session's device runs an older zeron — update it to search its files".into()
         }
         RpcError::Transport(_) | RpcError::Closed => "The session's device is unreachable".into(),
         RpcError::BadParams(_) | RpcError::Failed(_) => "File search failed".into(),
@@ -3289,7 +3272,7 @@ fn mention_error_message(err: &RpcError) -> SharedString {
 fn slash_error_message(err: &RpcError) -> SharedString {
     match err {
         RpcError::UnknownMethod(_) => {
-            "The session's device runs an older comet — update it to list commands".into()
+            "The session's device runs an older zeron — update it to list commands".into()
         }
         RpcError::Transport(_) | RpcError::Closed => "The session's device is unreachable".into(),
         RpcError::BadParams(_) | RpcError::Failed(_) => {
@@ -3316,7 +3299,7 @@ pub struct Composer {
     /// gets focus back on close.
     preview_focus: FocusHandle,
     /// Focus grab deferred to the next render (open sites don't all have a
-    /// `Window` — the `COMET_ATTACH_PREVIEW` boot knob opens in `new`).
+    /// `Window` — the `ZERON_ATTACH_PREVIEW` boot knob opens in `new`).
     preview_focus_pending: bool,
     /// In-flight file-picker prompt (paperclip).
     picker_task: Option<Task<()>>,
@@ -3470,9 +3453,9 @@ impl Composer {
             _input_events: input_events,
         };
         // Dev knob: pre-stage attachments (drop/paste can't be synthesized on
-        // a rig) — `COMET_ATTACH=/path/a.png[,/path/b.png]`, and
-        // `COMET_ATTACH_PREVIEW=1` boots with the first one's lightbox open.
-        if let Ok(spec) = std::env::var("COMET_ATTACH") {
+        // a rig) — `ZERON_ATTACH=/path/a.png[,/path/b.png]`, and
+        // `ZERON_ATTACH_PREVIEW=1` boots with the first one's lightbox open.
+        if let Ok(spec) = std::env::var("ZERON_ATTACH") {
             let staged: Vec<StagedAttachment> = spec
                 .split(',')
                 .filter(|s| !s.trim().is_empty())
@@ -3480,13 +3463,13 @@ impl Composer {
                     match attachments::stage_file(std::path::Path::new(path.trim())) {
                         Ok(att) => Some(att),
                         Err(err) => {
-                            tracing::warn!(%path, error = %err, "COMET_ATTACH stage failed");
+                            tracing::warn!(%path, error = %err, "ZERON_ATTACH stage failed");
                             None
                         }
                     }
                 })
                 .collect();
-            if std::env::var("COMET_ATTACH_PREVIEW").is_ok_and(|v| v == "1")
+            if std::env::var("ZERON_ATTACH_PREVIEW").is_ok_and(|v| v == "1")
                 && let Some(first) = staged.first()
             {
                 composer.preview = Some(attachments::PreviewImage {
@@ -3506,7 +3489,7 @@ impl Composer {
         composer
     }
 
-    /// Capture-knob passthrough (`COMET_OPEN_DIALOG=model`): open the
+    /// Capture-knob passthrough (`ZERON_OPEN_DIALOG=model`): open the
     /// combined harness/model menu.
     pub fn debug_open_model_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.pickers
@@ -4413,26 +4396,6 @@ impl Composer {
             cx.notify();
             return;
         };
-        // Only the very first prompt gets the top-of-viewport treatment. Once
-        // a chat has any persisted row or optimistic echo, sends retain the
-        // original follow-tail behavior.
-        let started_empty = {
-            let state = self.state.read(cx);
-            let chat_never_messaged = match state.selected_chat.as_deref() {
-                // New-chat canvas: the chat doesn't exist yet, so no history.
-                None => true,
-                Some(id) => state
-                    .chats
-                    .iter()
-                    .find(|c| c.id == id)
-                    .is_none_or(|c| c.last_message_at.is_none()),
-            };
-            send_starts_empty_chat(
-                state.transcript.len(),
-                state.pending_echoes().len(),
-                chat_never_messaged,
-            )
-        };
         // Chat id: existing selection, or client-minted for the new-chat canvas
         // (the chat then appears from the doc host once the doc materializes).
         let (chat_id, is_new) = match self.state.read(cx).selected_chat.clone() {
@@ -4523,7 +4486,7 @@ impl Composer {
         // so the doc frame dedups it away).
         let echo = SessionMessageEntry {
             id: message_id.clone(),
-            role: comet_doc::MessageRole::User,
+            role: zeron_doc::MessageRole::User,
             parts: vec![MessagePart::Text {
                 id: "t0".into(),
                 text: echo_text.clone(),
@@ -4552,7 +4515,6 @@ impl Composer {
         cx.emit(ComposerEvent::Sent {
             chat_id: chat_id.clone(),
             message_id: message_id.clone(),
-            started_empty,
         });
         cx.notify();
 
@@ -4612,7 +4574,7 @@ impl Composer {
                                     .call(methods::CREATE_WORKTREE, params)
                                     .await
                                     .map_err(|e| format!("Worktree failed: {e}"))?;
-                                let worktree: comet_proto::Worktree = serde_json::from_value(value)
+                                let worktree: zeron_proto::Worktree = serde_json::from_value(value)
                                     .map_err(|e| format!("Worktree reply malformed: {e}"))?;
                                 cwd = worktree.path.clone();
                                 worktree_cwd = Some(worktree.path);
@@ -4713,7 +4675,7 @@ impl Composer {
                     // without flickering).
                     let refreshed = SessionMessageEntry {
                         id: message_id.clone(),
-                        role: comet_doc::MessageRole::User,
+                        role: zeron_doc::MessageRole::User,
                         parts: vec![MessagePart::Text {
                             id: "t0".into(),
                             text: content.clone(),
@@ -4966,7 +4928,7 @@ impl Composer {
 
     // ---- render pieces ----
 
-    /// The agent-asked-a-question panel (comet question-panel.tsx), rendered in
+    /// The agent-asked-a-question panel (zeron question-panel.tsx), rendered in
     /// place of the composer: the same floating-pill chrome (`rounded-[26px]
     /// border-white/[0.08] bg-white/[0.03] shadow-xl`), uppercase header +
     /// "1/3" counter chip, option rows with number kbd chips, a free-text
@@ -4987,7 +4949,7 @@ impl Composer {
 
         let options = question.options.iter().enumerate().map(|(ix, label)| {
             // Selection reads on the row only while no typed override exists
-            // (typed answers win — comet question-panel.tsx `isSel`).
+            // (typed answers win — zeron question-panel.tsx `isSel`).
             let picked = wizard.is_picked(ix) && typed_empty;
             div()
                 .id(("wizard-option", ix))
@@ -5004,7 +4966,7 @@ impl Composer {
                 } else {
                     gpui::transparent_black()
                 })
-                // comet question-panel.tsx option rows: `transition-colors`.
+                // zeron question-panel.tsx option rows: `transition-colors`.
                 .bg(if picked {
                     crate::theme::ink(0.09)
                 } else {
@@ -5180,7 +5142,7 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = Theme::of(cx);
-        // Comet composer-actions.tsx: a size-7 filled circle — up-arrow to
+        // Zeron composer-actions.tsx: a size-7 filled circle — up-arrow to
         // send/steer, a dark rounded square on the same light circle to stop.
         match mode {
             SendButtonMode::Stop => div()
@@ -5351,7 +5313,7 @@ impl Render for Composer {
         let expanded = self.expanded_mode;
 
         let failure = self.failure.clone();
-        // Centered composer column (comet `mx-auto w-full max-w-3xl`).
+        // Centered composer column (zeron `mx-auto w-full max-w-3xl`).
         let container = div()
             .w_full()
             .max_w(px(768.0))
@@ -5362,7 +5324,7 @@ impl Render for Composer {
             .px(px(Theme::SPACE_LG))
             .pb(px(Theme::SPACE_LG))
             .when_some(failure, |el, message| {
-                // comet composer.tsx `Notice` (matches the transcript
+                // zeron composer.tsx `Notice` (matches the transcript
                 // ErrorChip palette): `flex items-start gap-2 rounded-xl
                 // border px-3 py-2 text-[12px] leading-snug` with a 14px
                 // DangerTriangle — a subtle tinted wash, not a bare red
@@ -5425,7 +5387,7 @@ impl Render for Composer {
         // grok already finished").
         let steer_queues = mode == SendButtonMode::Steer
             && self.pickers.read(cx).resolved_steering_mode(cx)
-                == Some(comet_proto::SteeringMode::TurnBoundary);
+                == Some(zeron_proto::SteeringMode::TurnBoundary);
         let container = container.when(steer_queues, |el| {
             el.child(
                 div()
@@ -5444,7 +5406,7 @@ impl Render for Composer {
         }
 
         // New chats always use the expanded layout: the repo/branch pickers
-        // need the full-width actions row (comet composer-actions.tsx
+        // need the full-width actions row (zeron composer-actions.tsx
         // `mustExpand = isNew || …`).
         let expanded = expanded || new_chat;
 
@@ -5491,7 +5453,7 @@ impl Render for Composer {
             .justify_center()
             .rounded_full()
             .cursor_pointer()
-            // comet composer-actions.tsx attach: `transition-colors`.
+            // zeron composer-actions.tsx attach: `transition-colors`.
             .bg(motion::hover_blend(
                 "composer-attach",
                 gpui::transparent_black(),
@@ -5508,7 +5470,7 @@ impl Render for Composer {
         // the input inside the pill in both modes.
         let strip = self.render_attachment_strip(&theme, cx);
 
-        // The pill chrome (comet composer.tsx): `rounded-[26px] border
+        // The pill chrome (zeron composer.tsx): `rounded-[26px] border
         // border-white/[0.08] bg-white/[0.03] shadow-xl` — a floating pill with
         // a hairline over a faint wash, never a solid grey box. Picker chips,
         // attach, and the send circle all live INSIDE the pill.
@@ -5620,7 +5582,7 @@ impl Render for Composer {
                                 .flex_row()
                                 .items_center()
                                 // Shared cluster metrics (`gap-1 pl-1 pr-2`,
-                                // comet composer-actions.tsx): identical
+                                // zeron composer-actions.tsx): identical
                                 // internals to expanded; the right inset
                                 // glides 12→8 on collapse.
                                 .gap(px(4.0))
@@ -5831,7 +5793,7 @@ mod tests {
         let raw = local_file_link("src/a file#[x].rs", false);
         assert_eq!(
             raw,
-            "[a file#\\[x\\].rs](comet-file:src/a%20file%23%5Bx%5D.rs)"
+            "[a file#\\[x\\].rs](zeron-file:src/a%20file%23%5Bx%5D.rs)"
         );
         let links = file_mention_links(&raw);
         assert_eq!(links.len(), 1);
@@ -5840,7 +5802,7 @@ mod tests {
         assert!(!links[0].is_dir);
 
         let folder = local_file_link("src/components", true);
-        assert_eq!(folder, "[components](comet-file:src/components/)");
+        assert_eq!(folder, "[components](zeron-file:src/components/)");
         let links = file_mention_links(&folder);
         assert_eq!(links[0].path, "src/components");
         assert!(links[0].is_dir);
@@ -5944,12 +5906,12 @@ mod tests {
     fn sent_mention_display_leaves_plain_prompts_untouched() {
         assert_eq!(sent_mention_display("fix the composer"), None);
         assert_eq!(
-            sent_mention_display("what is a comet-file: link?"),
+            sent_mention_display("what is a zeron-file: link?"),
             None,
             "scheme substring without a valid mention link"
         );
         assert_eq!(
-            sent_mention_display("[a.rs](comet-file:../a.rs)"),
+            sent_mention_display("[a.rs](zeron-file:../a.rs)"),
             None,
             "a hostile path never becomes a chip in the transcript either"
         );
@@ -6028,7 +5990,7 @@ mod tests {
 
     #[test]
     fn auto_grow_math() {
-        // The source heights (comet composer.tsx line 235 clamp, composer-
+        // The source heights (zeron composer.tsx line 235 clamp, composer-
         // actions.tsx row, 1px hairlines): 76+46+2 empty … 260+46+2 capped.
         assert_eq!(COMPOSER_MIN_HEIGHT, 124.0);
         assert_eq!(COMPOSER_MAX_HEIGHT, 308.0);
@@ -6045,7 +6007,7 @@ mod tests {
             h4,
             4.0 * INPUT_LINE_HEIGHT + TEXTAREA_PAD_V + ACTIONS_ROW_HEIGHT + PILL_BORDER_V
         );
-        // Caps at a 260px textarea box (comet max-h-[260px] / the JS clamp).
+        // Caps at a 260px textarea box (zeron max-h-[260px] / the JS clamp).
         assert_eq!(
             composer_total_height(input_content_height(100)),
             COMPOSER_MAX_HEIGHT
@@ -6274,17 +6236,6 @@ mod tests {
     }
 
     #[test]
-    fn only_the_first_send_starts_an_empty_chat() {
-        assert!(send_starts_empty_chat(0, 0, true));
-        assert!(!send_starts_empty_chat(1, 0, true));
-        assert!(!send_starts_empty_chat(0, 1, true));
-        assert!(!send_starts_empty_chat(2, 1, true));
-        // A transcript that merely hasn't LOADED yet reads len 0 — the chat
-        // row's activity is what says "this chat really has no history".
-        assert!(!send_starts_empty_chat(0, 0, false));
-    }
-
-    #[test]
     fn wizard_single_select_auto_advances_and_completes() {
         let mut w = Wizard::new(
             "req".into(),
@@ -6362,7 +6313,7 @@ mod tests {
 
     #[test]
     fn pending_input_detection() {
-        use comet_doc::MessageStatus;
+        use zeron_doc::MessageStatus;
         let input_part = MessagePart::Input {
             id: "in-r1".into(),
             request_id: "r1".into(),

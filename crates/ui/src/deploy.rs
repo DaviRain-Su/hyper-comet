@@ -10,11 +10,11 @@ use gpui::{
     div, prelude::*, px,
 };
 
-use comet_proto::{
+use zeron_proto::{
     DeployArtifact, DeployScanResponse, DeploySendResponse, DeploymentRecord, EvmNetwork,
     NetworksResponse, WalletAccount, WalletSource, WalletsResponse,
 };
-use comet_rpc::methods;
+use zeron_rpc::methods;
 
 use crate::composer::ComposerInput;
 use crate::popover::{self, Loadable};

@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use comet_proto::{WalletAccount, WalletSource};
+use zeron_proto::{WalletAccount, WalletSource};
 
 use crate::local_wallet::{self, WalletSecrets};
 

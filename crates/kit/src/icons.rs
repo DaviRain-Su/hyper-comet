@@ -123,6 +123,11 @@ icon_assets![
     (CHECK, "check"),
     (COPY, "copy"),
     (COMET_LOGO, "comet-logo"),
+    (ZERON_LOGO, "zeron-logo"),
+    (CLOUD, "cloud"),
+    (STAR, "star"),
+    (STAR_BOLD, "star-bold"),
+    (TAG, "tag"),
     // Harness brand marks (icons.tsx).
     (CLAUDE_MARK, "claude-mark"),
     (OPENAI_MARK, "openai-mark"),

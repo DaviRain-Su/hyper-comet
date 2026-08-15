@@ -1,4 +1,4 @@
-//! comet-ui — the gpui viewport. Shell, sidebar, conversation, composer, terminal,
+//! zeron-ui — the gpui viewport. Shell, sidebar, conversation, composer, terminal,
 //! diff pane.
 //!
 //! Visual tokens (theme / icons / fonts) live in [`comet_kit`] and are re-exported
@@ -23,6 +23,7 @@ pub mod composer;
 pub mod deploy;
 pub mod edge_fade;
 pub mod frost;
+pub mod history;
 pub mod icons;
 pub mod loaders;
 pub mod markdown;
@@ -35,6 +36,7 @@ pub mod settings;
 pub mod shell;
 pub mod sound;
 pub mod state;
+pub mod syntax_cache;
 pub mod terminal;
 pub mod theme;
 pub mod transcript;
@@ -43,11 +45,24 @@ use std::path::PathBuf;
 
 use gpui::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
-pub use comet_proto::HarnessId;
+/// Embedded UI fonts — Geist and Geist Mono (variable), © Vercel Inc.,
+/// licensed under the SIL Open Font License 1.1 (https://openfontlicense.org).
+/// Bundled so the type ships with the binary instead of depending on what the
+/// host system happens to have installed.
+///
+/// Static Geist weights sit alongside the variable file: gpui's cosmic-text
+/// path (Linux) rasterizes variable fonts at their default instance only.
+/// The TTF bytes live in `comet-kit` after the ProofShip design-kit split;
+/// this keeps the upstream `register_fonts` entry point.
+fn register_fonts(cx: &App) {
+    comet_kit::register_fonts(cx);
+}
+
 pub use state::EngineBootConfig;
+pub use zeron_proto::HarnessId;
 
 /// Everything the headed binary passes in (config/env resolution lives in
-/// `apps/comet`, not here).
+/// `apps/zeron`, not here).
 #[derive(Debug, Clone)]
 pub struct UiConfig {
     /// Data directory — engine stores + `ui-settings.json`.
@@ -109,7 +124,7 @@ pub fn run_app(config: UiConfig) {
     app.run(move |cx: &mut App| {
         // NB: pinned-rev API — `gpui_tokio::init(cx)` free function (not `Tokio::init`).
         gpui_tokio::init(cx);
-        comet_kit::register_fonts(cx);
+        register_fonts(cx);
         // Appearance before anything paints: the theme global has to be the
         // final one on the very first frame, or the window flashes the wrong
         // palette while settings load.
@@ -163,7 +178,7 @@ pub fn run_app(config: UiConfig) {
 /// root view. Called at boot and again from `on_reopen` if the dock icon is
 /// clicked after ⌘W closed the window.
 fn open_main_window(state: gpui::Entity<state::AppState>, boot: EngineBootConfig, cx: &mut App) {
-    // comet window geometry: 1320×880, min 900×600 (feature-inventory §1.1).
+    // zeron window geometry: 1320×880, min 900×600 (feature-inventory §1.1).
     let bounds = Bounds::centered(None, size(px(1320.), px(880.)), cx);
     cx.open_window(
         WindowOptions {
@@ -202,7 +217,7 @@ fn open_main_window(state: gpui::Entity<state::AppState>, boot: EngineBootConfig
             // — if these two ever disagree, vibrancy dies on the first theme
             // change and never comes back.
             window_background: theme::Theme::of(cx).window_background_appearance(),
-            app_id: Some("comet".into()),
+            app_id: Some("zeron".into()),
             ..Default::default()
         },
         move |window, cx| {

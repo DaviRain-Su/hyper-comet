@@ -1,7 +1,7 @@
 //! SessionsEngine — per-chat agent runs: dispatch, steering, interrupts, input bridging,
 //! journal + broadcast fan-out, and 120ms coalesced doc streaming.
 //!
-//! Pragmatic port of comet's `sessions.ts` (spec: feature-inventory §3.2):
+//! Pragmatic port of zeron's `sessions.ts` (spec: feature-inventory §3.2):
 //! - every `AgentEvent` is (a) appended to the on-disk run journal, (b) broadcast to
 //!   in-process subscribers, (c) folded via `fold_event_into_parts` and diffed into the
 //!   chat's `SessionDoc` through `SegmentWriter` on a coalesced `STREAM_COMMIT_MS` timer;
@@ -10,7 +10,7 @@
 //! - a `Steered` event splits the assistant entry at the exact boundary;
 //! - recovery (interrupt or a stale journal at boot) stamps the streaming entry `aborted`.
 //!
-//! Scope notes: sessions are keyed by chat id (one live run per chat). Comet's pulse
+//! Scope notes: sessions are keyed by chat id (one live run per chat). Zeron's pulse
 //! loop is ported as the 15s liveness heartbeat in `drive_run`; its stall watchdog is
 //! deliberately NOT ported (rejected in review — agents may legitimately wait on
 //! something for far longer than any timeout, and a live child IS the working signal).
@@ -24,12 +24,12 @@ use chrono::Utc;
 use futures::StreamExt;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use comet_doc::{
+use zeron_doc::{
     DocError, MessagePart, MessageRole, MessageStatus, STREAM_COMMIT_MS, SegmentWriter, SessionDoc,
     fold_event_into_parts, sanitize_tool_call,
 };
-use comet_harness::{CancellationToken, Harness, RunControls, SteerMessage};
-use comet_proto::{
+use zeron_harness::{CancellationToken, Harness, RunControls, SteerMessage};
+use zeron_proto::{
     AgentEvent, DoneStatus, HarnessId, RunRequest, Session, SessionStatus, UserInputAnswer,
     UserInputQuestion,
 };
@@ -59,7 +59,7 @@ type PendingInputs = Arc<Mutex<HashMap<String, oneshot::Sender<Vec<UserInputAnsw
 
 /// A harness-native session id plus the cwd it was created under. Harness
 /// session stores are cwd-scoped (claude keys conversations by project
-/// directory — comet sessions.ts:563 "harness session stores are keyed by
+/// directory — zeron sessions.ts:563 "harness session stores are keyed by
 /// cwd"), so resume is only injected for runs launched from the same cwd.
 #[derive(Debug, Clone)]
 struct HarnessSessionRef {
@@ -98,7 +98,10 @@ struct Inner {
     device_id: String,
     journal: Arc<RunJournal>,
     registry: Arc<HarnessRegistry>,
-    doc_host: OnceLock<DocHost>,
+    /// Set-once (first wins), cleared on runtime retirement: sessions and
+    /// doc-host reference each other through Arcs, so this back-edge must be
+    /// severable for a replaced engine graph to drop.
+    doc_host: Mutex<Option<DocHost>>,
     /// chat_id → live run.
     runs: Mutex<HashMap<String, RunHandle>>,
     /// chat_id → broadcast hub (retained across runs so subscribers survive turns).
@@ -110,7 +113,7 @@ struct Inner {
     last_requests: Mutex<HashMap<String, RunRequest>>,
     /// Harness-native session ids per chat (resume continuity across turns) —
     /// the live-process cache over the durable copy on the workspace chat row
-    /// (comet kept the same pair on `chats.harness_session_id`). An empty
+    /// (zeron kept the same pair on `chats.harness_session_id`). An empty
     /// session id is the "do not resume" tombstone after a rejected resume.
     harness_sessions: Mutex<HashMap<String, HarnessSessionRef>>,
     /// Auto-titler for untitled chats (wired at engine assembly; absent in bare tests).
@@ -145,7 +148,7 @@ impl SessionsEngine {
                 device_id,
                 journal,
                 registry,
-                doc_host: OnceLock::new(),
+                doc_host: Mutex::new(None),
                 runs: Mutex::new(HashMap::new()),
                 hubs: Mutex::new(HashMap::new()),
                 statuses: Mutex::new(HashMap::new()),
@@ -161,7 +164,18 @@ impl SessionsEngine {
     /// Wire the doc host (called once at engine assembly; the two services are mutually
     /// referential by design — sessions stream into docs, docs execute commands here).
     pub fn set_doc_host(&self, host: DocHost) {
-        let _ = self.inner.doc_host.set(host);
+        // First set wins (the OnceLock contract this slot replaced).
+        let mut slot = lock(&self.inner.doc_host);
+        if slot.is_none() {
+            *slot = Some(host);
+        }
+    }
+
+    /// Sever the doc-host back-edge (runtime retirement; the doc host's
+    /// `shutdown_workers` clears its own sessions edge). Every access site
+    /// already treats a missing doc host as "not wired".
+    pub fn clear_doc_host(&self) {
+        lock(&self.inner.doc_host).take();
     }
 
     /// Wire the chat auto-titler (called once at engine assembly). After each
@@ -182,10 +196,10 @@ impl SessionsEngine {
     }
 
     fn doc_handle(&self, chat_id: &str) -> Result<Arc<ChatDocHandle>, EngineError> {
-        let host =
-            self.inner.doc_host.get().ok_or_else(|| {
-                EngineError::Other("doc host not wired into sessions engine".into())
-            })?;
+        let host = self
+            .inner
+            .doc_host()
+            .ok_or_else(|| EngineError::Other("doc host not wired into sessions engine".into()))?;
         host.open(chat_id)
     }
 
@@ -204,7 +218,7 @@ impl SessionsEngine {
         lock(&self.inner.statuses).values().any(|s| {
             matches!(
                 s.status,
-                comet_proto::SessionStatus::Working | comet_proto::SessionStatus::AwaitingInput
+                zeron_proto::SessionStatus::Working | zeron_proto::SessionStatus::AwaitingInput
             )
         })
     }
@@ -242,7 +256,7 @@ impl SessionsEngine {
     ///
     /// - The user message entry is written to the doc immediately (id = `message_id`).
     /// - A live steerable run receives the prompt as its next turn via the mailbox
-    ///   (comet's persistent-session routing); otherwise any live run is interrupted
+    ///   (zeron's persistent-session routing); otherwise any live run is interrupted
     ///   first — never two runtimes driving one chat.
     pub async fn dispatch(
         &self,
@@ -251,13 +265,13 @@ impl SessionsEngine {
         request: RunRequest,
         message_id: Option<String>,
     ) -> Result<String, EngineError> {
-        self.dispatch_with(chat_id, harness_id, request, message_id, true)
+        self.dispatch_with(chat_id, harness_id, request, message_id, false)
             .await
     }
 
-    /// [`Self::dispatch`] with resume injection controllable: the failed-resume
-    /// retry re-dispatches with `inject_resume = false` so a session id the
-    /// harness just rejected can never be re-injected from the journal.
+    /// [`Self::dispatch`] with the startup-crash retry marker: the retry
+    /// re-dispatches with `startup_retry = true`, which makes that attempt
+    /// final (its own startup death surfaces instead of retrying again).
     /// Boxed future: `drive_run` re-enters this for that retry, and the
     /// erasure breaks the opaque-type cycle the recursion would otherwise form.
     fn dispatch_with<'a>(
@@ -266,9 +280,9 @@ impl SessionsEngine {
         harness_id: HarnessId,
         request: RunRequest,
         message_id: Option<String>,
-        inject_resume: bool,
+        startup_retry: bool,
     ) -> futures::future::BoxFuture<'a, Result<String, EngineError>> {
-        Box::pin(self.dispatch_inner(chat_id, harness_id, request, message_id, inject_resume))
+        Box::pin(self.dispatch_inner(chat_id, harness_id, request, message_id, startup_retry))
     }
 
     async fn dispatch_inner(
@@ -277,7 +291,7 @@ impl SessionsEngine {
         harness_id: HarnessId,
         mut request: RunRequest,
         mut message_id: Option<String>,
-        inject_resume: bool,
+        startup_retry: bool,
     ) -> Result<String, EngineError> {
         // Project-less chats store cwd `~` (the creating device can't know the
         // host's home); expand it here, on the host, where the run spawns.
@@ -346,12 +360,15 @@ impl SessionsEngine {
         let user_id = message_id.unwrap_or_else(new_id);
         handle.write_user_message(&user_id, &request.prompt, now_ms())?;
 
-        // Engine-owned resume (comet sessions.ts:736 — every dispatch read the
+        // Engine-owned resume (zeron sessions.ts:736 — every dispatch read the
         // chat's stored harness session): callers always send `resume: None`;
         // the engine threads the chat's prior harness session back in so a new
-        // process (app restart) continues the same harness conversation.
+        // process (app restart) continues the same harness conversation. The
+        // startup-crash retry injects too — a stale id is the harness's
+        // problem now (`session/load` falls back to `session/new` internally),
+        // and starting the retry fresh silently dropped a good conversation.
         let mut resume_injected = false;
-        if request.resume.is_none() && inject_resume {
+        if request.resume.is_none() {
             request.resume = self.inner.resume_for(chat_id, &request.cwd);
             resume_injected = request.resume.is_some();
         }
@@ -426,6 +443,7 @@ impl SessionsEngine {
             RunResumeState {
                 user_message_id: user_id,
                 resume_injected,
+                startup_retry,
             },
         ));
         Ok(run_id)
@@ -513,7 +531,7 @@ impl SessionsEngine {
         let Some((run_id, token, cancel, pending)) = target else {
             return Ok(false);
         };
-        // Unpark any blocked question FIRST (mirrors comet: harness teardown can await a
+        // Unpark any blocked question FIRST (mirrors zeron: harness teardown can await a
         // parked question callback — a run stuck on a question would deadlock the stop).
         let parked: Vec<_> = lock(&pending).drain().map(|(_, tx)| tx).collect();
         for tx in parked {
@@ -563,7 +581,7 @@ impl SessionsEngine {
     /// with a VISIBLE "Run interrupted by engine restart" error part, close the
     /// journal with a synthetic `Done{interrupted}` — and then PICK THE RUN BACK
     /// UP: a fresh crashed turn with revival budget left is re-dispatched against
-    /// the remembered harness session (comet: "not just eulogized";
+    /// the remembered harness session (zeron: "not just eulogized";
     /// `MAX_AUTO_RESUME` = 3 consecutive revivals, fresh = crashed < 12h ago).
     pub fn recover_stale(&self) -> Result<usize, EngineError> {
         const MAX_AUTO_RESUME: u32 = 3;
@@ -579,7 +597,7 @@ impl SessionsEngine {
             // Harness continuity first: the crashed run's session id may only
             // exist in the journal (the debounced workspace-row write may
             // never have landed) — remember it so the revived run resumes the
-            // same harness conversation (comet recoverDraft, sessions.ts:538).
+            // same harness conversation (zeron recoverDraft, sessions.ts:538).
             if let Some((session_id, cwd)) = self.inner.journal_harness_session(&chat_id) {
                 self.inner
                     .remember_harness_session(&chat_id, &session_id, &cwd);
@@ -638,13 +656,13 @@ impl SessionsEngine {
             let (user_id, prompt_text) = prompt.expect("gated by will_resume");
             let sessions = self.clone();
             tokio::spawn(async move {
-                let Some(host) = sessions.inner.doc_host.get().cloned() else {
+                let Some(host) = sessions.inner.doc_host() else {
                     return;
                 };
                 let request = sessions
                     .last_request(&chat_id)
                     .or_else(|| host.request_from_chat_row(&chat_id, &prompt_text))
-                    // Last resort: the journal's own cwd (comet's draft config)
+                    // Last resort: the journal's own cwd (zeron's draft config)
                     // — a crash can predate the debounced workspace-row write.
                     .or_else(|| {
                         let (_, cwd) = sessions.inner.journal_harness_session(&chat_id)?;
@@ -655,7 +673,7 @@ impl SessionsEngine {
                             reasoning: None,
                             model_options: Default::default(),
                             cwd,
-                            sandbox: comet_proto::SandboxLevel::WorkspaceWrite,
+                            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
                             auto_approve: false,
                             attachments: Vec::new(),
             mcp_servers: Vec::new(),
@@ -806,8 +824,13 @@ impl Inner {
         }
     }
 
-    fn workspace(&self) -> Option<&crate::workspace_host::WorkspaceHost> {
-        self.doc_host.get().and_then(|host| host.workspace())
+    /// The doc host, once wired. `None` before assembly or after retirement.
+    fn doc_host(&self) -> Option<DocHost> {
+        lock(&self.doc_host).clone()
+    }
+
+    fn workspace(&self) -> Option<crate::workspace_host::WorkspaceHost> {
+        self.doc_host().and_then(|host| host.workspace().cloned())
     }
 
     /// Sidebar freshness: push a message-persist preview into the chat's workspace row.
@@ -822,7 +845,7 @@ impl Inner {
 
     /// Record the chat's harness-native session id (and its cwd): live-process
     /// cache plus the durable workspace chat row — the row is what survives an
-    /// engine restart (comet sessions.ts:1039).
+    /// engine restart (zeron sessions.ts:1039).
     fn remember_harness_session(&self, chat_id: &str, session_id: &str, cwd: &str) {
         if session_id.is_empty() {
             return;
@@ -839,24 +862,15 @@ impl Inner {
         }
     }
 
-    /// A harness rejected the stored session id: tombstone it (empty string on
-    /// the row, cleared cache) so no lookup source — including the journal,
-    /// which still names the dead id — can re-inject it.
-    fn forget_harness_session(&self, chat_id: &str) {
-        lock(&self.harness_sessions).insert(
-            chat_id.to_string(),
-            HarnessSessionRef {
-                session_id: String::new(),
-                cwd: String::new(),
-            },
-        );
-        if let Some(ws) = self.workspace() {
-            ws.set_chat_harness_session(chat_id, "", "");
-        }
-    }
+    // NB: there is deliberately no `forget_harness_session` anymore. The old
+    // tombstone fired on "run died before SessionStarted", which — since the
+    // ACP conversion made stale ids a harness-internal fallback — only ever
+    // meant a child STARTUP failure, and permanently severed good
+    // conversations (user incident 2026-08-13). A truly stale id simply
+    // yields a fresh session whose SessionStarted overwrites the row.
 
     /// The session id to resume for a run in `chat_id` launching from `cwd`
-    /// (comet sessions.ts:736, looked up on every dispatch):
+    /// (zeron sessions.ts:736, looked up on every dispatch):
     /// live-process cache → workspace chat row → journal scan (the crash path
     /// where the debounced row write never landed — SessionStarted/Done events
     /// are journaled per event, flushed immediately). Cwd-gated throughout:
@@ -1028,13 +1042,15 @@ pub(crate) fn expand_home(cwd: &str) -> String {
     }
 }
 
-/// Resume bookkeeping for one run task: which user entry the run answers (so a
-/// failed-resume retry re-dispatches idempotently against the same doc entry)
-/// and whether `dispatch` injected the resume id itself (only engine-injected
-/// resumes are retried fresh — a caller-specified resume fails loudly).
+/// Resume bookkeeping for one run task: which user entry the run answers (so
+/// the startup-crash retry re-dispatches idempotently against the same doc
+/// entry), whether `dispatch` injected the resume id itself (only
+/// engine-injected resumes retry — a caller-specified resume fails loudly),
+/// and whether this run already IS the retry (one attempt only).
 struct RunResumeState {
     user_message_id: String,
     resume_injected: bool,
+    startup_retry: bool,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1062,8 +1078,9 @@ async fn drive_run(
     // OKX OnchainOS: with an API key configured, agents get the hosted DEX
     // MCP (quotes / liquidity / approve + swap calldata) on every run.
     let request = crate::okx::enrich_run_request(request);
-    // Kept whole for the failed-resume retry (fresh session, same user entry).
-    // Option so the retry branch (inside the event loop) can take ownership.
+    // Kept whole for the startup-crash retry (same user entry; dispatch
+    // re-injects the stored resume id). Option so the retry branch (inside
+    // the event loop) can take ownership.
     let mut retry_request = Some(RunRequest {
         resume: None,
         ..request.clone()
@@ -1124,12 +1141,12 @@ async fn drive_run(
     // so the gate still catches real crashes. touch_session throttles at 10s.
     let mut live_heartbeat = tokio::time::interval(std::time::Duration::from_secs(15));
     live_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    // PERSISTENT SESSION (comet runsBySession): a completed turn on a
+    // PERSISTENT SESSION (zeron runsBySession): a completed turn on a
     // steerable harness parks here instead of ending the run — the child and
     // its steering mailbox stay warm, and the next user message (dispatch
     // routes into a live run) starts the next turn with zero respawn/resume
     // latency. `Some(when)` = idle since then; the 30-min reaper below ends
-    // a session nobody comes back to (comet SESSION_IDLE_MS).
+    // a session nobody comes back to (zeron SESSION_IDLE_MS).
     const SESSION_IDLE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
     let mut idle_since: Option<tokio::time::Instant> = None;
     let steerable = harness.supports_steering();
@@ -1144,9 +1161,9 @@ async fn drive_run(
     // segment finalized Complete, status Idle, child and mailbox warm. A
     // false trip (the agent was quietly waiting on something invisible)
     // costs a status dip: the parked-resume path below re-arms Working the
-    // moment output flows again, and nothing is lost. `COMET_TURN_QUIESCE_MS`
+    // moment output flows again, and nothing is lost. `ZERON_TURN_QUIESCE_MS`
     // overrides the window; 0 disables.
-    let quiesce_after: Option<std::time::Duration> = match std::env::var("COMET_TURN_QUIESCE_MS")
+    let quiesce_after: Option<std::time::Duration> = match std::env::var("ZERON_TURN_QUIESCE_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
     {
@@ -1155,6 +1172,28 @@ async fn drive_run(
         None => Some(std::time::Duration::from_secs(120)),
     };
     let mut last_stream_activity = tokio::time::Instant::now();
+    // SELF-CONTINUED turns get a much SHORTER quiesce window. A turn the
+    // agent starts on its own (background-task wake) can never receive a
+    // harness Done: the adapter has no `session/prompt` outstanding to
+    // settle — verified in claude-agent-acp's autonomous-result lane, which
+    // consumes the SDK's turn-end without emitting anything; codex shows
+    // the same shape. The watchdog is that turn shape's ONLY settle path,
+    // so the default 120s window read as 2min of stuck-Working after every
+    // background notification (user report 2026-08-13). The in-flight
+    // fold gate below still protects running tools; reasoning heartbeats
+    // push the window during real thinking. `ZERON_SELF_TURN_QUIESCE_MS`
+    // overrides; 0 falls back to the normal window. An explicit
+    // `ZERON_TURN_QUIESCE_MS=0` still disables the watchdog entirely.
+    let self_quiesce_after: Option<std::time::Duration> =
+        match std::env::var("ZERON_SELF_TURN_QUIESCE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(0) => None,
+            Some(ms) => Some(std::time::Duration::from_millis(ms)),
+            None => Some(std::time::Duration::from_secs(20)),
+        };
+    let mut self_continued_turn = false;
 
     let final_status = loop {
         let event: AgentEvent = tokio::select! {
@@ -1179,7 +1218,7 @@ async fn drive_run(
                 inner.touch_session(&chat_id);
                 continue;
             }
-            // Idle reaper (comet SESSION_IDLE_MS): a parked persistent session
+            // Idle reaper (zeron SESSION_IDLE_MS): a parked persistent session
             // nobody returned to in 30 minutes releases its child. The turn
             // was finalized at Done, so this end is clean — no aborted stamp.
             _ = tokio::time::sleep_until(
@@ -1248,15 +1287,19 @@ async fn drive_run(
             // fold still arms — a Steered boundary that no output ever
             // follows is one of the wedge shapes — it just parks without
             // writing a segment (an empty finalize would leave a stub entry).
-            _ = tokio::time::sleep_until(
-                last_stream_activity + quiesce_after.unwrap_or_default()
-            ), if quiesce_after.is_some()
+            _ = tokio::time::sleep_until({
+                let mut window = quiesce_after.unwrap_or_default();
+                if self_continued_turn && let Some(short) = self_quiesce_after {
+                    window = window.min(short);
+                }
+                last_stream_activity + window
+            }), if quiesce_after.is_some()
                 && idle_since.is_none()
                 && !interrupted
                 && steerable
                 && !folded.iter().any(|p| match p {
                     MessagePart::Tool { id, resolved: false, .. } => {
-                        id != comet_proto::LIVE_PLAN_TOOL_ID
+                        id != zeron_proto::LIVE_PLAN_TOOL_ID
                     }
                     MessagePart::Input { resolved: false, .. } => true,
                     _ => false,
@@ -1287,6 +1330,7 @@ async fn drive_run(
                 entry_id = new_id();
                 segment_started = now_ms();
                 idle_since = Some(tokio::time::Instant::now());
+                self_continued_turn = false;
                 inner.set_status(&chat_id, SessionStatus::Idle, false);
                 continue;
             }
@@ -1354,7 +1398,7 @@ async fn drive_run(
                 ) || matches!(
                     &event,
                     AgentEvent::ToolCall { id, .. }
-                        if id == comet_proto::LIVE_PLAN_TOOL_ID || !seen_tools.contains(id)
+                        if id == zeron_proto::LIVE_PLAN_TOOL_ID || !seen_tools.contains(id)
                 ));
             if self_continued {
                 tracing::info!(
@@ -1362,6 +1406,7 @@ async fn drive_run(
                     "parked session resumed by self-continued agent output"
                 );
                 idle_since = None;
+                self_continued_turn = true;
                 // The park cleared the fold; rotate to a fresh entry and
                 // fall through — this event is the new segment's first part.
                 entry_id = new_id();
@@ -1422,8 +1467,8 @@ async fn drive_run(
             // treating its reappearance after a park/steer reset as a stale
             // echo dropped the todo list for the rest of the run — from the
             // first boundary on, plans never rendered again.
-            AgentEvent::ToolCall { id, .. } if id == comet_proto::LIVE_PLAN_TOOL_ID => {}
-            AgentEvent::ToolResult { id, .. } if id == comet_proto::LIVE_PLAN_TOOL_ID => {}
+            AgentEvent::ToolCall { id, .. } if id == zeron_proto::LIVE_PLAN_TOOL_ID => {}
+            AgentEvent::ToolResult { id, .. } if id == zeron_proto::LIVE_PLAN_TOOL_ID => {}
             AgentEvent::ToolCall { id, .. } => {
                 if !in_segment(&folded, id) && seen_tools.contains(id) {
                     continue;
@@ -1438,13 +1483,19 @@ async fn drive_run(
             _ => {}
         }
 
-        // Failed-resume fallback: an engine-injected `--resume` naming a session
-        // the harness no longer knows dies before ever starting (claude exits
-        // without an init frame; codex falls back internally via thread/start).
-        // Signature: errored Done, no SessionStarted, nothing streamed. Retry
-        // ONCE as a fresh session against the same user entry — tombstone the
-        // dead id first so no lookup source (journal included) re-injects it.
+        // Startup-crash retry: a run that dies before ever starting (errored
+        // Done, no SessionStarted, nothing streamed) means the AGENT CHILD
+        // failed to come up — not that the injected resume id was bad. Since
+        // the ACP conversion (2026-08-08) a stale id is handled inside the
+        // harness (`session/load` falls back to `session/new`), so the old
+        // guess here — tombstone the id, retry fresh — fired only on child
+        // startup failures and permanently severed GOOD conversations (user
+        // incident 2026-08-13). The id stays; retry ONCE against the same
+        // user entry, resume and all, in case the crash was transient. A
+        // helper that is down hard fails the retry too and surfaces its
+        // crash text (the harness now appends exit status + stderr).
         if resume_state.resume_injected
+            && !resume_state.startup_retry
             && !saw_session_started
             && folded.is_empty()
             && !interrupted
@@ -1459,9 +1510,8 @@ async fn drive_run(
         {
             tracing::warn!(
                 chat = %chat_id,
-                "harness rejected injected resume id; retrying as a fresh session"
+                "run died before session start; retrying once (resume kept)"
             );
-            inner.forget_harness_session(&chat_id);
             inner.remove_run(&chat_id, &run_id);
             let engine = SessionsEngine {
                 inner: inner.clone(),
@@ -1469,13 +1519,13 @@ async fn drive_run(
             let chat = chat_id.clone();
             let message_id = resume_state.user_message_id.clone();
             tokio::spawn(async move {
-                // `inject_resume = false`: the retry must start fresh. The user
-                // entry write inside dispatch is idempotent by message id.
+                // The user entry write inside dispatch is idempotent by
+                // message id; `startup_retry` makes this attempt final.
                 if let Err(err) = engine
-                    .dispatch_with(&chat, harness_id, retry, Some(message_id), false)
+                    .dispatch_with(&chat, harness_id, retry, Some(message_id), true)
                     .await
                 {
-                    tracing::error!(chat = %chat, error = %err, "fresh-session retry dispatch failed");
+                    tracing::error!(chat = %chat, error = %err, "startup-crash retry dispatch failed");
                     // No run is coming: leaving the row Working would spin
                     // the session forever with nothing behind it.
                     engine
@@ -1493,6 +1543,9 @@ async fn drive_run(
         } = &event
         {
             inner.publish(&chat_id, &event);
+            // A steer boundary means a real prompt owns the turn again — its
+            // Done will come; the short self-continued window stands down.
+            self_continued_turn = false;
             if let Err(err) = finish_segment(
                 doc_ref,
                 writer.take(),
@@ -1552,7 +1605,7 @@ async fn drive_run(
 
         inner.publish(&chat_id, &event);
 
-        // Defensive rule from comet: a mid-run SessionStarted re-emission (Claude SDK
+        // Defensive rule from zeron: a mid-run SessionStarted re-emission (Claude SDK
         // background re-invocations) must not wipe the segment being written.
         let skip_fold = matches!(&event, AgentEvent::SessionStarted { .. }) && !folded.is_empty();
         if !skip_fold {
@@ -1560,7 +1613,7 @@ async fn drive_run(
             // R2 sidecar PARKED (2026-08-10, product call): the fold's
             // summary/stats ARE the doc's whole record — no refs stamped, no
             // uploads. Full outputs survive only in the host's local run
-            // journal. To reintroduce: `comet_doc::sidecar_payload(&event)`
+            // journal. To reintroduce: `zeron_doc::sidecar_payload(&event)`
             // → `apply_sidecar_refs` → `doc_host.upload_tool_sidecar`, all
             // still in place and tested.
         }
@@ -1635,6 +1688,7 @@ async fn drive_run(
                 // Resume-retry is strictly a first-turn concern.
                 saw_session_started = true;
                 idle_since = Some(tokio::time::Instant::now());
+                self_continued_turn = false;
                 inner.set_status(&chat_id, SessionStatus::Idle, false);
                 continue;
             }

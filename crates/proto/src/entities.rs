@@ -1,6 +1,6 @@
 //! Synced entity rows (workspace doc) and local projections.
 //!
-//! In comet these were synced Postgres rows; in comet-native they live in the per-org
+//! In zeron these were synced Postgres rows; in zeron they live in the per-org
 //! workspace Loro doc (see ARCHITECTURE.md §2.2) with the same field surface.
 
 use chrono::{DateTime, Utc};
@@ -15,7 +15,7 @@ pub struct Device {
     pub name: String,
     pub platform: String,
     pub last_seen_at: Option<DateTime<Utc>>,
-    /// First registration time (comet devices.created_at — the Devices page
+    /// First registration time (zeron devices.created_at — the Devices page
     /// "Added …" fragment). Optional so pre-existing docs stay readable.
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
@@ -100,7 +100,7 @@ pub struct Chat {
     pub last_message_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     /// Harness-native session id of the chat's latest run — engine-owned resume
-    /// continuity across engine restarts (comet's `chats.harness_session_id`).
+    /// continuity across engine restarts (zeron's `chats.harness_session_id`).
     /// Empty string = explicit
     /// "do not resume" tombstone after a rejected resume.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -217,13 +217,55 @@ pub struct RepoRef {
     pub worktree_path: Option<String>,
 }
 
+/// Public Git reference attached to a commit in the history graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GitHistoryRefKind {
+    Branch,
+    Remote,
+    Tag,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryRef {
+    pub kind: GitHistoryRefKind,
+    pub label: String,
+}
+
+/// One topologically ordered row in the repository history graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryCommit {
+    pub sha: String,
+    pub parent_shas: Vec<String>,
+    pub subject: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub authored_at: String,
+    #[serde(default)]
+    pub refs: Vec<GitHistoryRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHistoryPage {
+    pub commits: Vec<GitHistoryCommit>,
+    pub head_sha: Option<String>,
+    pub next_cursor: Option<usize>,
+    pub total_count: Option<usize>,
+    /// Number of commits reachable from the active checkout's HEAD.
+    #[serde(default)]
+    pub head_commit_count: Option<usize>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Worktree {
     pub repo_path: String,
     pub path: String,
     pub branch: String,
-    /// Generated worktree folder name (`comet/<name>` is its branch).
+    /// Generated worktree folder name (`zeron/<name>` is its branch).
     #[serde(default)]
     pub name: String,
     /// Canonical checkout identity (device-scoped hash of the git dir).
@@ -288,6 +330,44 @@ pub struct CheckoutDiff {
     pub truncated: bool,
     pub checksum: String,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetCheckoutFileDiffTextRequest {
+    pub checkout_id: String,
+    pub cwd: String,
+    pub path: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_id: Option<String>,
+    /// Pinned commit for History's per-commit diff scope. When present, the
+    /// source pair is read from the commit parent and this commit, never from
+    /// the live working tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_sha: Option<String>,
+    pub diff_checksum: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckoutFileDiffText {
+    pub diff_checksum: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_content_hash: Option<String>,
+    pub binary: bool,
+    pub truncated: bool,
+    #[serde(default)]
+    pub stale: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -430,4 +510,31 @@ pub enum TerminalEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         signal: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkout_file_diff_text_contract_is_camel_case() {
+        let request = GetCheckoutFileDiffTextRequest {
+            checkout_id: "checkout".into(),
+            cwd: "/repo".into(),
+            path: "src/lib.rs".into(),
+            mode: "branch".into(),
+            base_ref: Some("main".into()),
+            chat_id: None,
+            commit_sha: Some("deadbeef".into()),
+            diff_checksum: "abc".into(),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["checkoutId"], "checkout");
+        assert_eq!(value["diffChecksum"], "abc");
+        assert_eq!(value["commitSha"], "deadbeef");
+        assert_eq!(
+            serde_json::from_value::<GetCheckoutFileDiffTextRequest>(value).unwrap(),
+            request
+        );
+    }
 }

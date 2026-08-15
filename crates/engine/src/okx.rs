@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use comet_proto::{McpHttpHeader, McpServerConfig, OkxStatusResponse, RunRequest};
+use zeron_proto::{McpHttpHeader, McpServerConfig, OkxStatusResponse, RunRequest};
 use serde::{Deserialize, Serialize};
 
 /// Hosted OnchainOS MCP endpoint (docs: web3.okx.com/onchainos/dev-docs).
@@ -282,7 +282,7 @@ mod tests {
             reasoning: None,
             model_options: Default::default(),
             cwd: "/tmp".into(),
-            sandbox: comet_proto::SandboxLevel::WorkspaceWrite,
+            sandbox: zeron_proto::SandboxLevel::WorkspaceWrite,
             auto_approve: true,
             resume: None,
             attachments: Vec::new(),

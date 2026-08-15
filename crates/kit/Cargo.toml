@@ -9,6 +9,7 @@ description = "Comet design kit: theme tokens, Solar Icons, Geist fonts for gpui
 [dependencies]
 gpui.workspace = true
 tracing.workspace = true
+zeron-syntax.workspace = true
 
 [dev-dependencies]
 gpui_platform.workspace = true

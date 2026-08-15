@@ -1,12 +1,12 @@
 //! Repos — this device's git repositories, branches, worktrees, and the folder
-//! browser (feature-inventory §3.5; port of comet's `repos.ts` + `folder-lister.ts`).
+//! browser (feature-inventory §3.5; port of zeron's `repos.ts` + `folder-lister.ts`).
 //!
 //! Repos are device-local (paths differ per machine), so the known set is a plain
 //! JSON list (`{data_dir}/repos.json`) — no sync. Existing repos can live anywhere
 //! the user points us; cloned/created ones land in `{data_dir}/repos`. Worktrees are
-//! created under `~/.comet-native/worktrees/<repoName>/<worktreeName>` (NOT the data
+//! created under `~/.zeron/worktrees/<repoName>/<worktreeName>` (NOT the data
 //! dir — worktrees are user-facing working checkouts), with an auto-generated name +
-//! matching `comet/<name>` branch. `COMET_WORKTREES_DIR` overrides the root.
+//! matching `zeron/<name>` branch. `ZERON_WORKTREES_DIR` overrides the root.
 //!
 //! All git access is via subprocess (`tokio::process`) — never libgit2.
 
@@ -17,7 +17,10 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use comet_proto::{FileSearchMatch, FolderEntry, FolderListing, Repo, RepoRef, Worktree};
+use zeron_proto::{
+    FileSearchMatch, FolderEntry, FolderListing, GitHistoryCommit, GitHistoryPage, GitHistoryRef,
+    GitHistoryRefKind, Repo, RepoRef, Worktree,
+};
 
 use crate::EngineError;
 
@@ -33,13 +36,15 @@ const FOLDER_LIST_MAX_ENTRIES: usize = 500;
 const FILE_SEARCH_MAX_RESULTS: usize = 8;
 /// A dead network mount must not leave the composer search spinning forever.
 const FILE_SEARCH_TIMEOUT: Duration = Duration::from_secs(6);
+pub const GIT_HISTORY_DEFAULT_LIMIT: usize = 100;
+pub const GIT_HISTORY_MAX_LIMIT: usize = 200;
 
 const ADJECTIVES: &[&str] = &[
     "swift", "calm", "bright", "bold", "keen", "brave", "clever", "lucky", "quiet", "warm", "cool",
     "sharp", "gentle", "vivid", "amber", "cobalt",
 ];
 const NOUNS: &[&str] = &[
-    "otter", "harbor", "falcon", "cedar", "meadow", "comet", "delta", "ember", "lynx", "maple",
+    "otter", "harbor", "falcon", "cedar", "meadow", "zeron", "delta", "ember", "lynx", "maple",
     "onyx", "quartz", "raven", "summit", "willow", "aspen",
 ];
 
@@ -68,13 +73,13 @@ pub(crate) fn home_dir() -> PathBuf {
 }
 
 /// Where new worktrees live. Deliberately NOT under the backend data dir —
-/// worktrees are user-facing working checkouts. `COMET_WORKTREES_DIR` overrides
+/// worktrees are user-facing working checkouts. `ZERON_WORKTREES_DIR` overrides
 /// (test isolation); empty reads as unset.
 fn default_worktrees_root() -> PathBuf {
-    std::env::var_os("COMET_WORKTREES_DIR")
+    std::env::var_os("ZERON_WORKTREES_DIR")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".comet-native").join("worktrees"))
+        .unwrap_or_else(|| home_dir().join(".zeron").join("worktrees"))
 }
 
 struct ReposInner {
@@ -91,7 +96,7 @@ pub struct Repos {
 
 impl Repos {
     /// `data_dir` holds `repos.json` + cloned/created repos; the worktree root
-    /// comes from `$COMET_WORKTREES_DIR` or `~/.comet-native/worktrees`.
+    /// comes from `$ZERON_WORKTREES_DIR` or `~/.zeron/worktrees`.
     pub fn new(data_dir: &Path, device_id: &str) -> Self {
         Self::with_worktrees_root(data_dir, device_id, default_worktrees_root())
     }
@@ -193,6 +198,14 @@ impl Repos {
         } else {
             branch
         })
+    }
+
+    /// Fetch every configured remote without pruning or integrating anything
+    /// into the active branch. This intentionally updates refs only.
+    pub async fn fetch_all(&self, repo_path: &Path) -> Result<(), EngineError> {
+        self.git(&["fetch", "--all", "--quiet"], Some(repo_path))
+            .await
+            .map(drop)
     }
 
     /// The absolute Git `HEAD` file for event-driven external branch reconciliation.
@@ -433,6 +446,99 @@ impl Repos {
             .collect())
     }
 
+    /// Public commit history in topological order. Only user-facing branches,
+    /// remotes, and tags seed the walk, so Zeron's internal refs never leak
+    /// into the graph or keep otherwise-unreachable checkpoints visible.
+    pub async fn history(
+        &self,
+        repo_path: &Path,
+        cursor: usize,
+        limit: usize,
+    ) -> Result<GitHistoryPage, EngineError> {
+        let limit = limit.clamp(1, GIT_HISTORY_MAX_LIMIT);
+        let head_sha = self
+            .git(&["rev-parse", "--verify", "HEAD^{commit}"], Some(repo_path))
+            .await
+            .ok()
+            .filter(|sha| !sha.is_empty());
+
+        let refs_out = self
+            .git(
+                &[
+                    "for-each-ref",
+                    "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)%00%(symref)%00",
+                    "refs/heads",
+                    "refs/remotes",
+                    "refs/tags",
+                ],
+                Some(repo_path),
+            )
+            .await?;
+        let refs_by_sha = parse_history_refs(&refs_out);
+
+        if head_sha.is_none() && refs_by_sha.is_empty() {
+            return Ok(GitHistoryPage {
+                commits: Vec::new(),
+                head_sha: None,
+                next_cursor: None,
+                total_count: Some(0),
+                head_commit_count: Some(0),
+            });
+        }
+
+        let skip = format!("--skip={cursor}");
+        let max_count = format!("--max-count={}", limit + 1);
+        let mut log_args = vec![
+            "log",
+            "--topo-order",
+            "--no-color",
+            "--no-decorate",
+            "--no-show-signature",
+            "--no-patch",
+            skip.as_str(),
+            max_count.as_str(),
+            "--format=%H%x00%P%x00%s%x00%an%x00%ae%x00%aI%x00",
+        ];
+        if head_sha.is_some() {
+            log_args.push("HEAD");
+        }
+        log_args.extend(["--branches", "--remotes", "--tags"]);
+        let log = self.git(&log_args, Some(repo_path)).await?;
+        let mut commits = parse_history_log(&log, &refs_by_sha);
+        let has_next = commits.len() > limit;
+        commits.truncate(limit);
+
+        let total_count = if cursor == 0 {
+            let mut count_args = vec!["rev-list", "--count"];
+            if head_sha.is_some() {
+                count_args.push("HEAD");
+            }
+            count_args.extend(["--branches", "--remotes", "--tags"]);
+            self.git(&count_args, Some(repo_path))
+                .await
+                .ok()
+                .and_then(|count| count.parse().ok())
+        } else {
+            None
+        };
+        let head_commit_count = if cursor == 0 && head_sha.is_some() {
+            self.git(&["rev-list", "--count", "HEAD"], Some(repo_path))
+                .await
+                .ok()
+                .and_then(|count| count.parse().ok())
+        } else {
+            None
+        };
+
+        Ok(GitHistoryPage {
+            next_cursor: has_next.then_some(cursor + commits.len()),
+            commits,
+            head_sha,
+            total_count,
+            head_commit_count,
+        })
+    }
+
     /// Whether `candidate` is the repository root or one of its linked
     /// worktrees. Filesystem resolution happens on a disposable thread because
     /// user-selected paths may be dead mounts.
@@ -508,7 +614,7 @@ impl Repos {
     // ── worktrees ───────────────────────────────────────────────────────────
 
     /// `git worktree add` an isolated checkout under
-    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `comet/<name>`
+    /// `{worktrees_root}/<repoName>/<generatedName>`, on a fresh `zeron/<name>`
     /// branch off `branch`.
     pub async fn create_worktree(
         &self,
@@ -540,7 +646,7 @@ impl Repos {
                 ADJECTIVES[(seed % ADJECTIVES.len() as u64) as usize],
                 NOUNS[((seed / 31) % NOUNS.len() as u64) as usize]
             );
-            if !base.join(&candidate).exists() && !existing.contains(&format!("comet/{candidate}"))
+            if !base.join(&candidate).exists() && !existing.contains(&format!("zeron/{candidate}"))
             {
                 name = Some(candidate);
                 break;
@@ -549,7 +655,7 @@ impl Repos {
         let name =
             name.ok_or_else(|| EngineError::Other("Could not allocate a worktree name".into()))?;
         let path = base.join(&name);
-        let branch_name = format!("comet/{name}");
+        let branch_name = format!("zeron/{name}");
         self.git(
             &[
                 "worktree",
@@ -586,10 +692,10 @@ impl Repos {
         .is_ok()
     }
 
-    /// Rename a comet-created worktree branch after its chat's generated title
-    /// (port of comet's `renameWorktreeBranch`). Guards:
+    /// Rename a zeron-created worktree branch after its chat's generated title
+    /// (port of zeron's `renameWorktreeBranch`). Guards:
     /// - respect an external checkout/rename: only act while the worktree is still
-    ///   on `expected_branch` AND that branch is the original `comet/<folderName>`;
+    ///   on `expected_branch` AND that branch is the original `zeron/<folderName>`;
     /// - a title-slug collision gets a stable 6-hex suffix (hash of the worktree
     ///   path); a collision on THAT too fails.
     ///
@@ -606,7 +712,7 @@ impl Repos {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if current != expected_branch || expected_branch != format!("comet/{folder}") {
+        if current != expected_branch || expected_branch != format!("zeron/{folder}") {
             return Ok(current);
         }
         let preferred = worktree_branch_from_title(title);
@@ -635,7 +741,7 @@ impl Repos {
     }
 
     /// Best-effort worktree removal (if it still exists), then prune stale refs.
-    /// Deletes the worktree's branch ONLY when comet created it (`comet/…`) — the
+    /// Deletes the worktree's branch ONLY when zeron created it (`zeron/…`) — the
     /// user may have checked out their own branch inside the worktree.
     pub async fn delete_worktree(
         &self,
@@ -665,7 +771,7 @@ impl Repos {
             }
         }
         let _ = self.git(&["worktree", "prune"], Some(repo_path)).await;
-        if branch.starts_with("comet/") {
+        if branch.starts_with("zeron/") {
             let _ = self.git(&["branch", "-D", &branch], Some(repo_path)).await;
         }
         Ok(())
@@ -738,7 +844,7 @@ impl Repos {
     /// The walk runs on a DETACHED OS thread (not the tokio blocking pool): a
     /// readdir wedged in the kernel can't be cancelled, and a poisoned blocking
     /// pool — or a runtime shutdown waiting on it — must never be possible. On
-    /// timeout the thread is simply abandoned (the comet backend's disposable
+    /// timeout the thread is simply abandoned (the zeron backend's disposable
     /// worker, minus the terminate()).
     #[doc(hidden)]
     pub async fn list_folders_with(
@@ -802,7 +908,7 @@ async fn disposable_worker<T: Send + 'static>(
 fn list_folders_blocking(target: &Path) -> Result<FolderListing, EngineError> {
     let read = std::fs::read_dir(target).map_err(|e| match e.kind() {
         std::io::ErrorKind::PermissionDenied => {
-            EngineError::Other("Comet doesn't have access to this folder on the device.".into())
+            EngineError::Other("Zeron doesn't have access to this folder on the device.".into())
         }
         _ => EngineError::Other(format!("could not read that folder: {e}")),
     })?;
@@ -977,8 +1083,8 @@ fn search_files_blocking_with_cancel<F: Fn() -> bool>(
         .collect())
 }
 
-/// Turn a generated chat title into the semantic portion of a Comet branch
-/// (port of comet's `worktreeBranchFromTitle`). Comet NFKD-normalizes accented
+/// Turn a generated chat title into the semantic portion of a Zeron branch
+/// (port of zeron's `worktreeBranchFromTitle`). Zeron NFKD-normalizes accented
 /// letters first; native keeps it ASCII-only (generated titles are Title Case
 /// English), so non-ASCII characters collapse into the `-` separator.
 pub fn worktree_branch_from_title(title: &str) -> String {
@@ -995,7 +1101,99 @@ pub fn worktree_branch_from_title(title: &str) -> String {
     }
     slug.truncate(48);
     let slug = slug.trim_matches('-');
-    format!("comet/{}", if slug.is_empty() { "update" } else { slug })
+    format!("zeron/{}", if slug.is_empty() { "update" } else { slug })
+}
+
+fn bounded_field(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn parse_history_log(
+    output: &str,
+    refs_by_sha: &HashMap<String, Vec<GitHistoryRef>>,
+) -> Vec<GitHistoryCommit> {
+    let fields: Vec<&str> = output.split('\0').collect();
+    fields
+        .chunks(6)
+        .filter_map(|record| {
+            if record.len() != 6 {
+                return None;
+            }
+            let sha = record[0].trim_start_matches(['\r', '\n']);
+            if sha.is_empty() {
+                return None;
+            }
+            Some(GitHistoryCommit {
+                sha: sha.to_string(),
+                parent_shas: record[1]
+                    .split_ascii_whitespace()
+                    .map(str::to_string)
+                    .collect(),
+                subject: bounded_field(record[2], 4_096),
+                author_name: bounded_field(record[3], 512),
+                author_email: bounded_field(record[4], 512),
+                authored_at: bounded_field(record[5], 128),
+                refs: refs_by_sha.get(sha).cloned().unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
+fn parse_history_refs(output: &str) -> HashMap<String, Vec<GitHistoryRef>> {
+    let fields: Vec<&str> = output.split('\0').collect();
+    let mut refs_by_sha: HashMap<String, Vec<GitHistoryRef>> = HashMap::new();
+    for record in fields.chunks(6) {
+        if record.len() != 6 {
+            continue;
+        }
+        let full_name = record[0].trim_start_matches(['\r', '\n']);
+        let object_sha = record[1];
+        let object_type = record[2];
+        let peeled_sha = record[3];
+        let peeled_type = record[4];
+        let symbolic_target = record[5];
+        if full_name.is_empty() || !symbolic_target.is_empty() {
+            continue;
+        }
+        let Some((kind, label)) = (if let Some(label) = full_name.strip_prefix("refs/heads/") {
+            Some((GitHistoryRefKind::Branch, label))
+        } else if let Some(label) = full_name.strip_prefix("refs/remotes/") {
+            Some((GitHistoryRefKind::Remote, label))
+        } else {
+            full_name
+                .strip_prefix("refs/tags/")
+                .map(|label| (GitHistoryRefKind::Tag, label))
+        }) else {
+            continue;
+        };
+        let target_sha = if object_type == "commit" {
+            object_sha
+        } else if object_type == "tag" && peeled_type == "commit" {
+            peeled_sha
+        } else {
+            continue;
+        };
+        refs_by_sha
+            .entry(target_sha.to_string())
+            .or_default()
+            .push(GitHistoryRef {
+                kind,
+                label: bounded_field(label, 1_024),
+            });
+    }
+    for refs in refs_by_sha.values_mut() {
+        refs.sort_by(|left, right| {
+            let order = |kind| match kind {
+                GitHistoryRefKind::Branch => 0,
+                GitHistoryRefKind::Tag => 1,
+                GitHistoryRefKind::Remote => 2,
+            };
+            order(left.kind)
+                .cmp(&order(right.kind))
+                .then_with(|| left.label.cmp(&right.label))
+        });
+    }
+    refs_by_sha
 }
 
 /// Absolute form of a possibly-relative path (no filesystem access).

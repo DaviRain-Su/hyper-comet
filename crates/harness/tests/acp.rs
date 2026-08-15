@@ -7,10 +7,10 @@ use std::time::Duration;
 use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
-use comet_harness::{
+use zeron_harness::{
     AcpHarness, CancellationToken, Harness, HarnessError, RunControls, SteerMessage,
 };
-use comet_proto::{
+use zeron_proto::{
     AgentEvent, DoneStatus, HarnessId, RunRequest, SandboxLevel, SteeringMode, TodoItem, ToolCall,
     UserInputAnswer,
 };
@@ -142,7 +142,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
     assert!(events.contains(&AgentEvent::ToolCall {
         id: "t1".into(),
         call: ToolCall::Exec {
-            command: "cargo test -p comet-harness".into()
+            command: "cargo test -p zeron-harness".into()
         },
     }));
     let exec_output = events
@@ -157,7 +157,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
             _ => None,
         })
         .expect("exec output present");
-    assert!(exec_output.starts_with("   Compiling comet-harness"));
+    assert!(exec_output.starts_with("   Compiling zeron-harness"));
     assert_eq!(exec_output.lines().count(), 6, "{exec_output:?}");
 
     // Edit tool: single-shot completed call carries the inline diff.
@@ -216,7 +216,7 @@ async fn happy_path_maps_chunks_tools_diffs_plans_and_commands() {
 async fn config_options_apply_requested_model_and_effort() {
     let (controls, _steer, _token) = controls();
     let mut req = request("scenario:config");
-    req.reasoning = Some(comet_proto::ReasoningLevel::Medium);
+    req.reasoning = Some(zeron_proto::ReasoningLevel::Medium);
     let events = run_to_end(&harness(), req, controls).await;
     // The fixture answers refusal unless BOTH set_config_option calls
     // (model grok-4.5, effort medium) arrived before the prompt.
@@ -314,7 +314,7 @@ async fn ultrathink_prefixes_the_prompt_for_claude() {
     let (controls, _steer, _token) = controls();
     let h = AcpHarness::claude().with_executable(fixture_path());
     let mut req = request("scenario:echo-prompt");
-    req.reasoning = Some(comet_proto::ReasoningLevel::Ultrathink);
+    req.reasoning = Some(zeron_proto::ReasoningLevel::Ultrathink);
     let events = run_to_end(&h, req, controls).await;
     // The fixture echoes the prompt text back; the Ultrathink prefix must be
     // on the wire.
@@ -617,7 +617,7 @@ async fn missing_binary_surfaces_not_installed_with_install_hint() {
 /// (never one per reasoning effort), with wire-derived trait options. Free
 /// (initialize + session/new, no prompt), but needs the CLIs installed and
 /// authenticated. Run explicitly:
-/// `cargo test -p comet-harness --test acp -- --ignored real_discovery`
+/// `cargo test -p zeron-harness --test acp -- --ignored real_discovery`
 #[tokio::test]
 #[ignore = "needs the claude + codex CLIs installed and authenticated"]
 async fn real_discovery_yields_base_models_with_traits() {
@@ -651,7 +651,7 @@ async fn real_discovery_yields_base_models_with_traits() {
         );
         assert!(
             m.reasoning_levels
-                .contains(&comet_proto::ReasoningLevel::Ultrathink),
+                .contains(&zeron_proto::ReasoningLevel::Ultrathink),
             "ultrathink extra missing on {}",
             m.id
         );
@@ -660,7 +660,7 @@ async fn real_discovery_yields_base_models_with_traits() {
 
 /// installed) against the installed, authenticated claude CLI and burns one
 /// tiny haiku prompt. Run explicitly:
-/// `cargo test -p comet-harness --test acp -- --ignored real_claude`
+/// `cargo test -p zeron-harness --test acp -- --ignored real_claude`
 #[tokio::test]
 #[ignore = "needs the claude CLI authenticated + network; costs one tiny prompt"]
 async fn real_claude_adapter_end_to_end() {
@@ -707,7 +707,7 @@ async fn real_claude_adapter_end_to_end() {
 
 /// The Cursor slot against the real `cursor-agent acp` server: discovery
 /// (free) plus one tiny prompt. Run explicitly:
-/// `cargo test -p comet-harness --test acp -- --ignored real_cursor`
+/// `cargo test -p zeron-harness --test acp -- --ignored real_cursor`
 #[tokio::test]
 #[ignore = "needs the cursor-agent CLI authenticated + network; costs one tiny prompt"]
 async fn real_cursor_adapter_end_to_end() {
@@ -794,7 +794,7 @@ async fn real_cursor_adapter_end_to_end() {
 /// through the standard `session/update` path. Worth pinning live: the docs
 /// call `cursor/update_todos` a fire-and-forget notification, but the CLI
 /// sends it as a REQUEST — an unanswered one would stall the turn. Run:
-/// `cargo test -p comet-harness --test acp -- --ignored real_cursor_todos`
+/// `cargo test -p zeron-harness --test acp -- --ignored real_cursor_todos`
 #[tokio::test]
 #[ignore = "needs the cursor-agent CLI authenticated + network; costs one small prompt"]
 async fn real_cursor_todos_and_tools_reach_the_stream() {
@@ -829,7 +829,7 @@ async fn real_cursor_todos_and_tools_reach_the_stream() {
             matches!(
                 e,
                 AgentEvent::ToolCall {
-                    call: comet_proto::ToolCall::Todo { .. },
+                    call: zeron_proto::ToolCall::Todo { .. },
                     ..
                 }
             )
@@ -848,7 +848,7 @@ async fn real_cursor_todos_and_tools_reach_the_stream() {
         events.iter().any(|e| matches!(
             e,
             AgentEvent::ToolCall {
-                call: comet_proto::ToolCall::Exec { .. },
+                call: zeron_proto::ToolCall::Exec { .. },
                 ..
             }
         )),
@@ -867,9 +867,9 @@ fn descriptor_surface_matches_registry_expectations() {
     assert_eq!(
         harness.reasoning_levels(),
         &[
-            comet_proto::ReasoningLevel::Low,
-            comet_proto::ReasoningLevel::Medium,
-            comet_proto::ReasoningLevel::High,
+            zeron_proto::ReasoningLevel::Low,
+            zeron_proto::ReasoningLevel::Medium,
+            zeron_proto::ReasoningLevel::High,
         ]
     );
 }
@@ -886,9 +886,9 @@ async fn models_are_discovered_from_the_acp_session() {
     assert_eq!(
         models[0].reasoning_levels,
         vec![
-            comet_proto::ReasoningLevel::Low,
-            comet_proto::ReasoningLevel::Medium,
-            comet_proto::ReasoningLevel::High,
+            zeron_proto::ReasoningLevel::Low,
+            zeron_proto::ReasoningLevel::Medium,
+            zeron_proto::ReasoningLevel::High,
         ],
         "{models:?}"
     );
@@ -965,12 +965,12 @@ fn cursor_opencode_hermes_and_pi_descriptor_surfaces_match_registry_expectations
     assert_eq!(
         pi.reasoning_levels(),
         &[
-            comet_proto::ReasoningLevel::Minimal,
-            comet_proto::ReasoningLevel::Low,
-            comet_proto::ReasoningLevel::Medium,
-            comet_proto::ReasoningLevel::High,
-            comet_proto::ReasoningLevel::XHigh,
-            comet_proto::ReasoningLevel::Max,
+            zeron_proto::ReasoningLevel::Minimal,
+            zeron_proto::ReasoningLevel::Low,
+            zeron_proto::ReasoningLevel::Medium,
+            zeron_proto::ReasoningLevel::High,
+            zeron_proto::ReasoningLevel::XHigh,
+            zeron_proto::ReasoningLevel::Max,
         ]
     );
 }
@@ -1087,7 +1087,7 @@ async fn dropped_reply_settles_fast_off_the_turn_end_cost_frame() {
 /// unowned turn and prompts fresh (no starve to recover from); the turn
 /// must settle promptly either way — never strand, never wait for a
 /// watchdog. Costs a few small prompts. Run explicitly:
-/// `cargo test -p comet-harness --test acp -- --ignored real_claude_starve`
+/// `cargo test -p zeron-harness --test acp -- --ignored real_claude_starve`
 #[tokio::test]
 #[ignore = "needs the claude CLI authenticated + network; costs a few small prompts"]
 async fn real_claude_starve_settles_off_the_cost_frame() {
@@ -1325,7 +1325,7 @@ async fn claude_busy_steer_rides_native_queueing_and_the_cost_frame() {
 /// busy-path handling where it applies. Contract per agent that starts:
 /// every Done is Completed and the stream ENDS (no stranding) inside the
 /// budget. Agents that fail auth/startup are reported and skipped. Run:
-/// `cargo test -p comet-harness --test acp -- --ignored --nocapture real_all_harnesses`
+/// `cargo test -p zeron-harness --test acp -- --ignored --nocapture real_all_harnesses`
 #[tokio::test]
 #[ignore = "runs every installed+authenticated agent CLI; costs a few small prompts"]
 async fn real_all_harnesses_settle_with_a_mid_turn_steer() {
@@ -1410,7 +1410,7 @@ async fn real_all_harnesses_settle_with_a_mid_turn_steer() {
 
 /// Debug variant of the multi-harness sweep, claude only, printing every
 /// event with a timestamp — for diagnosing strands the sweep can only name.
-/// `cargo test -p comet-harness --test acp -- --ignored --nocapture real_claude_debug`
+/// `cargo test -p zeron-harness --test acp -- --ignored --nocapture real_claude_debug`
 #[tokio::test]
 #[ignore = "debug harness; needs the claude CLI; costs one small prompt"]
 async fn real_claude_debug_steer_trace() {
@@ -1432,7 +1432,9 @@ async fn real_claude_debug_steer_trace() {
             let ev = ev.expect("stream event");
             let t = started.elapsed();
             match &ev {
-                AgentEvent::TextDelta { text } => println!("{t:?} TEXT {:?}", &text[..text.len().min(40)]),
+                AgentEvent::TextDelta { text } => {
+                    println!("{t:?} TEXT {:?}", &text[..text.len().min(40)])
+                }
                 other => println!("{t:?} {other:?}"),
             }
             if matches!(ev, AgentEvent::TextDelta { .. })
@@ -1450,7 +1452,10 @@ async fn real_claude_debug_steer_trace() {
         println!("{:?} <<< stream ended", started.elapsed());
     })
     .await;
-    println!("{:?} === test done (timeout means strand)", started.elapsed());
+    println!(
+        "{:?} === test done (timeout means strand)",
+        started.elapsed()
+    );
 }
 
 /// The injection cost frame must never settle a steered turn: the fixture
@@ -1505,4 +1510,46 @@ async fn injection_cost_frame_never_settles_a_steered_turn() {
         .position(|e| matches!(e, AgentEvent::Done { .. }))
         .expect("done asserted above");
     assert!(tail < done, "{events:?}");
+}
+
+#[tokio::test]
+async fn autonomous_turn_ended_extension_settles_between_prompts() {
+    // A background-task wake makes the agent stream a turn no prompt started;
+    // its SDK-side turn-end has no `session/prompt` to settle, so the adapter
+    // forwards the `_session/turn_ended` extension instead — which must map
+    // to a completed Done exactly once, only for this session, and only
+    // between prompts (the engine's quiesce watchdog then stays a backstop,
+    // not the settle path).
+    let (controls, _steer, _token) = controls();
+    let events = run_to_end(&harness(), request("scenario:autonomous-end"), controls).await;
+
+    let d = dones(&events);
+    assert_eq!(
+        d.len(),
+        2,
+        "prompt turn + autonomous turn, no third: {events:?}"
+    );
+    assert!(
+        d.iter()
+            .all(|(s, e)| *s == DoneStatus::Completed && e.is_none()),
+        "{events:?}"
+    );
+
+    // The self-continued output sits BETWEEN the two Dones.
+    let first_done = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::Done { .. }))
+        .unwrap();
+    let last_done = events
+        .iter()
+        .rposition(|e| matches!(e, AgentEvent::Done { .. }))
+        .unwrap();
+    let background = events
+        .iter()
+        .position(|e| matches!(e, AgentEvent::TextDelta { text } if text == "background finished"))
+        .expect("self-continued output surfaces: {events:?}");
+    assert!(
+        first_done < background && background < last_done,
+        "{events:?}"
+    );
 }

@@ -5,12 +5,12 @@ use gpui::{
     px,
 };
 
-use comet_proto::{
+use zeron_proto::{
     CreateLocalWalletRequest, CreateLocalWalletResponse, ImportLocalWalletRequest,
     RemoveWalletRequest, UpsertWalletRequest, WalletAccount, WalletConnectStartRequest,
     WalletConnectStartResponse, WalletSource, WalletsResponse,
 };
-use comet_rpc::methods;
+use zeron_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::popover::{self, Loadable};

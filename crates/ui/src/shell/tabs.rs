@@ -72,7 +72,7 @@ impl Shell {
         let (title, target, harness, on_canvas): (
             SharedString,
             Option<SharedString>,
-            Option<comet_proto::HarnessId>,
+            Option<zeron_proto::HarnessId>,
             bool,
         ) = {
             let state = self.state.read(cx);
@@ -99,7 +99,6 @@ impl Shell {
                 None => (SharedString::from(""), None, None, true),
             }
         };
-        let git = self.space_git_detected(cx);
 
         // The new-session `+` renders in the WINDOW-CONTROL CLUSTER while the
         // sidebar is collapsed (`render_titlebar_cluster`) — this row only
@@ -133,14 +132,17 @@ impl Shell {
         // strip doesn't want (it brings its own 8px pad), and doubling up
         // read as a hole after the `+` (user report).
         let row_left = if takeover {
-            // The scope dropdown should sit at the cluster's own 2px button
-            // rhythm off the `+` — anything more read as a hole in the button
-            // row (user report). Between `row_left` and the trigger box sit
-            // 16px of chrome (the row's 8px child gap + the strip's 8px pad),
-            // and `title_bar_content_start` adds a 10px text margin: land the
-            // box at cluster end + 2 ⇒ −(10 + 16 − 2).
+            // The surface tabs must LEFT-ALIGN with the pane's own rows (the
+            // diff options and stats strip carry an 8px box gutter off the
+            // seam — user report: rows started at different insets). The
+            // strip's width is capped to `avail`, which subtracts the row's
+            // 8px child gap — pulling row_left 8 LEFT of the seam cancels
+            // that, so the uncapped strip starts exactly at the seam and its
+            // own 8px pad lands the first chip on the pane gutter. The
+            // window-control cluster still wins while the sidebar is
+            // collapsed (the chips clear it instead of underlapping).
             let cluster_end = self.title_bar_content_start() - 10.0 + plus_inset - 14.0;
-            sidebar_now.max(cluster_end)
+            (sidebar_now - 8.0).max(cluster_end)
         } else {
             content_left
         };
@@ -151,14 +153,18 @@ impl Shell {
             let pr = titlebar_right_padding(cfg!(target_os = "windows"), Theme::SPACE_LG);
             // The row's own left padding is part of its content box: a strip
             // wider than what's left after it overflows and clips at the right
-            // edge (flex_none never shrinks) — cap to the available width.
-            let avail = self.viewport_width - row_left - pr;
-            let changes_controls = git.then(|| {
-                self.changes_pane(cx)
-                    .update(cx, |changes, cx| changes.render_header_controls(cx))
-            });
-            let has_controls = changes_controls.is_some();
-
+            // edge (flex_none never shrinks) — cap to the available width. The
+            // row's 8px child gaps sit OUTSIDE the strip's width (one before
+            // the strip in takeover, two with the title row present): without
+            // budgeting them the capped strip overflows by exactly one gap and
+            // the buttons slide right on expand (user report).
+            let gap_budget = if takeover { 8.0 } else { 16.0 };
+            let avail = self.viewport_width - row_left - pr - gap_budget;
+            // The right pane's SURFACE TABS (t3 RightPanelTabs) — the diff
+            // options that used to live here moved into the pane's own
+            // second row; expand/close stay in this band (user request).
+            // ProofShip deploy stays on this strip next to expand/close.
+            let controls = self.render_right_tab_strip(cx);
             Some(
                 div()
                     .flex_none()
@@ -176,17 +182,14 @@ impl Shell {
                     // gutter, so the scope label sits flush over the stats
                     // strip below.
                     .pl(px(8.0))
-                    .when_some(changes_controls, |el, controls| {
-                        el.child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .overflow_hidden()
-                                .child(controls),
-                        )
-                    })
-                    .when(!has_controls, |el| el.child(div().flex_1()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(controls),
+                    )
                     .child(header_icon_button(
                         "open-deploy",
                         icons::GLOBAL,

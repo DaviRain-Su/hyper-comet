@@ -32,16 +32,17 @@ use gpui::{
     SharedString, Subscription, Task, Window, div, font, list, prelude::*, px,
 };
 
-use comet_proto::{Chat, CheckoutDiff};
-use comet_rpc::methods;
+use zeron_proto::{Chat, CheckoutDiff, GitHistoryCommit};
+use zeron_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
-use crate::markdown::highlight::{Lang, LineCarry, Token, lang_for_tag, tokenize_line};
+use crate::history::{GitHistory, GitHistoryCount, GitHistoryEvent, GitHistoryFetchButton};
 use crate::markdown::render;
 use crate::motion::{self, AnimationExt as _, CHEVRON, COLLAPSE};
 use crate::popover::{self, Popup};
 use crate::state::{AppState, EngineHandle};
 use crate::theme::Theme;
+use zeron_syntax::LanguageId as Lang;
 
 // ---------------------------------------------------------------------------
 // Layout numbers (analytic — they drive the fold tween)
@@ -79,6 +80,68 @@ pub struct DiffLine {
     pub old_no: Option<u32>,
     pub new_no: Option<u32>,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SourceSide {
+    Old,
+    New,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SourceLineRef {
+    pub side: SourceSide,
+    /// One-based source line number.
+    pub line_number: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiffHighlights {
+    pub old: Option<Arc<zeron_syntax::HighlightedDocument>>,
+    pub new: Option<Arc<zeron_syntax::HighlightedDocument>>,
+}
+
+impl DiffHighlights {
+    pub fn source_ref(&self, line: &DiffLine) -> Option<SourceLineRef> {
+        match line.kind {
+            LineKind::Del => line.old_no.map(|line_number| SourceLineRef {
+                side: SourceSide::Old,
+                line_number,
+            }),
+            LineKind::Add => line.new_no.map(|line_number| SourceLineRef {
+                side: SourceSide::New,
+                line_number,
+            }),
+            LineKind::Context => line
+                .new_no
+                .filter(|_| self.new.is_some())
+                .map(|line_number| SourceLineRef {
+                    side: SourceSide::New,
+                    line_number,
+                })
+                .or_else(|| {
+                    line.old_no.map(|line_number| SourceLineRef {
+                        side: SourceSide::Old,
+                        line_number,
+                    })
+                }),
+            LineKind::Meta => None,
+        }
+    }
+
+    pub fn spans(&self, line: &DiffLine) -> &[zeron_syntax::HighlightSpan] {
+        let Some(source_ref) = self.source_ref(line) else {
+            return &[];
+        };
+        let document = match source_ref.side {
+            SourceSide::Old => self.old.as_deref(),
+            SourceSide::New => self.new.as_deref(),
+        };
+        document
+            .and_then(|document| document.lines.get(source_ref.line_number as usize - 1))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -441,16 +504,29 @@ pub enum DiffScope {
     Branch,
     /// Changes since the current chat's last turn started.
     LatestTurn,
+    /// Repository commit graph. Hosted here until the right pane becomes tabs.
+    History,
+    /// One commit's own changes (parent vs commit) — the per-commit tab a
+    /// History row click opens. Never listed in the scope menu
+    /// ([`Self::ALL`]); a commit-pinned pane is born this way and stays.
+    Commit,
 }
 
 impl DiffScope {
-    pub const ALL: [DiffScope; 3] = [Self::WorkingTree, Self::Branch, Self::LatestTurn];
+    pub const ALL: [DiffScope; 4] = [
+        Self::WorkingTree,
+        Self::Branch,
+        Self::LatestTurn,
+        Self::History,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::WorkingTree => "Working tree",
             Self::Branch => "Branch changes",
             Self::LatestTurn => "Latest turn",
+            Self::History => "History",
+            Self::Commit => "Commit",
         }
     }
 
@@ -460,6 +536,8 @@ impl DiffScope {
             Self::WorkingTree => "workingTree",
             Self::Branch => "branch",
             Self::LatestTurn => "turn",
+            Self::History => "history",
+            Self::Commit => "commit",
         }
     }
 }
@@ -474,6 +552,8 @@ pub fn scope_label(scope: DiffScope, count: usize, base: Option<&str>) -> String
             None => format!("{count} Changed {files}"),
         },
         DiffScope::LatestTurn => format!("{count} Changed {files} this turn"),
+        DiffScope::History => "History".to_string(),
+        DiffScope::Commit => format!("{count} Changed {files} in this commit"),
     }
 }
 
@@ -507,6 +587,8 @@ pub fn clean_message(scope: DiffScope, base: Option<&str>) -> String {
             None => "No branch changes".to_string(),
         },
         DiffScope::LatestTurn => "No changes this turn".to_string(),
+        DiffScope::History => "No commits found".to_string(),
+        DiffScope::Commit => "Empty commit".to_string(),
     }
 }
 
@@ -541,18 +623,160 @@ pub fn apply_diff_frame(diffs: &mut Vec<CheckoutDiff>, value: serde_json::Value)
     }
 }
 
-/// Language for a file path's extension (drives per-line highlighting).
-pub fn lang_for_path(path: &str) -> Option<Lang> {
-    let ext = path.rsplit('/').next()?.rsplit('.').next()?;
-    lang_for_tag(ext)
-}
-
 fn hash64(parts: &[&str]) -> u64 {
     let mut hasher = std::hash::DefaultHasher::new();
     for p in parts {
         p.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+const MAX_EXCERPT_SOURCE_LINES: usize = 200_000;
+
+fn excerpt_side(
+    file: &FileDiff,
+    side: SourceSide,
+    language: Lang,
+    path: &str,
+) -> Option<Arc<zeron_syntax::HighlightedDocument>> {
+    let max_line = file
+        .hunks
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .filter_map(|line| match side {
+            SourceSide::Old => line.old_no,
+            SourceSide::New => line.new_no,
+        })
+        .max()
+        .unwrap_or(0) as usize;
+    if max_line > MAX_EXCERPT_SOURCE_LINES {
+        return None;
+    }
+    let mut lines = vec![Vec::new(); max_line];
+    for hunk in &file.hunks {
+        let visible = hunk
+            .lines
+            .iter()
+            .filter_map(|line| {
+                let number = match side {
+                    SourceSide::Old => line.old_no,
+                    SourceSide::New => line.new_no,
+                }?;
+                (line.kind != LineKind::Meta).then_some((number, line.text.as_str()))
+            })
+            .collect::<Vec<_>>();
+        if visible.is_empty() {
+            continue;
+        }
+        let source = visible
+            .iter()
+            .map(|(_, text)| *text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let document = zeron_syntax::highlight(zeron_syntax::HighlightRequest {
+            source: &source,
+            path: Some(path),
+            fence_tag: None,
+        })
+        .ok()?;
+        for ((number, _), spans) in visible.into_iter().zip(document.lines) {
+            lines[number as usize - 1] = spans;
+        }
+    }
+    Some(Arc::new(zeron_syntax::HighlightedDocument {
+        language,
+        lines,
+    }))
+}
+
+fn excerpt_highlights(file: &FileDiff, language: Lang) -> Option<DiffHighlights> {
+    if !zeron_syntax::supports_language(language) {
+        return None;
+    }
+    let old = if file.status == FileStatus::Added {
+        None
+    } else {
+        Some(excerpt_side(
+            file,
+            SourceSide::Old,
+            language,
+            file.old_path.as_deref().unwrap_or(&file.path),
+        )?)
+    };
+    let new = if file.status == FileStatus::Deleted {
+        None
+    } else {
+        Some(excerpt_side(file, SourceSide::New, language, &file.path)?)
+    };
+    Some(DiffHighlights { old, new })
+}
+
+fn sources_match_patch(file: &FileDiff, response: &zeron_proto::CheckoutFileDiffText) -> bool {
+    let old = response
+        .old_text
+        .as_deref()
+        .map(|source| source.lines().collect::<Vec<_>>());
+    let new = response
+        .new_text
+        .as_deref()
+        .map(|source| source.lines().collect::<Vec<_>>());
+    file.hunks.iter().flat_map(|hunk| &hunk.lines).all(|line| {
+        let actual = match line.kind {
+            LineKind::Del => line
+                .old_no
+                .and_then(|number| old.as_ref()?.get(number as usize - 1).copied()),
+            LineKind::Add => line
+                .new_no
+                .and_then(|number| new.as_ref()?.get(number as usize - 1).copied()),
+            LineKind::Context => line
+                .new_no
+                .and_then(|number| new.as_ref()?.get(number as usize - 1).copied())
+                .or_else(|| {
+                    line.old_no
+                        .and_then(|number| old.as_ref()?.get(number as usize - 1).copied())
+                }),
+            LineKind::Meta => return true,
+        };
+        actual == Some(line.text.as_str())
+    })
+}
+
+fn full_highlights(
+    file: &FileDiff,
+    language: Lang,
+    response: &zeron_proto::CheckoutFileDiffText,
+) -> Option<DiffHighlights> {
+    if response.stale
+        || response.binary
+        || response.truncated
+        || !sources_match_patch(file, response)
+    {
+        return None;
+    }
+    let parse = |source: &str, path: &str| {
+        zeron_syntax::highlight(zeron_syntax::HighlightRequest {
+            source,
+            path: Some(path),
+            fence_tag: None,
+        })
+        .ok()
+        .map(Arc::new)
+    };
+    let old = match response.old_text.as_deref() {
+        Some(source) => Some(parse(
+            source,
+            file.old_path.as_deref().unwrap_or(&file.path),
+        )?),
+        None => None,
+    };
+    let new = match response.new_text.as_deref() {
+        Some(source) => Some(parse(source, &file.path)?),
+        None => None,
+    };
+    if old.is_none() && new.is_none() && zeron_syntax::supports_language(language) {
+        return None;
+    }
+    Some(DiffHighlights { old, new })
 }
 
 // ---------------------------------------------------------------------------
@@ -699,8 +923,16 @@ impl FileFold {
 
 struct HighlightSlot {
     fingerprint: u64,
-    lines: Option<Arc<Vec<Vec<Token>>>>,
-    _task: Option<Task<()>>,
+    state: DiffHighlightState,
+    _excerpt_task: Option<Task<()>>,
+    _fetch_task: Option<Task<()>>,
+}
+
+enum DiffHighlightState {
+    Pending,
+    Ready(Arc<DiffHighlights>),
+    Excerpt(Arc<DiffHighlights>),
+    Plain,
 }
 
 /// The open base-ref dropdown — the same searchable-menu recipe as the
@@ -716,20 +948,6 @@ struct RefMenu {
     focus: FocusHandle,
     list_scroll: gpui::ScrollHandle,
     _search_events: Subscription,
-}
-
-async fn yield_now() {
-    let mut yielded = false;
-    futures::future::poll_fn(move |cx| {
-        if yielded {
-            std::task::Poll::Ready(())
-        } else {
-            yielded = true;
-            cx.waker().wake_by_ref();
-            std::task::Poll::Pending
-        }
-    })
-    .await
 }
 
 /// The Changes pane entity. Lazy: no RPC until [`Changes::ensure_watch`] runs
@@ -774,8 +992,23 @@ pub struct Changes {
     scoped_task: Option<Task<()>>,
     scope_menu: Popup<()>,
     ref_menu: Popup<RefMenu>,
+    history: Option<Entity<GitHistory>>,
+    history_count: Option<Entity<GitHistoryCount>>,
+    history_fetch_button: Option<Entity<GitHistoryFetchButton>>,
+    history_events: Option<Subscription>,
+    /// Pinned commit for a [`DiffScope::Commit`] pane (sha + subject drive
+    /// the fetch and the surface-tab title).
+    commit: Option<GitHistoryCommit>,
     _observe: Subscription,
 }
+
+/// Events the host (the right pane's surface strip) listens for.
+pub enum ChangesEvent {
+    /// A History row was clicked — open this commit as its own diff tab.
+    OpenCommit(GitHistoryCommit),
+}
+
+impl gpui::EventEmitter<ChangesEvent> for Changes {}
 
 impl Changes {
     pub fn new(state: Entity<AppState>, cx: &mut Context<Self>) -> Self {
@@ -809,8 +1042,39 @@ impl Changes {
             scoped_task: None,
             scope_menu: Popup::default(),
             ref_menu: Popup::default(),
+            history: None,
+            history_count: None,
+            history_fetch_button: None,
+            history_events: None,
+            commit: None,
             _observe: observe,
         }
+    }
+
+    /// A pane pinned to one commit's diff (a History row click) — fetches
+    /// `parent vs commit` once and never offers the scope menu.
+    pub fn for_commit(
+        state: Entity<AppState>,
+        commit: GitHistoryCommit,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut changes = Self::new(state, cx);
+        changes.scope = DiffScope::Commit;
+        changes.commit = Some(commit);
+        changes
+    }
+
+    /// The surface-tab title (contextual, user request): the pinned commit's
+    /// subject (short sha for subject-less commits), else the scope's label.
+    pub fn tab_title(&self) -> gpui::SharedString {
+        if let Some(commit) = &self.commit {
+            let subject = commit.subject.trim();
+            if !subject.is_empty() {
+                return subject.to_string().into();
+            }
+            return commit.sha.chars().take(7).collect::<String>().into();
+        }
+        gpui::SharedString::from(self.scope.label())
     }
 
     /// The selected chat's host device when it differs from the connected
@@ -931,7 +1195,8 @@ impl Changes {
     fn active_diff(&self, cx: &App) -> Option<CheckoutDiff> {
         match self.scope {
             DiffScope::WorkingTree => self.resolved(cx),
-            _ => self.scoped.clone(),
+            DiffScope::Branch | DiffScope::LatestTurn | DiffScope::Commit => self.scoped.clone(),
+            DiffScope::History => None,
         }
     }
 
@@ -942,6 +1207,11 @@ impl Changes {
             DiffScope::WorkingTree => "wt".to_string(),
             DiffScope::Branch => format!("br:{}", self.base_ref.as_deref().unwrap_or("")),
             DiffScope::LatestTurn => "turn".to_string(),
+            DiffScope::History => "history".to_string(),
+            DiffScope::Commit => format!(
+                "commit:{}",
+                self.commit.as_ref().map(|c| c.sha.as_str()).unwrap_or("")
+            ),
         }
     }
 
@@ -1022,7 +1292,7 @@ impl Changes {
     /// checksum-only refresh keeps the old diff visible until the new one
     /// lands.
     fn ensure_scoped(&mut self, cx: &mut Context<Self>) {
-        if self.scope == DiffScope::WorkingTree {
+        if matches!(self.scope, DiffScope::WorkingTree | DiffScope::History) {
             self.scoped_inflight = None;
             self.scoped_task = None;
             return;
@@ -1045,14 +1315,22 @@ impl Changes {
             },
             _ => None,
         };
+        let commit_sha = match self.scope {
+            DiffScope::Commit => match &self.commit {
+                Some(commit) => Some(commit.sha.clone()),
+                None => return, // a commit pane without its pin never fetches
+            },
+            _ => None,
+        };
         let target = self.desired_target(cx);
         let context = format!(
-            "{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}",
             target.as_deref().unwrap_or("local"),
             chat_id,
             cwd,
             self.scope.mode(),
-            base.as_deref().unwrap_or("")
+            base.as_deref().unwrap_or(""),
+            commit_sha.as_deref().unwrap_or("")
         );
         let watch_sum = self.resolved(cx).map(|d| d.checksum).unwrap_or_default();
         let key = format!("{context}|{watch_sum}");
@@ -1082,6 +1360,9 @@ impl Changes {
             if let Some(base) = base {
                 params.insert("baseRef".into(), serde_json::Value::String(base));
             }
+            if let Some(sha) = commit_sha {
+                params.insert("commitSha".into(), serde_json::Value::String(sha));
+            }
             if let Some(target) = target {
                 params.insert("targetDeviceId".into(), serde_json::Value::String(target));
             }
@@ -1099,7 +1380,7 @@ impl Changes {
                 changes.scoped_inflight = None;
                 match result.and_then(|value| {
                     serde_json::from_value::<CheckoutDiff>(value)
-                        .map_err(|e| comet_rpc::RpcError::Failed(e.to_string()))
+                        .map_err(|e| zeron_rpc::RpcError::Failed(e.to_string()))
                 }) {
                     Ok(diff) => {
                         changes.scoped = Some(diff);
@@ -1121,9 +1402,65 @@ impl Changes {
     fn set_scope(&mut self, scope: DiffScope, cx: &mut Context<Self>) {
         if self.scope != scope {
             self.scope = scope;
+            if scope == DiffScope::History {
+                self.history_pane(cx)
+                    .update(cx, |history, cx| history.ensure_loaded(cx));
+            }
             self.sync(cx);
         }
         cx.notify();
+    }
+
+    fn history_pane(&mut self, cx: &mut Context<Self>) -> Entity<GitHistory> {
+        if let Some(history) = &self.history {
+            return history.clone();
+        }
+        let history = cx.new(|cx| GitHistory::new(self.state.clone(), cx));
+        self.history_events =
+            Some(
+                cx.subscribe(&history, |this: &mut Self, _, event, cx| match event {
+                    GitHistoryEvent::OpenCommit(commit) => {
+                        // Bubble to the host — the surface strip opens the tab.
+                        cx.emit(ChangesEvent::OpenCommit(commit.clone()));
+                    }
+                    GitHistoryEvent::FetchSucceeded => {
+                        // Remote refs affect branch choices and every scoped diff
+                        // based on a ref. Force fresh reads after the engine has
+                        // also kicked its checkout-status watcher.
+                        this.branches_for = None;
+                        this.scoped_for = None;
+                        this.scoped_inflight = None;
+                        this.scoped_task = None;
+                        this.ensure_branches(cx);
+                        if this.scope != DiffScope::History {
+                            this.ensure_scoped(cx);
+                        }
+                        cx.notify();
+                    }
+                }),
+            );
+        self.history = Some(history.clone());
+        history
+    }
+
+    fn history_count(&mut self, cx: &mut Context<Self>) -> Entity<GitHistoryCount> {
+        if let Some(count) = &self.history_count {
+            return count.clone();
+        }
+        let history = self.history_pane(cx);
+        let count = cx.new(|cx| GitHistoryCount::new(history, cx));
+        self.history_count = Some(count.clone());
+        count
+    }
+
+    fn history_fetch_button(&mut self, cx: &mut Context<Self>) -> Entity<GitHistoryFetchButton> {
+        if let Some(button) = &self.history_fetch_button {
+            return button.clone();
+        }
+        let history = self.history_pane(cx);
+        let button = cx.new(|cx| GitHistoryFetchButton::new(history, cx));
+        self.history_fetch_button = Some(button.clone());
+        button
     }
 
     fn set_base_ref(&mut self, base: String, cx: &mut Context<Self>) {
@@ -1134,12 +1471,26 @@ impl Changes {
         cx.notify();
     }
 
+    /// Everything the pane needs kicked when (re)shown: the watch plus the
+    /// scope-specific loads (branches, scoped/commit capture, history) — the
+    /// shell's hook for freshly-mounted surface tabs.
+    pub fn ensure_content(&mut self, cx: &mut Context<Self>) {
+        self.sync(cx);
+    }
+
     /// Reconcile parsed content with the currently-active diff.
     fn sync(&mut self, cx: &mut Context<Self>) {
         // The watch follows the selected chat's host device (idempotent when
         // the target is unchanged); a boot-deferred attempt retries here too.
         self.ensure_watch(cx);
-        self.ensure_branches(cx);
+        if self.scope == DiffScope::History {
+            self.history_pane(cx)
+                .update(cx, |history, cx| history.ensure_loaded(cx));
+            return;
+        }
+        if self.scope != DiffScope::Commit {
+            self.ensure_branches(cx);
+        }
         self.ensure_scoped(cx);
         let Some(diff) = self.active_diff(cx) else {
             if self.parsed.take().is_some() {
@@ -1455,62 +1806,135 @@ impl Changes {
         }
     }
 
-    /// Tokens for a file's diff lines (paint-only). Kicks a time-sliced
-    /// background tokenize when missing; returns the current best.
+    /// Start excerpt parsing and a lazy full-source fetch for an expanded file.
     fn request_highlight(
         &mut self,
         file: &FileDiff,
         parsed_key: &str,
         cx: &mut Context<Self>,
-    ) -> Option<Arc<Vec<Vec<Token>>>> {
-        let lang = lang_for_path(&file.path)?;
+    ) -> Option<Arc<DiffHighlights>> {
+        let lang = zeron_syntax::language_for_path(&file.path)?;
         let fingerprint = hash64(&[parsed_key, &file.path]);
         if let Some(slot) = self.highlights.get(&file.path)
             && slot.fingerprint == fingerprint
         {
-            return slot.lines.clone();
+            return match &slot.state {
+                DiffHighlightState::Ready(highlights) | DiffHighlightState::Excerpt(highlights) => {
+                    Some(highlights.clone())
+                }
+                DiffHighlightState::Pending | DiffHighlightState::Plain => None,
+            };
         }
-        let texts: Vec<(LineKind, String)> = file
-            .hunks
-            .iter()
-            .flat_map(|h| h.lines.iter().map(|l| (l.kind, l.text.clone())))
-            .collect();
+        if !zeron_syntax::supports_language(lang) {
+            self.highlights.insert(
+                file.path.clone(),
+                HighlightSlot {
+                    fingerprint,
+                    state: DiffHighlightState::Plain,
+                    _excerpt_task: None,
+                    _fetch_task: None,
+                },
+            );
+            return None;
+        }
         let path = file.path.clone();
-        let task = cx.spawn(async move |this, cx| {
-            let lines = cx
+        let excerpt_file = file.clone();
+        let excerpt_path = path.clone();
+        let excerpt_task = cx.spawn(async move |this, cx| {
+            let highlights = cx
                 .background_executor()
-                .spawn(async move {
-                    let mut out = Vec::with_capacity(texts.len());
-                    for (ix, (kind, text)) in texts.iter().enumerate() {
-                        // Diff lines are fragments — no carry across lines.
-                        let tokens = match kind {
-                            LineKind::Meta => Vec::new(),
-                            _ => tokenize_line(lang, text, LineCarry::None).0,
-                        };
-                        out.push(tokens);
-                        if ix % 128 == 127 {
-                            yield_now().await;
-                        }
-                    }
-                    out
-                })
+                .spawn(async move { excerpt_highlights(&excerpt_file, lang).map(Arc::new) })
                 .await;
             this.update(cx, |changes, cx| {
-                if let Some(slot) = changes.highlights.get_mut(&path)
+                if let Some(slot) = changes.highlights.get_mut(&excerpt_path)
                     && slot.fingerprint == fingerprint
+                    && matches!(slot.state, DiffHighlightState::Pending)
                 {
-                    slot.lines = Some(Arc::new(lines));
+                    slot.state = match highlights {
+                        Some(highlights) => DiffHighlightState::Excerpt(highlights),
+                        None => DiffHighlightState::Plain,
+                    };
                     cx.notify();
                 }
             })
             .ok();
         });
+
+        let active = self.active_diff(cx);
+        let engine = self.state.read(cx).engine().cloned();
+        let target = self.desired_target(cx);
+        let chat_id = self
+            .state
+            .read(cx)
+            .selected_chat_row()
+            .map(|chat| chat.id.clone());
+        let mode = self.scope.mode().to_string();
+        let base_ref = self.base_ref.clone();
+        let commit_sha = (self.scope == DiffScope::Commit)
+            .then(|| self.commit.as_ref().map(|commit| commit.sha.clone()))
+            .flatten();
+        let fetch_file = file.clone();
+        let fetch_path = path.clone();
+        let fetch_task = match (active, engine) {
+            (Some(diff), Some(engine)) => Some(cx.spawn(async move |this, cx| {
+                let request = zeron_proto::GetCheckoutFileDiffTextRequest {
+                    checkout_id: diff.checkout_id,
+                    cwd: diff.cwd,
+                    path: fetch_path.clone(),
+                    mode,
+                    base_ref,
+                    chat_id,
+                    commit_sha,
+                    diff_checksum: diff.checksum,
+                };
+                let mut params = serde_json::to_value(request)
+                    .ok()
+                    .and_then(|value| value.as_object().cloned())
+                    .unwrap_or_default();
+                if let Some(target) = target {
+                    params.insert("targetDeviceId".into(), serde_json::Value::String(target));
+                }
+                let response = engine
+                    .client()
+                    .call(
+                        methods::GET_CHECKOUT_FILE_DIFF_TEXT,
+                        serde_json::Value::Object(params),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|value| {
+                        serde_json::from_value::<zeron_proto::CheckoutFileDiffText>(value).ok()
+                    });
+                let highlights = match response {
+                    Some(response) => {
+                        cx.background_executor()
+                            .spawn(async move {
+                                full_highlights(&fetch_file, lang, &response).map(Arc::new)
+                            })
+                            .await
+                    }
+                    None => None,
+                };
+                this.update(cx, |changes, cx| {
+                    if let Some(slot) = changes.highlights.get_mut(&fetch_path)
+                        && slot.fingerprint == fingerprint
+                        && let Some(highlights) = highlights
+                    {
+                        slot.state = DiffHighlightState::Ready(highlights);
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })),
+            _ => None,
+        };
         self.highlights.insert(
             file.path.clone(),
             HighlightSlot {
                 fingerprint,
-                lines: None,
-                _task: Some(task),
+                state: DiffHighlightState::Pending,
+                _excerpt_task: Some(excerpt_task),
+                _fetch_task: fetch_task,
             },
         );
         None
@@ -1538,11 +1962,7 @@ impl Changes {
                 let Some(file_diff) = files.get(file as usize) else {
                     return gpui::Empty.into_any_element();
                 };
-                let fold = self
-                    .folds
-                    .get(&file_diff.path)
-                    .copied()
-                    .unwrap_or_default();
+                let fold = self.folds.get(&file_diff.path).copied().unwrap_or_default();
                 self.render_file_header(file as usize, file_diff, &fold, &theme, cx)
             }
             DiffRow::Notice { file, notice } => files
@@ -1559,7 +1979,7 @@ impl Changes {
                 file,
                 hunk,
                 line,
-                flat,
+                flat: _,
             } => {
                 let Some(file_diff) = files.get(file as usize) else {
                     return gpui::Empty.into_any_element();
@@ -1572,26 +1992,18 @@ impl Changes {
                 else {
                     return gpui::Empty.into_any_element();
                 };
-                let tokens = highlight
-                    .as_ref()
-                    .and_then(|lines| lines.get(flat as usize))
-                    .map(|t| t.as_slice())
+                let spans = highlight
+                    .as_deref()
+                    .map(|highlights| highlights.spans(line))
                     .unwrap_or(&[]);
-                diff_line_row(line, tokens, &theme, gutter_width(file_diff))
+                diff_line_row(line, spans, &theme, gutter_width(file_diff))
             }
-            DiffRow::BodyPad { .. } => div()
-                .w_full()
-                .h(px(BODY_BOTTOM_PAD))
-                .into_any_element(),
+            DiffRow::BodyPad { .. } => div().w_full().h(px(BODY_BOTTOM_PAD)).into_any_element(),
             DiffRow::FoldingBody { file } => {
                 let Some(file_diff) = files.get(file as usize) else {
                     return gpui::Empty.into_any_element();
                 };
-                let fold = self
-                    .folds
-                    .get(&file_diff.path)
-                    .copied()
-                    .unwrap_or_default();
+                let fold = self.folds.get(&file_diff.path).copied().unwrap_or_default();
                 let highlight = self.request_highlight(file_diff, &parsed_key, cx);
                 let (from, to) = (fold.from, fold.to);
                 // Only the revealable slice is built — the tween never pays
@@ -1602,10 +2014,7 @@ impl Changes {
                 if fold.animating() {
                     clipped
                         .with_animation(
-                            SharedString::from(format!(
-                                "fold-{}-{}",
-                                file_diff.path, fold.epoch
-                            )),
+                            SharedString::from(format!("fold-{}-{}", file_diff.path, fold.epoch)),
                             COLLAPSE.animation(),
                             move |el, t| el.h(px(motion::lerp(from, to, t))),
                         )
@@ -1634,7 +2043,7 @@ impl Changes {
         let adds = file.additions;
         let dels = file.deletions;
 
-        // Chevron (comet checkout-diff-sidebar): chevron-right closed,
+        // Chevron (zeron checkout-diff-sidebar): chevron-right closed,
         // chevron-down open; gpui divs have no rotation transform at the
         // pinned rev, so the glyph swap crossfades over the same 200 ms.
         let chevron_icon = if collapsed {
@@ -1768,7 +2177,53 @@ impl Changes {
     /// alongside, shell-owned (they mutate shell state).
     pub fn render_header_controls(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = Theme::of(cx).clone();
+        // Commit-pinned pane: the pin never changes, so a fixed identity
+        // chip (mono short sha + subject) replaces the scope dropdown;
+        // fold-all still trails.
+        if let Some(commit) = self.commit.clone() {
+            let short: String = commit.sha.chars().take(7).collect();
+            return div()
+                .size_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(22.0))
+                        .px(px(6.0))
+                        .rounded(px(5.0))
+                        .flex()
+                        .items_center()
+                        .bg(crate::theme::ink(0.05))
+                        .font_family(theme.font_mono.clone())
+                        .text_size(px(10.5))
+                        .text_color(theme.text_muted)
+                        .child(SharedString::from(short)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(12.0))
+                        .text_color(theme.text)
+                        .child(SharedString::from(commit.subject.clone())),
+                )
+                .child(
+                    Self::header_button("changes-fold-all", crate::icons::FOLD_VERTICAL, &theme)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.toggle_collapse_all(cx);
+                        })),
+                )
+                .into_any_element();
+        }
         let scope = self.scope;
+        let history_count = (scope == DiffScope::History).then(|| self.history_count(cx));
+        let history_fetch_button =
+            (scope == DiffScope::History).then(|| self.history_fetch_button(cx));
         let trigger = div()
             .id("changes-scope-trigger")
             .h(px(24.0))
@@ -1827,11 +2282,31 @@ impl Changes {
             trigger
         };
 
-        let fold = Self::header_button("changes-fold-all", crate::icons::FOLD_VERTICAL, &theme)
-            .on_click(cx.listener(|this, _, _, cx| {
-                cx.stop_propagation();
-                this.toggle_collapse_all(cx);
-            }));
+        let trailing: AnyElement = if scope == DiffScope::History {
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(2.0))
+                .children(history_fetch_button)
+                .child(
+                    Self::header_button("history-refresh", crate::icons::REFRESH, &theme).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.history_pane(cx)
+                                .update(cx, |history, cx| history.refresh(cx));
+                        }),
+                    ),
+                )
+                .into_any_element()
+        } else {
+            Self::header_button("changes-fold-all", crate::icons::FOLD_VERTICAL, &theme)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.toggle_collapse_all(cx);
+                }))
+                .into_any_element()
+        };
 
         div()
             .size_full()
@@ -1840,9 +2315,14 @@ impl Changes {
             .items_center()
             .gap(px(6.0))
             .child(trigger)
+            .when_some(history_count, |element, count| {
+                element.child(div().flex_1().min_w_0().h_full().child(count))
+            })
             .children(self.render_ref_selector(&theme, cx))
-            .child(div().flex_1())
-            .child(fold)
+            .when(scope != DiffScope::History, |element| {
+                element.child(div().flex_1())
+            })
+            .child(trailing)
             .into_any_element()
     }
 
@@ -1887,6 +2367,16 @@ impl Changes {
             .and_then(|chat| chat.branch.clone())
             .unwrap_or_else(|| "HEAD".to_string());
         let base = self.base_ref.clone().unwrap_or_else(|| "…".to_string());
+        // Even truncation: taffy shrinks flex items ∝ factor × basis, and the
+        // default factor of 1 splits the deficit proportionally to content —
+        // a long branch stayed near-whole while a short base ("main") read as
+        // a bare ellipsis (user report). Weighting each side's factor by its
+        // own length SQUARED (mono font, so chars ∝ px) lands the deficit
+        // ~cubically on the longer name: the short side's loss stays
+        // sub-pixel even under a big deficit (a linear weight still cost it
+        // a char), while equal lengths still split evenly.
+        let branch_weight = (branch.chars().count().max(1) as f32).powi(2);
+        let base_weight = (base.chars().count().max(1) as f32).powi(2);
         let trigger = div()
             .id("changes-ref-trigger")
             .h(px(22.0))
@@ -1895,6 +2385,7 @@ impl Changes {
             // trigger with a long base name plowed over the header buttons
             // (user report); both sides truncate instead.
             .min_w_0()
+            .flex_shrink(base_weight)
             .flex()
             .flex_row()
             .items_center()
@@ -1964,6 +2455,7 @@ impl Changes {
                 .child(
                     div()
                         .min_w_0()
+                        .flex_shrink(branch_weight)
                         .truncate()
                         .font_family(theme.font_mono.clone())
                         .text_size(px(11.5))
@@ -2131,12 +2623,6 @@ fn del_color(theme: &Theme) -> gpui::Hsla {
     theme.diff_del // red-400
 }
 
-/// Diff syntax palette — since round 9 the transcript's code blocks share the
-/// same soft hues, so this simply delegates to [`render::token_color`].
-fn diff_token_color(class: crate::markdown::highlight::TokenClass, theme: &Theme) -> gpui::Hsla {
-    render::token_color(class, theme)
-}
-
 /// One notice row ("New file", "Binary file — contents not shown", …).
 fn notice_row(notice: String, theme: &Theme) -> AnyElement {
     div()
@@ -2172,7 +2658,12 @@ fn hunk_header_row(header: &str, theme: &Theme) -> AnyElement {
 /// One +/−/context/meta diff line: coloured accent bar, dual line-number
 /// gutters (`gutter_px` wide — see [`gutter_width`]), marker column, and
 /// paint-only syntax runs.
-fn diff_line_row(line: &DiffLine, tokens: &[Token], theme: &Theme, gutter_px: f32) -> AnyElement {
+fn diff_line_row(
+    line: &DiffLine,
+    spans: &[zeron_syntax::HighlightSpan],
+    theme: &Theme,
+    gutter_px: f32,
+) -> AnyElement {
     if line.kind == LineKind::Meta {
         return div()
             .h(px(DIFF_LINE_HEIGHT))
@@ -2232,12 +2723,12 @@ fn diff_line_row(line: &DiffLine, tokens: &[Token], theme: &Theme, gutter_px: f3
             ))
     };
     let mono = font(theme.font_mono.clone());
-    let runs = render::runs_with_palette(
+    let runs = render::runs_for_syntax_line_with_plain(
         &line.text,
-        tokens,
+        spans,
         &mono,
         theme.text.opacity(0.92),
-        |class| diff_token_color(class, theme),
+        theme,
     );
     div()
         .h(px(DIFF_LINE_HEIGHT))
@@ -2299,30 +2790,50 @@ fn diff_line_row(line: &DiffLine, tokens: &[Token], theme: &Theme, gutter_px: f3
 
 /// The expanded body of one file section: notices, hunk headers, +/-/context
 /// lines with a coloured accent bar, dual line-number gutters, a marker
-/// column, and paint-only syntax runs (comet checkout-diff-sidebar).
+/// column, and paint-only syntax runs (zeron checkout-diff-sidebar).
 /// Shared with the transcript's tool-diff detail blocks — the same component
 /// renders a checkout diff section and an inline ACP tool diff. (The changes
 /// pane itself virtualizes these rows individually; this stacked form serves
 /// the transcript and the fold tween's clipped stand-in.)
-pub(crate) fn render_file_body(
+/// Full-document old/new highlighting for tool and checkout diffs.
+pub(crate) fn render_file_body_with_syntax(
     file: &FileDiff,
-    highlight: Option<Arc<Vec<Vec<Token>>>>,
+    highlights: Option<Arc<DiffHighlights>>,
     theme: &Theme,
 ) -> AnyElement {
-    render_file_body_upto(file, highlight, theme, f32::INFINITY)
+    let mut children: Vec<AnyElement> = Vec::new();
+    let gutter_px = gutter_width(file);
+    for notice in file_notices(file) {
+        children.push(notice_row(notice, theme));
+    }
+    for hunk in &file.hunks {
+        children.push(hunk_header_row(&hunk.header, theme));
+        for line in &hunk.lines {
+            let spans = highlights
+                .as_deref()
+                .map(|highlights| highlights.spans(line))
+                .unwrap_or(&[]);
+            children.push(diff_line_row(line, spans, theme, gutter_px));
+        }
+    }
+    div()
+        .flex()
+        .flex_col()
+        .pb(px(BODY_BOTTOM_PAD))
+        .children(children)
+        .into_any_element()
 }
 
-/// [`render_file_body`], building only rows that start above `max_px` — the
-/// fold tween's stand-in never materializes lines its clip cannot reveal.
+/// Build only rows that start above `max_px` so the fold tween's stand-in
+/// never materializes lines its clip cannot reveal.
 fn render_file_body_upto(
     file: &FileDiff,
-    highlight: Option<Arc<Vec<Vec<Token>>>>,
+    highlight: Option<Arc<DiffHighlights>>,
     theme: &Theme,
     max_px: f32,
 ) -> AnyElement {
     let mut children: Vec<AnyElement> = Vec::new();
     let mut y = 0.0f32;
-    let mut line_ix = 0usize;
     let gutter_px = gutter_width(file);
 
     'build: {
@@ -2343,14 +2854,12 @@ fn render_file_body_upto(
                 if y >= max_px {
                     break 'build;
                 }
-                let tokens = highlight
-                    .as_ref()
-                    .and_then(|lines| lines.get(line_ix))
-                    .map(|t| t.as_slice())
+                let spans = highlight
+                    .as_deref()
+                    .map(|highlights| highlights.spans(line))
                     .unwrap_or(&[]);
-                children.push(diff_line_row(line, tokens, theme, gutter_px));
+                children.push(diff_line_row(line, spans, theme, gutter_px));
                 y += DIFF_LINE_HEIGHT;
-                line_ix += 1;
             }
         }
     }
@@ -2365,6 +2874,11 @@ fn render_file_body_upto(
 
 impl Render for Changes {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scope == DiffScope::History {
+            let history = self.history_pane(cx);
+            history.update(cx, |history, cx| history.ensure_loaded(cx));
+            return div().size_full().child(history).into_any_element();
+        }
         let theme = Theme::of(cx).clone();
         let active = self.active_diff(cx);
         let scope = self.scope;
@@ -2505,6 +3019,7 @@ impl Render for Changes {
                 )
             })
             .child(content)
+            .into_any_element()
     }
 }
 
@@ -2702,10 +3217,7 @@ rename to new_name.rs
         // body_height stays consistent with what actually renders.
         assert_eq!(
             body_height(&file),
-            NOTICE_HEIGHT
-                + 2.0 * HUNK_HEADER_HEIGHT
-                + 6.0 * DIFF_LINE_HEIGHT
-                + BODY_BOTTOM_PAD
+            NOTICE_HEIGHT + 2.0 * HUNK_HEADER_HEIGHT + 6.0 * DIFF_LINE_HEIGHT + BODY_BOTTOM_PAD
         );
 
         // A cap below the first hunk's length drops later hunks entirely.
@@ -2741,11 +3253,14 @@ rename to new_name.rs
         file.max_line = 9999;
         assert!(gutter_width(&file) > GUTTER_WIDTH);
         file.max_line = 27404;
-        assert!(gutter_width(&file) > gutter_width(&{
-            let mut f = file.clone();
-            f.max_line = 9999;
-            f
-        }));
+        assert!(
+            gutter_width(&file)
+                > gutter_width(&{
+                    let mut f = file.clone();
+                    f.max_line = 9999;
+                    f
+                })
+        );
 
         // Truncation refits the gutter to what actually renders: the first
         // 3 lines are ctx(1,1) / del(2,·) / add(·,2) — max line 2.
@@ -2838,7 +3353,7 @@ rename to new_name.rs
         assert_eq!(diff_phase(Some(&full)), DiffPhase::List);
         // Engine may report files without patch text (truncation edge).
         let mut summarized = diff("co", "d", "/w", "");
-        summarized.files.push(comet_proto::DiffFileSummary {
+        summarized.files.push(zeron_proto::DiffFileSummary {
             path: "x".into(),
             old_path: None,
             status: "modified".into(),
@@ -2974,12 +3489,174 @@ rename to new_name.rs
     }
 
     #[test]
-    fn langs_resolve_from_paths() {
-        assert_eq!(lang_for_path("src/main.rs"), Some(Lang::Rust));
-        assert_eq!(lang_for_path("a/b/app.tsx"), Some(Lang::Js));
-        assert_eq!(lang_for_path("Cargo.toml"), Some(Lang::Toml));
-        assert_eq!(lang_for_path("script.sh"), Some(Lang::Bash));
-        assert_eq!(lang_for_path("README"), None);
-        assert_eq!(lang_for_path("img.png"), None);
+    fn full_diff_highlights_map_old_new_and_context_by_source_line() {
+        let old_source = "fn old() {\n    let value = 1;\n}\n";
+        let new_source = "fn new() {\n    let value = 2;\n}\n";
+        let parse = |source| {
+            Arc::new(
+                zeron_syntax::highlight(zeron_syntax::HighlightRequest {
+                    source,
+                    path: Some("src/lib.rs"),
+                    fence_tag: None,
+                })
+                .unwrap(),
+            )
+        };
+        let highlights = DiffHighlights {
+            old: Some(parse(old_source)),
+            new: Some(parse(new_source)),
+        };
+        let deleted = DiffLine {
+            kind: LineKind::Del,
+            old_no: Some(1),
+            new_no: None,
+            text: "fn old() {".into(),
+        };
+        let added = DiffLine {
+            kind: LineKind::Add,
+            old_no: None,
+            new_no: Some(1),
+            text: "fn new() {".into(),
+        };
+        let context = DiffLine {
+            kind: LineKind::Context,
+            old_no: Some(2),
+            new_no: Some(2),
+            text: "    let value = 2;".into(),
+        };
+        assert_eq!(
+            highlights.source_ref(&deleted),
+            Some(SourceLineRef {
+                side: SourceSide::Old,
+                line_number: 1
+            })
+        );
+        assert_eq!(
+            highlights.source_ref(&added),
+            Some(SourceLineRef {
+                side: SourceSide::New,
+                line_number: 1
+            })
+        );
+        assert_eq!(
+            highlights.source_ref(&context),
+            Some(SourceLineRef {
+                side: SourceSide::New,
+                line_number: 2
+            })
+        );
+        assert!(
+            highlights
+                .spans(&deleted)
+                .iter()
+                .any(|span| span.kind == zeron_syntax::HighlightKind::Function)
+        );
+        assert!(
+            highlights
+                .spans(&added)
+                .iter()
+                .any(|span| span.kind == zeron_syntax::HighlightKind::Function)
+        );
+    }
+
+    #[test]
+    fn excerpt_parses_old_and_new_hunks_as_separate_documents() {
+        let file = FileDiff {
+            path: "src/lib.rs".into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            binary: false,
+            notices: vec![],
+            hunks: vec![Hunk {
+                header: "@@ -1,3 +1,3 @@".into(),
+                lines: vec![
+                    DiffLine {
+                        kind: LineKind::Context,
+                        old_no: Some(1),
+                        new_no: Some(1),
+                        text: "/* start".into(),
+                    },
+                    DiffLine {
+                        kind: LineKind::Del,
+                        old_no: Some(2),
+                        new_no: None,
+                        text: "old body".into(),
+                    },
+                    DiffLine {
+                        kind: LineKind::Add,
+                        old_no: None,
+                        new_no: Some(2),
+                        text: "new body".into(),
+                    },
+                    DiffLine {
+                        kind: LineKind::Context,
+                        old_no: Some(3),
+                        new_no: Some(3),
+                        text: "end */".into(),
+                    },
+                ],
+            }],
+            additions: 1,
+            deletions: 1,
+            max_line: 3,
+        };
+        let highlights = excerpt_highlights(&file, Lang::Rust).expect("excerpt");
+        let deleted = &file.hunks[0].lines[1];
+        let added = &file.hunks[0].lines[2];
+        assert!(
+            highlights
+                .spans(deleted)
+                .iter()
+                .any(|span| span.kind == zeron_syntax::HighlightKind::Comment)
+        );
+        assert!(
+            highlights
+                .spans(added)
+                .iter()
+                .any(|span| span.kind == zeron_syntax::HighlightKind::Comment)
+        );
+    }
+
+    #[test]
+    fn mismatched_full_sources_are_rejected_atomically() {
+        let file = FileDiff {
+            path: "src/lib.rs".into(),
+            old_path: None,
+            status: FileStatus::Modified,
+            binary: false,
+            notices: vec![],
+            hunks: vec![Hunk {
+                header: "@@ -1 +1 @@".into(),
+                lines: vec![
+                    DiffLine {
+                        kind: LineKind::Del,
+                        old_no: Some(1),
+                        new_no: None,
+                        text: "let old = 1;".into(),
+                    },
+                    DiffLine {
+                        kind: LineKind::Add,
+                        old_no: None,
+                        new_no: Some(1),
+                        text: "let new = 2;".into(),
+                    },
+                ],
+            }],
+            additions: 1,
+            deletions: 1,
+            max_line: 1,
+        };
+        let response = zeron_proto::CheckoutFileDiffText {
+            diff_checksum: "sum".into(),
+            old_text: Some("let old = 1;\n".into()),
+            new_text: Some("different snapshot\n".into()),
+            old_content_hash: None,
+            new_content_hash: None,
+            binary: false,
+            truncated: false,
+            stale: false,
+        };
+        assert!(!sources_match_patch(&file, &response));
+        assert!(full_highlights(&file, Lang::Rust, &response).is_none());
     }
 }

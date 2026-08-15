@@ -270,7 +270,7 @@ struct Shared {
     quota_blocked: bool,
 }
 
-/// `comet sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
+/// `zeron sync` surface (plan: cursor / headSeq / floorLag / pendingPushes).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChatStatsSnapshot {
     pub connected: bool,

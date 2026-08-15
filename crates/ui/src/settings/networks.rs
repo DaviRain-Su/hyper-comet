@@ -5,8 +5,8 @@ use gpui::{
     px,
 };
 
-use comet_proto::{EvmNetwork, NetworksResponse, OkxStatusResponse, UpsertNetworkRequest};
-use comet_rpc::methods;
+use zeron_proto::{EvmNetwork, NetworksResponse, OkxStatusResponse, UpsertNetworkRequest};
+use zeron_rpc::methods;
 
 use crate::composer::{ComposerInput, ComposerInputEvent};
 use crate::popover::{self, Loadable};

@@ -46,7 +46,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
-use comet_proto::{
+use zeron_proto::{
     AgentEvent, DoneStatus, HarnessId, Model, ModelOption, ModelOptionChoice, ReasoningLevel,
     RunRequest, SlashCommand, SteeringMode, UserInputAnswer, UserInputQuestion,
 };
@@ -492,7 +492,7 @@ fn pi_spec() -> AcpAgentSpec {
         },
         // The adapter has no `_session/steering` extension: turn boundaries.
         steering_mode: SteeringMode::TurnBoundary,
-        // pi's thinking ladder (minimal→max; its extra "off" tier has no comet
+        // pi's thinking ladder (minimal→max; its extra "off" tier has no zeron
         // equivalent and is left to the agent default).
         reasoning_levels: &[
             ReasoningLevel::Minimal,
@@ -645,7 +645,7 @@ impl AcpHarness {
             tokio::spawn(async move {
                 let mut lines = tokio::io::BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
-                    tracing::debug!(target: "comet_harness::acp", "stderr: {line}");
+                    tracing::debug!(target: "zeron_harness::acp", "stderr: {line}");
                     tail.push(&line);
                 }
             });
@@ -767,7 +767,7 @@ impl AcpHarness {
     }
 }
 
-/// Map an advertised `thought_level` value id onto comet's ladder.
+/// Map an advertised `thought_level` value id onto zeron's ladder.
 fn reasoning_from_value(value: &str) -> Option<ReasoningLevel> {
     match norm_id(value).as_str() {
         "minimal" => Some(ReasoningLevel::Minimal),
@@ -817,21 +817,39 @@ fn models_from_session(session_response: &Value, catalog: &[Model]) -> Vec<Model
         .filter_map(trait_from_config_option)
         .collect();
 
-    let known = |id: &str| catalog.iter().find(|m| norm_id(&m.id) == norm_id(id));
+    let exact = |id: &str| catalog.iter().find(|m| norm_id(&m.id) == norm_id(id));
+    // Family-alias catalog row: the claude adapter advertises bare aliases
+    // (`opus`, `sonnet`, `haiku`) meaning "the current generation" — match
+    // them to the first (flagship-ordered) catalog row of that family so
+    // the picker shows the curated label/ladder ("Opus 5") instead of the
+    // terse alias. Alphabetic-only ids ONLY: versioned ids
+    // (`gpt-5.2-codex`) must never fuzzy-match a foreign row.
+    let alias = |id: &str| {
+        let norm = norm_id(id);
+        (!norm.is_empty() && norm.chars().all(|c| c.is_ascii_alphabetic()))
+            .then(|| catalog.iter().find(|m| norm_id(&m.id).contains(&norm)))
+            .flatten()
+    };
     let build = |id: &str,
                  name: Option<&str>,
                  description: Option<&str>,
                  options: Vec<ModelOption>|
      -> Model {
-        let known = known(id);
+        let exact = exact(id);
+        let aliased = if exact.is_none() { alias(id) } else { None };
+        let known = exact.or(aliased);
+        // The wire name wins for real ids; an ALIAS row's terse wire name
+        // ("Opus") loses to the curated family label/description.
         Model {
             id: id.to_owned(),
-            label: name
-                .map(str::to_owned)
+            label: aliased
+                .map(|m| m.label.clone())
+                .or_else(|| name.map(str::to_owned))
                 .or_else(|| known.map(|m| m.label.clone()))
                 .unwrap_or_else(|| id.to_owned()),
-            description: description
-                .map(str::to_owned)
+            description: aliased
+                .and_then(|m| m.description.clone())
+                .or_else(|| description.map(str::to_owned))
                 .or_else(|| known.and_then(|m| m.description.clone())),
             reasoning_levels: match known.filter(|m| !m.reasoning_levels.is_empty()) {
                 Some(m) => m.reasoning_levels.clone(),
@@ -852,32 +870,52 @@ fn models_from_session(session_response: &Value, catalog: &[Model]) -> Vec<Model
             .iter()
             .filter_map(|o| o.get("value").and_then(Value::as_str))
             .collect();
+        // `default` is an ALIAS row (Claude Code's "Default (recommended)"),
+        // duplicating whichever real model the CLI resolves it to — dropped
+        // whenever a real row exists (it read as clutter in the picker, user
+        // request). Send-side, a chat that saved `default` still matches the
+        // advertised value exactly.
+        let has_real = raw_ids.iter().any(|id| norm_id(id) != "default");
         return model_select
             .iter()
             .filter_map(|o| {
                 let id = o.get("value").and_then(Value::as_str)?;
-                // A 1M variant folds into its base row's Context Window
-                // trait; it only stands alone when its bare base id is not
-                // advertised (the claude adapter lists `opus[1m]` with no
-                // bare `opus` when the CLI pins the 1M window).
-                if let Some(base) = strip_context_hint(id)
-                    && raw_ids.contains(&base)
-                {
+                if has_real && norm_id(id) == "default" {
                     return None;
                 }
+                let name = o.get("name").and_then(Value::as_str);
+                let description = o.get("description").and_then(Value::as_str);
                 let mut options = wire_options.clone();
+                if let Some(base) = strip_context_hint(id) {
+                    // A 1M variant with its bare base advertised too folds
+                    // into THAT row's Context Window trait (added below).
+                    if raw_ids.contains(&base) {
+                        return None;
+                    }
+                    // Orphan 1M variant (`opus[1m]` with no bare `opus` —
+                    // the CLI pins the 1M window): present it AS the base
+                    // model with the trait defaulting to 1M, instead of a
+                    // one-off "Opus (1M context)" row (user request). The
+                    // send path recomposes the advertised id via
+                    // `pick_model_value`'s compose/family fallback.
+                    let mut window = crate::claude::catalog::context_window();
+                    window.default_choice = "1m".into();
+                    options.push(window);
+                    return Some(build(
+                        base,
+                        name.map(strip_trailing_parenthetical)
+                            .filter(|n| !n.is_empty()),
+                        description,
+                        options,
+                    ));
+                }
                 if raw_ids
                     .iter()
                     .any(|raw| strip_context_hint(raw) == Some(id))
                 {
                     options.push(crate::claude::catalog::context_window());
                 }
-                Some(build(
-                    id,
-                    o.get("name").and_then(Value::as_str),
-                    o.get("description").and_then(Value::as_str),
-                    options,
-                ))
+                Some(build(id, name, description, options))
             })
             .collect();
     }
@@ -897,19 +935,19 @@ fn models_from_session(session_response: &Value, catalog: &[Model]) -> Vec<Model
                 id,
                 m.get("name").and_then(Value::as_str),
                 m.get("description").and_then(Value::as_str),
-                known(id).map(|k| k.options.clone()).unwrap_or_default(),
+                exact(id).map(|k| k.options.clone()).unwrap_or_default(),
             ))
         })
         .collect()
 }
 
 /// A session config option surfaced as a Traits-dropdown section. Mode is
-/// comet's own (forced to the no-prompts choice), model rides the model rows,
+/// zeron's own (forced to the no-prompts choice), model rides the model rows,
 /// and thought_level is the Reasoning ladder — everything else the agent
 /// advertises (fast mode, collaboration mode, agent persona, …) passes
 /// through. `currentValue` doubles as the default: it is the state the
 /// session opens in. Booleans render as an off/on select, mirroring the
-/// catalogs (comet never declares the boolean config capability, so adapters
+/// catalogs (zeron never declares the boolean config capability, so adapters
 /// send selects, but handle the shape defensively).
 fn trait_from_config_option(option: &Value) -> Option<ModelOption> {
     if matches!(
@@ -1103,12 +1141,12 @@ fn initialize_params(harness: HarnessId) -> Value {
     json!({
         "protocolVersion": 1,
         "clientInfo": {
-            "name": "comet-native",
-            "title": "Comet",
+            "name": "zeron",
+            "title": "Zeron",
             "version": env!("CARGO_PKG_VERSION"),
         },
         // Declined: agents fall back to their own fs/terminal access, which
-        // is what comet wants — the working tree is the source of truth for
+        // is what zeron wants — the working tree is the source of truth for
         // the diff pane, and commands belong to the agent's own sandbox.
         "clientCapabilities": capabilities,
     })
@@ -1174,6 +1212,16 @@ fn context_hint_1m(id: &str) -> bool {
 /// none.
 fn strip_context_hint(id: &str) -> Option<&str> {
     id.strip_suffix("[1m]").or_else(|| id.strip_suffix("-1m"))
+}
+
+/// A wire display name with its trailing parenthetical removed
+/// ("Opus (1M context)" → "Opus") — a folded base row must not keep the
+/// variant tag.
+fn strip_trailing_parenthetical(name: &str) -> &str {
+    match name.rfind(" (") {
+        Some(at) if name.ends_with(')') => name[..at].trim_end(),
+        _ => name,
+    }
 }
 
 /// Pick the advertised model value for a requested model id. Agents differ in
@@ -1399,7 +1447,7 @@ fn prompt_turn(
 
 /// Answer a server→client request. Permission requests are auto-accepted with
 /// the agent's preferred allow option — parity with the claude harness's
-/// bypassPermissions and the codex harness's approvalPolicy "never" (comet
+/// bypassPermissions and the codex harness's approvalPolicy "never" (zeron
 /// sessions run unattended). Everything else (fs, terminal, elicitation) was
 /// declined at initialize, so a stray request gets method-not-found rather
 /// than wedging the agent.
@@ -1443,7 +1491,7 @@ fn handle_server_request(
             cursor_todo_events(params, CURSOR_TODOS_CHIP)
         }
         // Subagent tasks run inside cursor-agent; this only reports one
-        // finished. Image generation has nowhere to land in a comet session.
+        // finished. Image generation has nowhere to land in a zeron session.
         CURSOR_TASK => {
             client.respond(&id, json!({ "outcome": { "outcome": "completed" } }));
             Vec::new()
@@ -1451,12 +1499,12 @@ fn handle_server_request(
         CURSOR_GENERATE_IMAGE => {
             client.respond(
                 &id,
-                json!({ "outcome": { "outcome": "rejected", "reason": "comet cannot render generated images" } }),
+                json!({ "outcome": { "outcome": "rejected", "reason": "zeron cannot render generated images" } }),
             );
             Vec::new()
         }
         _ => {
-            tracing::debug!(target: "comet_harness::acp", "unhandled server request: {method}");
+            tracing::debug!(target: "zeron_harness::acp", "unhandled server request: {method}");
             client.respond_error(&id, -32601, &format!("unsupported method: {method}"));
             Vec::new()
         }
@@ -1568,7 +1616,7 @@ fn handle_server_request_live(
 
 /// Cursor's ACP extension methods (`https://cursor.com/docs/cli/acp`).
 /// `ask_question` and `create_plan` BLOCK the agent until answered, so every
-/// one of these gets a response even when comet has nothing to do with it.
+/// one of these gets a response even when zeron has nothing to do with it.
 const CURSOR_ASK_QUESTION: &str = "cursor/ask_question";
 const CURSOR_CREATE_PLAN: &str = "cursor/create_plan";
 const CURSOR_UPDATE_TODOS: &str = "cursor/update_todos";
@@ -1625,8 +1673,8 @@ fn ask_cursor_questions(
     });
 }
 
-/// One `cursor/ask_question` entry: the comet-side question plus what is
-/// needed to answer it — the wire id, and the label→optionId table (comet's
+/// One `cursor/ask_question` entry: the zeron-side question plus what is
+/// needed to answer it — the wire id, and the label→optionId table (zeron's
 /// input bridge speaks labels, cursor expects option ids).
 struct CursorQuestion {
     wire_id: String,
@@ -1659,14 +1707,14 @@ fn cursor_questions(params: &Value) -> Vec<CursorQuestion> {
                     Some((label.to_owned(), oid.to_owned()))
                 })
                 .collect();
-            // An option-less question has no answer comet could send back.
+            // An option-less question has no answer zeron could send back.
             if choices.is_empty() {
                 return None;
             }
             Some(CursorQuestion {
                 wire_id,
                 question: UserInputQuestion {
-                    // Comet-minted: cursor's ids ("q1") repeat across turns.
+                    // Zeron-minted: cursor's ids ("q1") repeat across turns.
                     id: new_message_id(),
                     header: header.to_owned(),
                     question: q
@@ -1688,7 +1736,7 @@ fn cursor_questions(params: &Value) -> Vec<CursorQuestion> {
 
 /// Chosen labels → the `answered` outcome. Nothing recognisable coming back
 /// (dropped resolver, unknown labels) degrades to `cancelled` so the agent
-/// unblocks without comet inventing a pick.
+/// unblocks without zeron inventing a pick.
 fn cursor_answer_outcome(asked: &[CursorQuestion], answers: &[UserInputAnswer]) -> Value {
     let picked: Vec<Value> = asked
         .iter()
@@ -1858,7 +1906,7 @@ async fn run_session(session: Session) {
                 // A missing/foreign session falls back to a fresh one.
                 Err(e) => {
                     tracing::debug!(
-                        target: "comet_harness::acp",
+                        target: "zeron_harness::acp",
                         "session/load failed (starting fresh): {e}"
                     );
                     let new = request_draining(
@@ -1933,7 +1981,7 @@ async fn run_session(session: Session) {
                     }
                     Err(e) => {
                         tracing::debug!(
-                            target: "comet_harness::acp",
+                            target: "zeron_harness::acp",
                             "session/set_config_option model rejected (agent default runs): {e}"
                         );
                     }
@@ -1967,7 +2015,7 @@ async fn run_session(session: Session) {
             .await
             {
                 tracing::debug!(
-                    target: "comet_harness::acp",
+                    target: "zeron_harness::acp",
                     "session/set_config_option {config_id}={payload} rejected (agent default runs): {e}"
                 );
             }
@@ -1982,11 +2030,29 @@ async fn run_session(session: Session) {
         res = setup => match res {
             Ok(v) => v,
             Err(e) => {
+                // A child that dies before the handshake used to surface only
+                // the RPC-side symptom ("transport closed") — its exit status
+                // and stderr, both already in hand, were dropped, leaving
+                // startup crashes undiagnosable (user report). When the child
+                // is already gone, give the reader task a beat to drain the
+                // pipe, then append the crash text; the Done carrying it is
+                // journaled, so the cause survives for later inspection.
+                let error = match child.try_wait() {
+                    Ok(Some(status)) => {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        format!(
+                            "{e}; {}",
+                            crate::crash_message(agent_name, Some(status), &stderr_tail)
+                        )
+                    }
+                    _ => e.to_string(),
+                };
+                tracing::warn!(target: "zeron_harness::acp", %error, "agent setup failed");
                 let _ = event_tx
                     .send(Ok(AgentEvent::Done {
                         status: DoneStatus::Errored,
                         result: None,
-                        error: Some(e.to_string()),
+                        error: Some(error),
                         session_id: None,
                     }))
                     .await;
@@ -2094,18 +2160,33 @@ async fn run_session(session: Session) {
     // the turn has streamed content, every tool call it opened has resolved,
     // no permission/question round-trip is pending, and the stream has been
     // quiet past the window, the turn is settled through the same recovery
-    // arm. A false settle is recoverable by design (the engine folds any
-    // later output as a self-continued segment and re-arms Working; a late
-    // response resolves a dropped channel), which is what makes a tight
-    // window safe where a hard per-turn timeout was rejected.
-    // `COMET_ACP_QUIET_SETTLE_MS` overrides; 0 disables.
-    let quiet_settle: Option<Duration> = match std::env::var("COMET_ACP_QUIET_SETTLE_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-    {
-        Some(0) => None,
-        Some(ms) => Some(Duration::from_millis(ms)),
-        None => Some(Duration::from_secs(30)),
+    // arm. A false settle is only PARTLY recoverable: the engine folds any
+    // later output as a self-continued segment and re-arms Working, but the
+    // turn is orphaned — the real response resolves a closed channel, no
+    // Done ever comes, and the session strands Working until the engine's
+    // quiesce watchdog parks it.
+    //
+    // Claude is EXEMPT, even from the env knob: claude-agent-acp forwards
+    // no thinking traffic, so a long silent reasoning stretch in exactly
+    // the "looks finished" state (content streamed, every tool resolved)
+    // is indistinguishable from a dropped reply — 30s of quiet falsely
+    // settled live turns mid-thought (2026-08-13), producing both a
+    // premature Done and the stuck-Working orphan above. Claude's
+    // genuinely dropped replies already settle deterministically (the
+    // cost-frame hint above, `noRunningTurn` steering evidence); the
+    // engine watchdog backstops anything left.
+    // `ZERON_ACP_QUIET_SETTLE_MS` overrides; 0 disables.
+    let quiet_settle: Option<Duration> = if cost_hint_enabled {
+        None
+    } else {
+        match std::env::var("ZERON_ACP_QUIET_SETTLE_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            Some(0) => None,
+            Some(ms) => Some(Duration::from_millis(ms)),
+            None => Some(Duration::from_secs(30)),
+        }
     };
     let mut last_update_at = tokio::time::Instant::now();
     let mut turn_content_seen = false;
@@ -2114,7 +2195,8 @@ async fn run_session(session: Session) {
     // message itself, mid-turn, indistinguishable in shape from the
     // terminal one (verified against 0.66.0 — premature Done exactly one
     // grace after injection). Steered turns settle off their real response
-    // (healthy in every trace); the quiet settle stays as their backstop.
+    // (healthy in every trace); the engine's quiesce watchdog backstops
+    // them (the quiet settle used to, before the Claude exemption above).
     let mut steered_this_turn = false;
     let mut open_tools: std::collections::HashSet<String> = std::collections::HashSet::new();
     let open_questions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -2312,7 +2394,7 @@ async fn run_session(session: Session) {
                         && is_turn_end_cost_update(&params, &session_id)
                     {
                         tracing::debug!(
-                            target: "comet_harness::acp",
+                            target: "zeron_harness::acp",
                             "turn-end cost update observed with the prompt \
                              unsettled; arming fast settle"
                         );
@@ -2323,6 +2405,30 @@ async fn run_session(session: Session) {
                     // tolerated by design.
                     let events = if method == "session/update" {
                         session_update_events(&params, &session_id)
+                    } else if method == "_session/turn_ended" {
+                        // Autonomous turn-end (claude-agent-acp extension,
+                        // `_`-prefixed like `_session/steering`): a turn the
+                        // agent started on its own — a background-task wake —
+                        // has no `session/prompt` to settle, so its SDK-side
+                        // turn-end previously vanished at the adapter and the
+                        // engine's quiesce watchdog was the only settle path
+                        // (≤2min of phantom Working per notification, user
+                        // report 2026-08-13). Gated to BETWEEN prompts: a
+                        // live turn settles through its own response.
+                        if turn.is_none()
+                            && !interrupted
+                            && params.get("sessionId").and_then(Value::as_str)
+                                == Some(session_id.as_str())
+                        {
+                            vec![AgentEvent::Done {
+                                status: DoneStatus::Completed,
+                                result: None,
+                                error: None,
+                                session_id: Some(session_id.clone()),
+                            }]
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         cursor_notification_events(&method, &params)
                     };
@@ -2401,7 +2507,7 @@ async fn run_session(session: Session) {
                         .to_owned(),
                     Err(e) => {
                         tracing::debug!(
-                            target: "comet_harness::acp",
+                            target: "zeron_harness::acp",
                             "_session/steering failed (redelivering): {e}"
                         );
                         // Failed calls redeliver like a lost turn-end race.
@@ -2500,7 +2606,7 @@ async fn run_session(session: Session) {
                         == Some("noRunningTurn")
                     {
                         tracing::warn!(
-                            target: "comet_harness::acp",
+                            target: "zeron_harness::acp",
                             "steering answered noRunningTurn with a prompt \
                              outstanding; arming starved-turn recovery"
                         );
@@ -2593,7 +2699,7 @@ async fn run_session(session: Session) {
                 && open_questions.load(std::sync::atomic::Ordering::SeqCst) == 0 =>
             {
                 tracing::warn!(
-                    target: "comet_harness::acp",
+                    target: "zeron_harness::acp",
                     quiet_ms = quiet_settle.unwrap_or_default().as_millis() as u64,
                     "turn quiet past the settle window with completed output; \
                      treating the prompt response as dropped"
@@ -2616,7 +2722,7 @@ async fn run_session(session: Session) {
             ), if starve_deadline.is_some() && turn.is_some() && !interrupted => {
                 starve_deadline = None;
                 tracing::warn!(
-                    target: "comet_harness::acp",
+                    target: "zeron_harness::acp",
                     "prompt response missing past turn-end evidence; settling \
                      the dead turn (and promoting any queued steer)"
                 );
@@ -2698,7 +2804,7 @@ async fn run_session(session: Session) {
                         // merged turn really ends. Only adapters with no
                         // verified turn-end frame pay the cancel.
                         tracing::info!(
-                            target: "comet_harness::acp",
+                            target: "zeron_harness::acp",
                             "steer into a self-continuing session; cancelling \
                              the unowned turn before prompting"
                         );
@@ -2817,7 +2923,7 @@ async fn run_session(session: Session) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use comet_proto::{TodoItem, ToolCall};
+    use zeron_proto::{TodoItem, ToolCall};
 
     #[test]
     fn steering_capability_reads_initialize_meta() {
@@ -3034,10 +3140,13 @@ mod tests {
     }
 
     #[test]
-    fn orphan_1m_variants_stand_alone() {
-        // The real claude adapter advertises `opus[1m]` with NO bare `opus`
-        // when the CLI pins the 1M window — those rows must survive, not
-        // collapse into a base that was never advertised.
+    fn default_alias_drops_and_orphan_1m_variants_fold_to_their_base() {
+        // The real claude adapter advertises a `default` alias row plus
+        // `opus[1m]` with NO bare `opus` (the CLI pins the 1M window).
+        // Both made the picker read like a settings dump (user report):
+        // `default` duplicates a real model, and the orphan 1M variant now
+        // presents AS its base model with the Context Window trait pinned
+        // to 1M.
         let response = json!({
             "sessionId": "s-1",
             "configOptions": [{
@@ -3046,8 +3155,8 @@ mod tests {
                 "type": "select",
                 "currentValue": "claude-fable-5[1m]",
                 "options": [
-                    { "value": "default", "name": "Default" },
-                    { "value": "opus[1m]", "name": "Opus" },
+                    { "value": "default", "name": "Default (recommended)" },
+                    { "value": "opus[1m]", "name": "Opus (1M context)" },
                     { "value": "claude-fable-5[1m]", "name": "Fable 5" },
                     { "value": "sonnet", "name": "Sonnet" },
                     { "value": "haiku", "name": "Haiku" },
@@ -3057,15 +3166,67 @@ mod tests {
         let models = models_from_session(&response, &[]);
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec![
-                "default",
-                "opus[1m]",
-                "claude-fable-5[1m]",
-                "sonnet",
-                "haiku"
-            ]
+            vec!["opus", "claude-fable-5", "sonnet", "haiku"]
         );
-        assert!(models.iter().all(|m| m.options.is_empty()));
+        // The folded rows keep a de-parenthesized wire name (no catalog
+        // here) and carry the 1M-pinned window trait.
+        assert_eq!(models[0].label, "Opus");
+        let window = models[0].options.iter().find(|o| o.id == "contextWindow");
+        assert_eq!(window.map(|o| o.default_choice.as_str()), Some("1m"));
+        assert!(
+            models[1]
+                .options
+                .iter()
+                .any(|o| o.id == "contextWindow" && o.default_choice == "1m")
+        );
+        // The bare aliases stay untouched.
+        assert!(models[2].options.is_empty());
+        assert!(models[3].options.is_empty());
+    }
+
+    #[test]
+    fn claude_aliases_enrich_from_the_curated_catalog() {
+        // Same wire shape, WITH the claude catalog: bare aliases pick up the
+        // flagship row's curated label/description/ladder, versioned ids
+        // keep their wire name.
+        let response = json!({
+            "sessionId": "s-1",
+            "configOptions": [{
+                "id": "model",
+                "category": "model",
+                "type": "select",
+                "currentValue": "default",
+                "options": [
+                    { "value": "default", "name": "Default (recommended)" },
+                    { "value": "opus[1m]", "name": "Opus (1M context)" },
+                    { "value": "fable", "name": "Fable" },
+                    { "value": "sonnet", "name": "Sonnet" },
+                    { "value": "haiku", "name": "Haiku" },
+                ],
+            }],
+        });
+        let models = models_from_session(&response, &crate::claude::catalog::static_models());
+        assert_eq!(
+            models.iter().map(|m| m.label.as_str()).collect::<Vec<_>>(),
+            vec!["Opus 5", "Fable 5", "Sonnet 5", "Haiku 4.5"]
+        );
+        // The alias rows carry the catalog's per-model ladders.
+        assert!(
+            models[1]
+                .reasoning_levels
+                .contains(&ReasoningLevel::Ultracode)
+        );
+        assert!(models[3].reasoning_levels.is_empty());
+        // Versioned ids never fuzzy-match: a foreign id passes through.
+        let foreign = json!({
+            "sessionId": "s-1",
+            "configOptions": [{
+                "id": "model", "category": "model", "type": "select",
+                "options": [{ "value": "claude-opus-9-mini", "name": "Opus 9 Mini" }],
+            }],
+        });
+        let models = models_from_session(&foreign, &crate::claude::catalog::static_models());
+        assert_eq!(models[0].label, "Opus 9 Mini");
     }
 
     #[test]
@@ -3089,7 +3250,7 @@ mod tests {
 
     /// `cursor/ask_question` carries several questions at once, each with its
     /// own labelled options — the round trip must answer with OPTION IDS,
-    /// keyed by cursor's wire ids, not the labels comet showed the user.
+    /// keyed by cursor's wire ids, not the labels zeron showed the user.
     #[test]
     fn cursor_questions_round_trip_labels_back_to_option_ids() {
         let asked = cursor_questions(&json!({
@@ -3123,7 +3284,7 @@ mod tests {
         assert_eq!(asked[0].question.options, vec!["Agent", "Plan"]);
         assert!(!asked[0].question.multi_select);
         assert!(asked[1].question.multi_select);
-        // Cursor's repeatable ids never leak into comet's question ids.
+        // Cursor's repeatable ids never leak into zeron's question ids.
         assert_ne!(asked[0].question.id, "q1");
 
         let answers = vec![
@@ -3209,7 +3370,7 @@ mod tests {
         // A plan lands on its own chip, so the two never overwrite each other.
         let planned = cursor_notification_events(CURSOR_CREATE_PLAN, &todos);
         assert_eq!(chip_id(&planned), CURSOR_PLAN_CHIP);
-        // Everything else is noise comet has nothing to render for.
+        // Everything else is noise zeron has nothing to render for.
         assert!(cursor_notification_events(CURSOR_TASK, &todos).is_empty());
         assert!(cursor_notification_events(CURSOR_GENERATE_IMAGE, &todos).is_empty());
         assert!(cursor_notification_events("cursor/unknown", &todos).is_empty());

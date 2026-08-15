@@ -16,7 +16,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{Mutex, oneshot};
 use uuid::Uuid;
 
-use comet_proto::WalletAccount;
+use zeron_proto::WalletAccount;
 
 use crate::wallets::WalletStore;
 
@@ -472,7 +472,7 @@ async fn handle_session_post(
     let mut wallets = store.load().map_err(|e| e.to_string())?;
     if let Some(existing) = wallets
         .iter_mut()
-        .find(|w| w.source == comet_proto::WalletSource::WalletConnect && w.address.eq_ignore_ascii_case(&address))
+        .find(|w| w.source == zeron_proto::WalletSource::WalletConnect && w.address.eq_ignore_ascii_case(&address))
     {
         existing.label = label.to_string();
         existing.address = address.clone();
@@ -485,7 +485,7 @@ async fn handle_session_post(
         id: format!("wc-{}", &Uuid::new_v4().to_string()[..8]),
         label: label.to_string(),
         address,
-        source: comet_proto::WalletSource::WalletConnect,
+        source: zeron_proto::WalletSource::WalletConnect,
         env_key_name: None,
     };
     store.upsert(wallet.clone()).map_err(|e| e.to_string())?;

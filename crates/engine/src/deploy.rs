@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use alloy::dyn_abi::{DynSolType, DynSolValue};
 use chrono::Utc;
-use comet_proto::{
+use zeron_proto::{
     DeployArtifact, DeploySendRequest, DeploymentRecord, EvmNetwork, WalletAccount, WalletSource,
 };
 use uuid::Uuid;
@@ -443,7 +443,7 @@ async fn read_bytecode(path: &Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use comet_proto::builtin_networks;
+    use zeron_proto::builtin_networks;
 
     fn xlayer_testnet() -> EvmNetwork {
         builtin_networks()

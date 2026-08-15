@@ -8,12 +8,13 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
-use comet_engine::{
-    EngineCore, HarnessRegistry, Repos, Terminals, capture_diff, capture_diff_against,
-    capture_turn_diff, merge_base, snapshot_tree,
+use zeron_engine::{
+    EngineCore, HarnessRegistry, Repos, Terminals, capture_commit_diff, capture_diff,
+    capture_diff_against, capture_turn_diff, merge_base, read_diff_file_text, snapshot_tree,
+    working_diff_base,
 };
-use comet_proto::TerminalEvent;
-use comet_rpc::methods;
+use zeron_proto::{GitHistoryRefKind, TerminalEvent};
+use zeron_rpc::methods;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -38,6 +39,22 @@ async fn git(cwd: &Path, args: &[&str]) {
     );
 }
 
+async fn git_stdout(cwd: &Path, args: &[&str]) -> String {
+    let output = tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .await
+        .expect("git spawns");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
 /// Init a repo at `dir` with one committed file `a.txt`.
 async fn init_repo(dir: &Path) {
     std::fs::create_dir_all(dir).expect("repo dir");
@@ -56,7 +73,7 @@ fn assemble(dir: &Path) -> EngineCore {
     EngineCore::assemble(
         dir,
         Arc::new(HarnessRegistry::new()),
-        comet_proto::HarnessId::Mock,
+        zeron_proto::HarnessId::Mock,
         None,
     )
     .expect("engine assembles")
@@ -131,13 +148,13 @@ async fn repos_round_trip_add_branches_worktrees() {
     assert_eq!(branches[0], "main", "default branch first: {branches:?}");
     assert!(branches.contains(&"feature/x".to_string()));
 
-    // Worktree add: comet/<name> branch, isolated dir under the test root.
+    // Worktree add: zeron/<name> branch, isolated dir under the test root.
     let worktree = repos
         .create_worktree(&repo_dir, "main")
         .await
         .expect("worktree");
     assert!(
-        worktree.branch.starts_with("comet/"),
+        worktree.branch.starts_with("zeron/"),
         "branch: {}",
         worktree.branch
     );
@@ -155,7 +172,7 @@ async fn repos_round_trip_add_branches_worktrees() {
     assert!(branches.contains(&worktree.branch));
 
     // Refs carry checkout state: `main` is current (main folder), the
-    // worktree's comet/<name> branch maps to its linked-checkout path, and
+    // worktree's zeron/<name> branch maps to its linked-checkout path, and
     // a plain branch has neither.
     let refs = repos.refs(&repo_dir).await.expect("refs");
     let by_name = |name: &str| refs.iter().find(|r| r.name == name).expect("ref row");
@@ -163,9 +180,17 @@ async fn repos_round_trip_add_branches_worktrees() {
         by_name("main").current,
         "main is the main checkout: {refs:?}"
     );
+    // macOS exposes /var through the /private/var symlink, while Git reports
+    // the canonical worktree path. Compare canonical paths so the assertion
+    // is stable across platforms and temporary-directory roots.
+    let listed_worktree_path = by_name(&worktree.branch)
+        .worktree_path
+        .as_deref()
+        .map(Path::new)
+        .and_then(|path| std::fs::canonicalize(path).ok());
+    let expected_worktree_path = std::fs::canonicalize(&worktree.path).ok();
     assert_eq!(
-        by_name(&worktree.branch).worktree_path.as_deref(),
-        Some(worktree.path.as_str()),
+        listed_worktree_path, expected_worktree_path,
         "worktree branch maps to its path: {refs:?}"
     );
     let plain_ref = by_name("feature/x");
@@ -182,7 +207,7 @@ async fn repos_round_trip_add_branches_worktrees() {
         .expect("wt identity");
     assert_ne!(main_identity.id, wt_identity.id);
 
-    // Delete: dir removed, comet branch removed, refs pruned.
+    // Delete: dir removed, zeron branch removed, refs pruned.
     repos
         .delete_worktree(&repo_dir, Path::new(&worktree.path))
         .await
@@ -194,7 +219,7 @@ async fn repos_round_trip_add_branches_worktrees() {
         .expect("branches after delete");
     assert!(
         !branches.contains(&worktree.branch),
-        "comet branch deleted: {branches:?}"
+        "zeron branch deleted: {branches:?}"
     );
 
     // CreateRepo: sanitized name, initialized on main.
@@ -204,6 +229,126 @@ async fn repos_round_trip_add_branches_worktrees() {
     assert!(
         repos.create("demo repo!").await.is_err(),
         "duplicate create rejected"
+    );
+}
+
+#[tokio::test]
+async fn git_history_is_topological_paged_and_carries_public_refs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("history-repo");
+    init_repo(&repo_dir).await;
+    git(&repo_dir, &["checkout", "-b", "feature"]).await;
+    std::fs::write(repo_dir.join("feature.txt"), "feature\n").expect("feature file");
+    git(&repo_dir, &["add", "."]).await;
+    git(&repo_dir, &["commit", "-m", "feature commit"]).await;
+    git(&repo_dir, &["checkout", "main"]).await;
+    std::fs::write(repo_dir.join("main.txt"), "main\n").expect("main file");
+    git(&repo_dir, &["add", "."]).await;
+    git(&repo_dir, &["commit", "-m", "main commit"]).await;
+    git(
+        &repo_dir,
+        &["merge", "--no-ff", "feature", "-m", "merge feature"],
+    )
+    .await;
+    git(&repo_dir, &["tag", "v1"]).await;
+    git(
+        &repo_dir,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    )
+    .await;
+
+    let repos = test_repos(&tmp.path().join("data"));
+    let first = repos.history(&repo_dir, 0, 2).await.expect("first page");
+    assert_eq!(first.commits.len(), 2);
+    assert_eq!(first.total_count, Some(4));
+    assert_eq!(first.head_commit_count, Some(4));
+    assert_eq!(first.next_cursor, Some(2));
+    assert_eq!(
+        first.head_sha.as_deref(),
+        Some(first.commits[0].sha.as_str())
+    );
+    assert_eq!(first.commits[0].parent_shas.len(), 2);
+    assert!(first.commits[0].refs.iter().any(|reference| {
+        reference.kind == GitHistoryRefKind::Branch && reference.label == "main"
+    }));
+    assert!(first.commits[0].refs.iter().any(|reference| {
+        reference.kind == GitHistoryRefKind::Remote && reference.label == "origin/main"
+    }));
+    assert!(
+        first.commits[0].refs.iter().any(|reference| {
+            reference.kind == GitHistoryRefKind::Tag && reference.label == "v1"
+        })
+    );
+
+    let second = repos.history(&repo_dir, 2, 2).await.expect("second page");
+    assert_eq!(second.commits.len(), 2);
+    assert_eq!(second.next_cursor, None);
+    assert_eq!(second.total_count, None);
+    assert_eq!(second.head_commit_count, None);
+}
+
+#[tokio::test]
+async fn fetch_all_updates_only_remote_tracking_refs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("fetch-repo");
+    let remote_dir = tmp.path().join("remote.git");
+    init_repo(&repo_dir).await;
+    git(
+        tmp.path(),
+        &["init", "--bare", remote_dir.to_str().unwrap()],
+    )
+    .await;
+    git(
+        &repo_dir,
+        &["remote", "add", "origin", remote_dir.to_str().unwrap()],
+    )
+    .await;
+    git(&repo_dir, &["push", "-u", "origin", "main"]).await;
+
+    let peer_dir = tmp.path().join("peer");
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            remote_dir.to_str().unwrap(),
+            peer_dir.to_str().unwrap(),
+        ],
+    )
+    .await;
+    git(&peer_dir, &["checkout", "main"]).await;
+    std::fs::write(peer_dir.join("remote.txt"), "remote\n").expect("remote file");
+    git(&peer_dir, &["add", "."]).await;
+    git(&peer_dir, &["commit", "-m", "remote commit"]).await;
+    git(&peer_dir, &["push", "origin", "main"]).await;
+
+    std::fs::write(repo_dir.join("a.txt"), "staged locally\n").expect("local edit");
+    git(&repo_dir, &["add", "a.txt"]).await;
+    std::fs::write(repo_dir.join("untracked.txt"), "untracked\n").expect("untracked file");
+    let head_before = git_stdout(&repo_dir, &["rev-parse", "HEAD"]).await;
+    let branch_before = git_stdout(&repo_dir, &["branch", "--show-current"]).await;
+    let status_before = git_stdout(&repo_dir, &["status", "--porcelain=v1"]).await;
+    let remote_before = git_stdout(&repo_dir, &["rev-parse", "origin/main"]).await;
+
+    test_repos(&tmp.path().join("data"))
+        .fetch_all(&repo_dir)
+        .await
+        .expect("fetch all");
+
+    assert_ne!(
+        git_stdout(&repo_dir, &["rev-parse", "origin/main"]).await,
+        remote_before
+    );
+    assert_eq!(
+        git_stdout(&repo_dir, &["rev-parse", "HEAD"]).await,
+        head_before
+    );
+    assert_eq!(
+        git_stdout(&repo_dir, &["branch", "--show-current"]).await,
+        branch_before
+    );
+    assert_eq!(
+        git_stdout(&repo_dir, &["status", "--porcelain=v1"]).await,
+        status_before
     );
 }
 
@@ -382,6 +527,78 @@ async fn diff_capture_against_merge_base_shows_branch_changes() {
 }
 
 #[tokio::test]
+async fn diff_file_text_returns_both_checked_sources() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("repo");
+    init_repo(&repo_dir).await;
+    let repos = test_repos(&tmp.path().join("data"));
+    std::fs::write(repo_dir.join("a.txt"), "one\nchanged\n").expect("edit a.txt");
+
+    let snapshot = capture_diff(&repos, &repo_dir).await.expect("capture");
+    let file = snapshot
+        .files
+        .iter()
+        .find(|file| file.path == "a.txt")
+        .unwrap();
+    let base = working_diff_base(&repo_dir).await.expect("base");
+    let pair = read_diff_file_text(&repo_dir, &base, file)
+        .await
+        .expect("source pair");
+    assert_eq!(pair.old_text.as_deref(), Some("one\ntwo\n"));
+    assert_eq!(pair.new_text.as_deref(), Some("one\nchanged\n"));
+    assert!(pair.old_content_hash.is_some());
+    assert!(pair.new_content_hash.is_some());
+    assert!(!pair.binary);
+    assert!(!pair.truncated);
+
+    let escape = zeron_proto::DiffFileSummary {
+        path: "../outside.txt".into(),
+        old_path: None,
+        status: "modified".into(),
+        additions: 1,
+        deletions: 1,
+        binary: false,
+    };
+    assert!(
+        read_diff_file_text(&repo_dir, &base, &escape)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn commit_diff_captures_one_commit_and_roots_diff_the_empty_tree() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("repo");
+    init_repo(&repo_dir).await;
+    let repos = test_repos(&tmp.path().join("data"));
+
+    // A second commit plus an uncommitted edit on top.
+    std::fs::write(repo_dir.join("c.txt"), "second commit\n").expect("write c.txt");
+    git(&repo_dir, &["add", "."]).await;
+    git(&repo_dir, &["commit", "-m", "second"]).await;
+    std::fs::write(repo_dir.join("a.txt"), "one\ntwo\nuncommitted\n").expect("edit a.txt");
+
+    let head = git_stdout(&repo_dir, &["rev-parse", "HEAD"]).await;
+    let snapshot = capture_commit_diff(&repos, &repo_dir, &head)
+        .await
+        .expect("commit capture");
+    // Only the commit's own change — never the working tree on top.
+    assert!(snapshot.patch.contains("+second commit"));
+    assert!(!snapshot.patch.contains("uncommitted"));
+    assert_eq!(snapshot.files.len(), 1);
+    assert_eq!(snapshot.files[0].path, "c.txt");
+    assert_eq!(snapshot.head_sha.as_deref(), Some(head.as_str()));
+
+    // The root commit diffs against the empty tree instead of erroring.
+    let root = git_stdout(&repo_dir, &["rev-list", "--max-parents=0", "HEAD"]).await;
+    let root_snapshot = capture_commit_diff(&repos, &repo_dir, &root)
+        .await
+        .expect("root capture");
+    assert!(root_snapshot.files.iter().any(|f| f.path == "a.txt"));
+}
+
+#[tokio::test]
 async fn turn_diff_captures_only_changes_since_snapshot() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let repo_dir = tmp.path().join("repo");
@@ -444,7 +661,7 @@ async fn diff_capture_truncates_at_patch_cap() {
     let snapshot = capture_diff(&repos, &repo_dir).await.expect("capture");
     assert!(snapshot.truncated, "patch cap hit");
     assert!(snapshot.patch.len() <= 3 * 1024 * 1024 + 64);
-    assert!(snapshot.patch.contains("# Comet diff truncated"));
+    assert!(snapshot.patch.contains("# Zeron diff truncated"));
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +840,97 @@ async fn diff_sync_publishes_and_updates_chat_branch() {
     core.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkout_file_diff_text_rpc_fits_the_default_worker_stack() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("repo");
+    init_repo(&repo_dir).await;
+    std::fs::write(repo_dir.join("a.txt"), "one\ntwo edited\n").expect("dirty tree");
+
+    let core = assemble(&tmp.path().join("data"));
+    let identity = core
+        .repos
+        .checkout_identity(&repo_dir)
+        .await
+        .expect("checkout identity");
+    let snapshot = capture_diff(&core.repos, &repo_dir)
+        .await
+        .expect("diff snapshot");
+    let client = zeron_rpc::memory_client(core.rpc_service());
+
+    let response = client
+        .call(
+            methods::GET_CHECKOUT_FILE_DIFF_TEXT,
+            serde_json::json!({
+                "checkoutId": identity.id,
+                "cwd": repo_dir,
+                "path": "a.txt",
+                "mode": "working",
+                "diffChecksum": snapshot.checksum,
+            }),
+        )
+        .await
+        .expect("GetCheckoutFileDiffText");
+    let response: zeron_proto::CheckoutFileDiffText =
+        serde_json::from_value(response).expect("typed response");
+    assert_eq!(response.old_text.as_deref(), Some("one\ntwo\n"));
+    assert_eq!(response.new_text.as_deref(), Some("one\ntwo edited\n"));
+    assert!(!response.stale);
+
+    core.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn checkout_file_diff_text_rpc_reads_pinned_commit_sources() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let repo_dir = tmp.path().join("repo");
+    init_repo(&repo_dir).await;
+    std::fs::write(repo_dir.join("a.txt"), "one\ntwo\ncommitted change\n").expect("commit content");
+    git(&repo_dir, &["add", "a.txt"]).await;
+    git(&repo_dir, &["commit", "-m", "second"]).await;
+    let sha = git_stdout(&repo_dir, &["rev-parse", "HEAD"]).await;
+
+    // A live edit must not affect the immutable History diff source pair.
+    std::fs::write(repo_dir.join("a.txt"), "one\ntwo\nworking tree edit\n")
+        .expect("working tree content");
+
+    let core = assemble(&tmp.path().join("data"));
+    let identity = core
+        .repos
+        .checkout_identity(&repo_dir)
+        .await
+        .expect("checkout identity");
+    let snapshot = capture_commit_diff(&core.repos, &repo_dir, &sha)
+        .await
+        .expect("commit snapshot");
+    let client = zeron_rpc::memory_client(core.rpc_service());
+
+    let response = client
+        .call(
+            methods::GET_CHECKOUT_FILE_DIFF_TEXT,
+            serde_json::json!({
+                "checkoutId": identity.id,
+                "cwd": repo_dir,
+                "path": "a.txt",
+                "mode": "commit",
+                "commitSha": sha,
+                "diffChecksum": snapshot.checksum,
+            }),
+        )
+        .await
+        .expect("GetCheckoutFileDiffText");
+    let response: zeron_proto::CheckoutFileDiffText =
+        serde_json::from_value(response).expect("typed response");
+    assert_eq!(response.old_text.as_deref(), Some("one\ntwo\n"));
+    assert_eq!(
+        response.new_text.as_deref(),
+        Some("one\ntwo\ncommitted change\n")
+    );
+    assert!(!response.stale);
+
+    core.shutdown().await;
+}
+
 // ---------------------------------------------------------------------------
 // Terminals
 // ---------------------------------------------------------------------------
@@ -756,9 +1064,9 @@ async fn rpc_dispatch_for_m5_methods() {
     let tmp = tempfile::tempdir().expect("tempdir");
     // EngineCore's Repos resolves the worktree root from the env; keep test
     // worktrees out of $HOME. (Process-global — this is the only test that sets it.)
-    unsafe { std::env::set_var("COMET_WORKTREES_DIR", tmp.path().join("worktrees")) };
+    unsafe { std::env::set_var("ZERON_WORKTREES_DIR", tmp.path().join("worktrees")) };
     let core = assemble(&tmp.path().join("data"));
-    let client = comet_rpc::memory_client(core.rpc_service());
+    let client = zeron_rpc::memory_client(core.rpc_service());
 
     // CreateRepo → ListRepos.
     let created = client
@@ -886,7 +1194,7 @@ async fn rpc_dispatch_for_m5_methods() {
         worktree["branch"]
             .as_str()
             .expect("branch")
-            .starts_with("comet/")
+            .starts_with("zeron/")
     );
     assert!(worktree["checkoutId"].is_string());
     let deleted = client

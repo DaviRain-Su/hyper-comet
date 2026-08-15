@@ -24,7 +24,7 @@
 
 use std::path::PathBuf;
 
-use comet_proto::{McpEnvVar, McpServerConfig, RunRequest};
+use zeron_proto::{McpEnvVar, McpServerConfig, RunRequest};
 
 /// Marker so resume / retry / steer does not double-inject the skill body.
 pub const SKILL_PROMPT_MARKER: &str = "<!-- proofship:proofforge-program-v1 -->";
@@ -266,7 +266,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use comet_proto::SandboxLevel;
+    use zeron_proto::SandboxLevel;
 
     fn bare_request(prompt: &str) -> RunRequest {
         RunRequest {

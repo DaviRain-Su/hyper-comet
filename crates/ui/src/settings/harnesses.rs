@@ -14,15 +14,14 @@
 //! gate (plus "can't disable the last enabled harness") where the state
 //! lives, so a raced or stale toggle self-corrects from the RPC reply.
 
-
 use gpui::{
     AnyElement, Context, Entity, IntoElement, Render, SharedString, Task, Window, div, prelude::*,
     px,
 };
 
-use comet_engine::registry::{HarnessDescriptor, descriptor_enabled};
-use comet_proto::HarnessId;
-use comet_rpc::methods;
+use zeron_engine::registry::{HarnessDescriptor, descriptor_enabled};
+use zeron_proto::HarnessId;
+use zeron_rpc::methods;
 
 use crate::pickers::visible_harnesses;
 use crate::popover::{self, Loadable};
