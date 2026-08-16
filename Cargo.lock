@@ -2153,7 +2153,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "comet-kit"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "gpui",
  "gpui_platform",
@@ -6914,7 +6914,7 @@ dependencies = [
 
 [[package]]
 name = "proofship-pf-mcp"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "rmcp",
@@ -11298,7 +11298,7 @@ dependencies = [
 
 [[package]]
 name = "zeron"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -11317,7 +11317,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-doc"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "loro",
@@ -11331,7 +11331,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-engine"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "alloy",
  "anyhow",
@@ -11367,7 +11367,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-harness"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11387,7 +11387,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-proto"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "serde",
@@ -11397,7 +11397,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-rpc"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -11416,7 +11416,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-sync"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "futures",
@@ -11438,7 +11438,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-syntax"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "thiserror 2.0.20",
  "tree-sitter",
@@ -11472,7 +11472,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-ui"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -11506,7 +11506,7 @@ dependencies = [
 
 [[package]]
 name = "zeron-update"
-version = "0.2.1"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "futures",
